@@ -24,7 +24,10 @@ import ListaConductores from '../web/empresa/conductores/ListaConductores.vue'
 import NuevoConductor   from '../web/empresa/conductores/NuevoConductor.vue'
 import EditarConductor  from '../web/empresa/conductores/EditarConductor.vue'
 import DetalleConductor from '../web/empresa/conductores/DetalleConductor.vue'
-import Mantenciones from '../web/empresa/flota/Mantenciones.vue'
+import MantencionesLista      from '../web/empresa/flota/mantenciones/MantencionesLista.vue'
+import MantencionesCalendario from '../web/empresa/flota/mantenciones/MantencionesCalendario.vue'
+import MantencionesForm       from '../web/empresa/flota/mantenciones/MantencionesForm.vue'
+import MantencionesHistorial  from '../web/empresa/flota/mantenciones/MantencionesHistorial.vue'
 
 // Layout empresa (solo USUARIO)
 import EmpresaLayout from '../web/empresa/EmpresaLayout.vue'
@@ -72,7 +75,11 @@ const routes = [
       { path: 'conductores/nuevo',                        component: NuevoConductor  },
       { path: 'conductores/:id',                          component: DetalleConductor },
       { path: 'conductores/:id/editar',                   component: EditarConductor },
-      { path: 'mantenciones', component: Mantenciones },
+      { path: 'mantenciones',            component: MantencionesLista },
+      { path: 'mantenciones/calendario', component: MantencionesCalendario },
+      { path: 'mantenciones/nueva',      component: MantencionesForm },
+      { path: 'mantenciones/:id/editar', component: MantencionesForm },
+      { path: 'mantenciones/historial',  component: MantencionesHistorial },
       { path: 'documentos',   component: Pendiente('Documentos')    },
       { path: 'finanzas',     component: Pendiente('Finanzas')      },
       { path: 'reportes',     component: Pendiente('Reportes')      },
@@ -95,7 +102,11 @@ const routes = [
       { path: 'conductores/nuevo',        component: NuevoConductor  },
       { path: 'conductores/:id',          component: DetalleConductor },
       { path: 'conductores/:id/editar',   component: EditarConductor },
-      { path: 'mantenciones', component: Mantenciones },
+      { path: 'mantenciones',            component: MantencionesLista },
+      { path: 'mantenciones/calendario', component: MantencionesCalendario },
+      { path: 'mantenciones/nueva',      component: MantencionesForm },
+      { path: 'mantenciones/:id/editar', component: MantencionesForm },
+      { path: 'mantenciones/historial',  component: MantencionesHistorial },
       { path: 'documentos',   component: Pendiente('Documentos')    },
       { path: 'finanzas',     component: Pendiente('Finanzas')      },
       { path: 'reportes',     component: Pendiente('Reportes')      },

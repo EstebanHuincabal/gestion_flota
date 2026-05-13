@@ -9,7 +9,7 @@ from g_de_flota.views import (
     admin_flotas_lista, flotas_lista_crear, flotas_detalle,
     vehiculos_lista_crear, vehiculos_detalle,
     planes_lista_crear, planes_detalle,
-    mantenciones_lista_crear, mantenciones_detalle, mantenciones_resumen,
+    mantenciones_lista_crear, mantenciones_detalle, mantenciones_resumen, mantenciones_calendario,
     logs_lista,
     permisos_lista, usuario_permisos,
 )
@@ -48,9 +48,10 @@ urlpatterns = [
     path('api/empresa/vehiculos/',           vehiculos_lista_crear, name='vehiculos-lista'),
     path('api/empresa/vehiculos/<int:pk>/',  vehiculos_detalle,     name='vehiculos-detalle'),
     
-    path('api/empresa/mantenciones/',           mantenciones_lista_crear, name='mantenciones-lista'),
-    path('api/empresa/mantenciones/resumen/',   mantenciones_resumen,     name='mantenciones-resumen'),
-    path('api/empresa/mantenciones/<int:pk>/',  mantenciones_detalle,     name='mantenciones-detalle'),
+    path('api/empresa/mantenciones/',              mantenciones_lista_crear,  name='mantenciones-lista'),
+    path('api/empresa/mantenciones/resumen/',      mantenciones_resumen,      name='mantenciones-resumen'),
+    path('api/empresa/mantenciones/calendario/',   mantenciones_calendario,   name='mantenciones-calendario'),
+    path('api/empresa/mantenciones/<int:pk>/',     mantenciones_detalle,      name='mantenciones-detalle'),
 
     path('api/logs/',                        logs_lista,            name='logs-lista'),
 

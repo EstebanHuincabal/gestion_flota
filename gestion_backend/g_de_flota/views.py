@@ -1118,12 +1118,15 @@ def mantenciones_lista_crear(request):
         if not tiene_permiso(request.user, 'mantenciones.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         
-        vehiculo_id = request.query_params.get('vehiculo_id')
+        vehiculo_id  = request.query_params.get('vehiculo_id')
+        estado_param = request.query_params.get('estado')
         qs = Mantencion.objects.filter(vehiculo__flota__empresa=empresa).select_related('vehiculo')
-        
+
         if vehiculo_id:
             qs = qs.filter(vehiculo_id=vehiculo_id)
-            
+        if estado_param:
+            qs = qs.filter(estado=estado_param)
+
         return Response(MantencionSerializer(qs.order_by('-fecha_programada', '-id'), many=True).data)
 
     if not tiene_permiso(request.user, 'mantenciones.crear'):
@@ -1214,15 +1217,54 @@ def mantenciones_resumen(request):
         vehiculo__flota__empresa=empresa,
         estado='pendiente'
     ).count()
-    
+
+    en_proceso = Mantencion.objects.filter(
+        vehiculo__flota__empresa=empresa,
+        estado='en_proceso'
+    ).count()
+
     realizadas = Mantencion.objects.filter(
         vehiculo__flota__empresa=empresa,
         estado='realizada'
     ).count()
 
     return Response({
-        "costo_mes": costo_mes,
+        "costo_mes":   costo_mes,
         "costo_total": costo_total,
-        "pendientes": pendientes,
-        "realizadas": realizadas
+        "pendientes":  pendientes,
+        "en_proceso":  en_proceso,
+        "realizadas":  realizadas,
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def mantenciones_calendario(request):
+    try:
+        empresa = get_empresa(request)
+    except PermissionError:
+        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+
+    if not tiene_permiso(request.user, 'mantenciones.ver'):
+        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+
+    year  = request.query_params.get('year',  timezone.now().date().year)
+    month = request.query_params.get('month', timezone.now().date().month)
+
+    qs = Mantencion.objects.filter(
+        vehiculo__flota__empresa=empresa,
+        fecha_programada__year=year,
+        fecha_programada__month=month,
+    ).exclude(estado='cancelada').select_related('vehiculo').order_by('fecha_programada')
+
+    result = {}
+    for m in qs:
+        key = m.fecha_programada.isoformat()
+        result.setdefault(key, []).append({
+            'id':               m.id,
+            'tipo_mantencion':  m.tipo_mantencion,
+            'vehiculo_patente': m.vehiculo.patente,
+            'estado':           m.estado,
+            'estado_display':   m.get_estado_display(),
+        })
+    return Response(result)

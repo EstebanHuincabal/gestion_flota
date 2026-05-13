@@ -372,17 +372,24 @@ class DocumentoVehiculoSerializer(serializers.ModelSerializer):
         fields = ['id', 'tipo', 'tipo_display', 'fecha_vencimiento', 'estado']
 
 class MantencionSerializer(serializers.ModelSerializer):
-    vehiculo_patente = serializers.CharField(source='vehiculo.patente', read_only=True)
+    vehiculo_id          = serializers.PrimaryKeyRelatedField(
+                               queryset=Vehiculo.objects.all(),
+                               source='vehiculo'
+                           )
+    vehiculo_patente     = serializers.CharField(source='vehiculo.patente', read_only=True)
     vehiculo_descripcion = serializers.SerializerMethodField()
+    estado_display       = serializers.CharField(source='get_estado_display', read_only=True)
 
     class Meta:
         model = Mantencion
         fields = [
             'id', 'vehiculo_id', 'vehiculo_patente', 'vehiculo_descripcion',
-            'tipo_mantencion', 'fecha_programada', 'kilometraje_programado',
-            'fecha_realizada', 'kilometraje_realizado', 'estado', 'costo'
+            'tipo_mantencion', 'descripcion', 'taller_proveedor', 'presupuesto',
+            'fecha_programada', 'kilometraje_programado',
+            'fecha_realizada', 'kilometraje_realizado',
+            'estado', 'estado_display', 'costo',
         ]
-        
+
     def get_vehiculo_descripcion(self, obj):
         return f"{obj.vehiculo.marca} {obj.vehiculo.modelo}".strip()
 

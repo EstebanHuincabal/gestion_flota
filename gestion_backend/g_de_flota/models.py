@@ -409,19 +409,27 @@ class Evento(models.Model):
     fecha       = models.DateTimeField(auto_now_add=True)
 
 
+class EstadoMantencion(models.TextChoices):
+    PENDIENTE  = 'pendiente',  'Pendiente'
+    EN_PROCESO = 'en_proceso', 'En Proceso'
+    REALIZADA  = 'realizada',  'Realizada'
+    CANCELADA  = 'cancelada',  'Cancelada'
+
+
 class Mantencion(models.Model):
     vehiculo               = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name="mantenciones")
     tipo_mantencion        = models.CharField(max_length=100)
-    
-    # Programación (puede ser por fecha, por kilometraje o ambos)
+    descripcion            = models.TextField(blank=True, default='')
+    taller_proveedor       = models.CharField(max_length=200, blank=True, default='')
+    presupuesto            = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
     fecha_programada       = models.DateField(null=True, blank=True)
     kilometraje_programado = models.IntegerField(null=True, blank=True)
-    
-    # Realización
+
     fecha_realizada        = models.DateField(null=True, blank=True)
     kilometraje_realizado  = models.IntegerField(null=True, blank=True)
-    
-    estado                 = models.CharField(max_length=50, default="pendiente")
+
+    estado                 = models.CharField(max_length=50, choices=EstadoMantencion.choices, default=EstadoMantencion.PENDIENTE)
     costo                  = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
 
