@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { clearEmpresaActiva } from '../utils/empresaActiva.js'
+import NotificacionesBell from '../components/NotificacionesBell.vue'
 
 const router = useRouter()
 const route  = useRoute()
@@ -76,6 +77,12 @@ const navOperaciones = [
     path: '/mantenciones',
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>`
+  },
+  {
+    label: 'Predictivo',
+    path: '/predictivo',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M13 10V3L4 14h7v7l9-11h-7z"/>`
   },
   {
     label: 'Documentos',
@@ -225,30 +232,33 @@ const cerrarSesion = () => {
 
       </nav>
 
-      <!-- Footer: usuario + logout -->
-      <div class="sidebar-footer">
-        <div class="user-block" v-if="!navCollapsed">
-          <div class="user-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
-          <div class="user-info">
-            <p class="user-name">{{ usuario.nombre }}</p>
-            <p class="user-role">{{ rolLabel }}</p>
-          </div>
-        </div>
-        <div v-else class="user-avatar solo">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
-        <button class="logout-btn" @click="cerrarSesion" :title="navCollapsed ? 'Cerrar sesión' : ''">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-          </svg>
-          <span v-if="!navCollapsed">Salir</span>
-        </button>
-      </div>
-
     </aside>
 
     <!-- ── Contenido principal ── -->
     <main class="main-content">
-      <RouterView />
+      <header class="top-bar">
+        <div class="top-bar-spacer"/>
+        <div class="top-bar-right">
+          <NotificacionesBell />
+          <div class="session-info">
+            <div class="session-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
+            <div class="session-details">
+              <span class="session-name">{{ usuario.nombre }}</span>
+              <span class="session-role">{{ rolLabel }}</span>
+            </div>
+          </div>
+          <button class="logout-btn-top" @click="cerrarSesion" title="Cerrar sesión">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+            </svg>
+            <span>Salir</span>
+          </button>
+        </div>
+      </header>
+      <div class="page-content">
+        <RouterView />
+      </div>
     </main>
 
   </div>
@@ -379,67 +389,6 @@ const cerrarSesion = () => {
 .nav-label { flex: 1; }
 .active-bar { width: 3px; height: 16px; background: #fff; border-radius: 2px; }
 
-/* ── Footer ── */
-.sidebar-footer {
-  padding: 0.75rem 0.625rem;
-  border-top: 1px solid rgba(255,255,255,0.12);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.user-block {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.5rem;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.1);
-}
-.user-avatar {
-  flex-shrink: 0;
-  width: 32px; height: 32px;
-  background: rgba(255,255,255,0.25);
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  color: #fff;
-}
-.user-avatar.solo { margin: 0 auto; }
-.user-info { overflow: hidden; }
-.user-name {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #fff;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.user-role { font-size: 0.7rem; color: rgba(255,255,255,0.55); margin: 0; }
-
-.logout-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.55rem 0.75rem;
-  border: 1.5px solid rgba(255,255,255,0.2);
-  border-radius: 10px;
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.75);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: border-color 0.2s, color 0.2s, background 0.2s;
-  font-family: inherit;
-}
-.logout-btn:hover { border-color: rgba(255,255,255,0.5); color: #fff; background: rgba(255,255,255,0.15); }
-.logout-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
-
 /* Contenido */
 .main-content {
   margin-left: 240px;
@@ -454,11 +403,10 @@ const cerrarSesion = () => {
 /* ── Top Bar ── */
 .top-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 0.75rem 2rem;
-  background: linear-gradient(160deg, #4F46E5 0%, #7C3AED 100%);
-  border-bottom: 1px solid rgba(255,255,255,0.12);
+  padding: 0 1.5rem;
+  background: #fff;
+  border-bottom: 1px solid #E5E7EB;
   height: 64px;
   flex-shrink: 0;
 }
@@ -466,37 +414,44 @@ const cerrarSesion = () => {
 .top-bar-right {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 .session-info {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.35rem 0.5rem;
+  gap: 0.625rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.4rem;
+  background: #F3F4F6;
   border-radius: 50px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 .session-avatar {
-  width: 32px; height: 32px;
-  background: rgba(255, 255, 255, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
   color: #fff;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 0.85rem;
+  font-weight: 700; font-size: 0.8125rem; flex-shrink: 0;
 }
 .session-details {
   display: flex;
   flex-direction: column;
-  padding-right: 0.5rem;
 }
 .session-name {
-  font-size: 0.8125rem; font-weight: 600; color: #fff; line-height: 1.2;
+  font-size: 0.8125rem; font-weight: 600; color: #111827; line-height: 1.2;
 }
 .session-role {
-  font-size: 0.7rem; color: rgba(255, 255, 255, 0.7); font-weight: 500;
+  font-size: 0.6875rem; color: #6B7280;
 }
+.logout-btn-top {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 0.875rem; border-radius: 8px;
+  border: 1px solid #E5E7EB; background: #fff;
+  color: #6B7280; font-size: 0.8125rem; font-weight: 500;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; font-family: inherit;
+}
+.logout-btn-top:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
+.logout-btn-top svg { width: 16px; height: 16px; }
+.page-content { flex: 1; overflow-y: auto; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

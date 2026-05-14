@@ -28,6 +28,10 @@ import MantencionesLista      from '../web/empresa/flota/mantenciones/Mantencion
 import MantencionesCalendario from '../web/empresa/flota/mantenciones/MantencionesCalendario.vue'
 import MantencionesForm       from '../web/empresa/flota/mantenciones/MantencionesForm.vue'
 import MantencionesHistorial  from '../web/empresa/flota/mantenciones/MantencionesHistorial.vue'
+import MantencionesDetalle    from '../web/empresa/flota/mantenciones/MantencionesDetalle.vue'
+import MantencionPredictiva   from '../web/empresa/predictivo/MantencionPredictiva.vue'
+import Notificaciones             from '../web/notificaciones/Notificaciones.vue'
+import PreferenciasNotificaciones from '../web/notificaciones/PreferenciasNotificaciones.vue'
 
 // Layout empresa (solo USUARIO)
 import EmpresaLayout from '../web/empresa/EmpresaLayout.vue'
@@ -78,8 +82,12 @@ const routes = [
       { path: 'mantenciones',            component: MantencionesLista },
       { path: 'mantenciones/calendario', component: MantencionesCalendario },
       { path: 'mantenciones/nueva',      component: MantencionesForm },
-      { path: 'mantenciones/:id/editar', component: MantencionesForm },
       { path: 'mantenciones/historial',  component: MantencionesHistorial },
+      { path: 'mantenciones/:id',        component: MantencionesDetalle },
+      { path: 'mantenciones/:id/editar', component: MantencionesForm },
+      { path: 'predictivo', component: MantencionPredictiva },
+      { path: 'notificaciones',             component: Notificaciones },
+      { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
       { path: 'documentos',   component: Pendiente('Documentos')    },
       { path: 'finanzas',     component: Pendiente('Finanzas')      },
       { path: 'reportes',     component: Pendiente('Reportes')      },
@@ -105,8 +113,12 @@ const routes = [
       { path: 'mantenciones',            component: MantencionesLista },
       { path: 'mantenciones/calendario', component: MantencionesCalendario },
       { path: 'mantenciones/nueva',      component: MantencionesForm },
-      { path: 'mantenciones/:id/editar', component: MantencionesForm },
       { path: 'mantenciones/historial',  component: MantencionesHistorial },
+      { path: 'mantenciones/:id',        component: MantencionesDetalle },
+      { path: 'mantenciones/:id/editar', component: MantencionesForm },
+      { path: 'predictivo', component: MantencionPredictiva },
+      { path: 'notificaciones',              component: Notificaciones },
+      { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
       { path: 'documentos',   component: Pendiente('Documentos')    },
       { path: 'finanzas',     component: Pendiente('Finanzas')      },
       { path: 'reportes',     component: Pendiente('Reportes')      },

@@ -3,11 +3,11 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../../utils/empresaActiva.js'
-import AppToast from '../../../../components/AppToast.vue'
+import { useToast } from '../../../../utils/useToast.js'
 
 const router = useRouter()
 const { ruta } = useEmpresaNav()
-const toast   = ref(null)
+const toast = useToast()
 
 const hoy         = new Date()
 const anio        = ref(hoy.getFullYear())
@@ -123,7 +123,6 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargarMes()]) })
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
 
     <!-- Encabezado -->
     <div class="page-header">

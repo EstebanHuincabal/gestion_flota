@@ -1,9 +1,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { apiFetch } from '../../utils/api.js'
-import AppToast from '../../components/AppToast.vue'
+import { useToast } from '../../utils/useToast.js'
 
-const toast = ref(null)
+const toast = useToast()
 const planes = ref([])
 const cargandoPlanes = ref(false)
 
@@ -22,7 +22,6 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppToast ref="toast" />
   <div class="page p-8 max-w-7xl mx-auto">
     
     <div class="mb-8">

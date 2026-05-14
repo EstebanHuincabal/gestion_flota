@@ -5,7 +5,7 @@ import { apiFetch } from '../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
-import AppToast from '../../../components/AppToast.vue'
+import { useToast } from '../../../utils/useToast.js'
 
 const router   = useRouter()
 const { ruta } = useEmpresaNav()
@@ -20,7 +20,7 @@ const cargando        = ref(true)
 const error           = ref('')
 const sinEmpresa      = ref(false)
 const abiertos        = ref({})
-const toast           = ref(null)
+const toast = useToast()
 const confirm         = ref({ visible: false, item: null, tipo: '', flotaCtx: null })
 
 const COMBUSTIBLE_LABEL = { bencina: 'Bencina', diesel: 'Diésel', electrico: 'Eléctrico', hibrido: 'Híbrido' }
@@ -159,19 +159,19 @@ const confirmar = async () => {
     if (tipo === 'eliminar-flota') {
       const res = await apiFetchEmpresa(`/api/empresa/flotas/${item.id}/`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al eliminar la flota')
-      toast.value?.agregar(`Flota "${item.nombre}" eliminada.`, 'success')
+      toast.agregar(`Flota "${item.nombre}" eliminada.`, 'success')
     } else if (tipo === 'desactivar-vehiculo') {
       const res = await apiFetchEmpresa(`/api/empresa/vehiculos/${item.id}/`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al desactivar el vehículo')
-      toast.value?.agregar(`Vehículo ${item.patente} desactivado.`, 'success')
+      toast.agregar(`Vehículo ${item.patente} desactivado.`, 'success')
     } else if (tipo === 'activar-vehiculo') {
       const res = await apiFetchEmpresa(`/api/empresa/vehiculos/${item.id}/`, { method: 'PUT', body: { activo: true } })
       if (!res.ok) throw new Error('Error al activar el vehículo')
-      toast.value?.agregar(`Vehículo ${item.patente} activado.`, 'success')
+      toast.agregar(`Vehículo ${item.patente} activado.`, 'success')
     }
     await cargar()
   } catch (e) {
-    toast.value?.agregar(e.message, 'error')
+    toast.agregar(e.message, 'error')
   }
 }
 
@@ -195,7 +195,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppToast ref="toast" />
 
   <ConfirmModal
     v-if="confirm.visible"

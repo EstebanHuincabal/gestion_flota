@@ -1,15 +1,15 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva, useEmpresaNav } from '../../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../../utils/permisos.js'
-import AppToast from '../../../../components/AppToast.vue'
+import { useToast } from '../../../../utils/useToast.js'
 import { apiFetch } from '../../../../utils/api.js'
 
 const router  = useRouter()
 const route   = useRoute()
 const { ruta } = useEmpresaNav()
-const toast   = ref(null)
+const toast = useToast()
 
 const esNuevo   = computed(() => !route.params.id)
 const tituloForm = computed(() => esNuevo.value ? 'Programar Mantención' : 'Editar Mantención')
@@ -28,15 +28,33 @@ const guardando   = ref(false)
 const errores     = ref({})
 const errorGlobal = ref('')
 
+// Sugerencias del backend
+const sugerencias = ref({ talleres: [], presupuesto_por_tipo: {} })
+
+const TIPOS_MANTENCION = [
+  { key: 'aceite',             label: 'Cambio de aceite' },
+  { key: 'frenos',             label: 'Revisión de frenos' },
+  { key: 'neumaticos',         label: 'Cambio de neumáticos' },
+  { key: 'filtro_aire',        label: 'Filtro de aire' },
+  { key: 'filtro_combustible', label: 'Filtro de combustible' },
+  { key: 'rtv',                label: 'Revisión técnica (RTV)' },
+  { key: 'electrica',          label: 'Revisión eléctrica' },
+  { key: 'otro',               label: 'Otro' },
+]
+
+const tipoSeleccionado = ref('')
+const tipoOtro         = ref('')
+const tipoMantencion   = computed(() => {
+  if (tipoSeleccionado.value === 'otro') return tipoOtro.value
+  return TIPOS_MANTENCION.find(t => t.key === tipoSeleccionado.value)?.label || ''
+})
+
 const form = ref({
-  vehiculo_id:            null,
-  tipo_mantencion:        '',
-  descripcion:            '',
-  taller_proveedor:       '',
-  presupuesto:            '',
-  fecha_programada:       '',
-  kilometraje_programado: '',
-  estado:                 'pendiente',
+  vehiculo_id:      null,
+  taller_proveedor: '',
+  presupuesto:      '',
+  fecha_programada: '',
+  estado:           'pendiente',
 })
 
 const ESTADOS = [
@@ -45,6 +63,35 @@ const ESTADOS = [
   { value: 'realizada',  label: 'Realizada' },
   { value: 'cancelada',  label: 'Cancelada' },
 ]
+
+// Pre-llenar presupuesto cuando el tipo coincide con una regla del plan
+watch(tipoMantencion, (tipo) => {
+  if (!tipo) return
+  const presupuesto = sugerencias.value.presupuesto_por_tipo[tipo]
+  if (presupuesto && form.value.presupuesto === '') {
+    form.value.presupuesto = presupuesto
+  }
+})
+
+// Al cambiar vehículo, recargar presupuestos del plan asignado
+watch(() => form.value.vehiculo_id, async (id) => {
+  if (!id) return
+  const res = await apiFetchEmpresa(`/api/empresa/mantenciones/sugerencias/?vehiculo_id=${id}`)
+  if (res.ok) {
+    const data = await res.json()
+    sugerencias.value.presupuesto_por_tipo = data.presupuesto_por_tipo
+  }
+})
+
+const cargarTipo = (valor) => {
+  const match = TIPOS_MANTENCION.find(t => t.label === valor || t.key === valor)
+  if (match && match.key !== 'otro') {
+    tipoSeleccionado.value = match.key
+  } else if (valor) {
+    tipoSeleccionado.value = 'otro'
+    tipoOtro.value = valor
+  }
+}
 
 const cargarEmpresas = async () => {
   if (!esSuperadmin) return
@@ -62,26 +109,38 @@ const cargarDatos = async () => {
   if (sinEmpresa.value) return
   cargando.value = true
   try {
-    const resVeh = await apiFetchEmpresa('/api/empresa/vehiculos/')
+    const [resVeh, resSug] = await Promise.all([
+      apiFetchEmpresa('/api/empresa/vehiculos/'),
+      apiFetchEmpresa('/api/empresa/mantenciones/sugerencias/'),
+    ])
     if (resVeh.ok) vehiculos.value = (await resVeh.json()).filter(v => v.activo)
+    if (resSug.ok) {
+      const sug = await resSug.json()
+      sugerencias.value.talleres = sug.talleres
+      sugerencias.value.presupuesto_por_tipo = sug.presupuesto_por_tipo
+    }
 
     if (!esNuevo.value) {
       const resM = await apiFetchEmpresa(`/api/empresa/mantenciones/${route.params.id}/`)
       if (resM.ok) {
         const data = await resM.json()
         form.value = {
-          vehiculo_id:            data.vehiculo_id,
-          tipo_mantencion:        data.tipo_mantencion || '',
-          descripcion:            data.descripcion || '',
-          taller_proveedor:       data.taller_proveedor || '',
-          presupuesto:            data.presupuesto ?? '',
-          fecha_programada:       data.fecha_programada || '',
-          kilometraje_programado: data.kilometraje_programado ?? '',
-          estado:                 data.estado || 'pendiente',
+          vehiculo_id:      data.vehiculo_id,
+          taller_proveedor: data.taller_proveedor || '',
+          presupuesto:      data.presupuesto ?? '',
+          fecha_programada: data.fecha_programada || '',
+          estado:           data.estado || 'pendiente',
         }
+        cargarTipo(data.tipo_mantencion || '')
       } else {
         errorGlobal.value = 'No se encontró la mantención.'
       }
+    } else {
+      const q = route.query
+      if (q.vehiculo)    form.value.vehiculo_id    = Number(q.vehiculo)
+      if (q.fecha)       form.value.fecha_programada = q.fecha
+      if (q.presupuesto) form.value.presupuesto     = q.presupuesto
+      if (q.tipo)        cargarTipo(q.tipo)
     }
   } finally {
     cargando.value = false
@@ -90,7 +149,7 @@ const cargarDatos = async () => {
 
 const guardar = async () => {
   const permiso = esNuevo.value ? 'mantenciones.crear' : 'mantenciones.editar'
-  if (!tienePermiso(permiso)) { toast.value?.agregar('Sin permisos para esta acción', 'error'); return }
+  if (!tienePermiso(permiso)) { toast.agregar('Sin permisos para esta acción', 'error'); return }
 
   errores.value     = {}
   errorGlobal.value = ''
@@ -100,25 +159,33 @@ const guardar = async () => {
     return
   }
 
-  if (!form.value.tipo_mantencion.trim()) {
-    errores.value.tipo_mantencion = ['Este campo es obligatorio.']
+  if (!tipoMantencion.value.trim()) {
+    errores.value.tipo_mantencion = [tipoSeleccionado.value === 'otro' ? 'Describe el tipo de mantención.' : 'Selecciona un tipo de mantención.']
+    return
+  }
+
+  if (!form.value.fecha_programada) {
+    errores.value.fecha_programada = ['La fecha programada es obligatoria.']
+    return
+  }
+
+  if (esNuevo.value && form.value.fecha_programada < new Date().toISOString().split('T')[0]) {
+    errores.value.fecha_programada = ['La fecha programada no puede ser en el pasado.']
+    return
+  }
+
+  if (form.value.presupuesto !== '' && Number(form.value.presupuesto) <= 0) {
+    errores.value.presupuesto = ['El presupuesto debe ser mayor a 0.']
     return
   }
 
   const payload = {
-    vehiculo_id:            form.value.vehiculo_id,
-    tipo_mantencion:        form.value.tipo_mantencion,
-    descripcion:            form.value.descripcion,
-    taller_proveedor:       form.value.taller_proveedor,
-    presupuesto:            form.value.presupuesto            !== '' ? form.value.presupuesto            : null,
-    fecha_programada:       form.value.fecha_programada       !== '' ? form.value.fecha_programada       : null,
-    kilometraje_programado: form.value.kilometraje_programado !== '' ? form.value.kilometraje_programado : null,
-    estado:                 form.value.estado,
-  }
-
-  if (!payload.fecha_programada && !payload.kilometraje_programado) {
-    errores.value.fecha_programada = ['Debes ingresar al menos una fecha o kilometraje programado.']
-    return
+    vehiculo_id:      form.value.vehiculo_id,
+    tipo_mantencion:  tipoMantencion.value,
+    taller_proveedor: form.value.taller_proveedor,
+    presupuesto:      form.value.presupuesto !== '' ? form.value.presupuesto : null,
+    fecha_programada: form.value.fecha_programada,
+    estado:           form.value.estado,
   }
 
   guardando.value = true
@@ -128,7 +195,7 @@ const guardar = async () => {
     const res    = await apiFetchEmpresa(url, { method, body: payload })
 
     if (res.ok) {
-      toast.value?.agregar(esNuevo.value ? 'Mantención programada exitosamente' : 'Mantención actualizada', 'success')
+      toast.agregar(esNuevo.value ? 'Mantención programada exitosamente' : 'Mantención actualizada', 'success')
       setTimeout(() => router.push(ruta('/mantenciones')), 600)
     } else {
       let data = null
@@ -159,7 +226,6 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
 
     <!-- Encabezado -->
     <div class="page-header">
@@ -216,6 +282,12 @@ onMounted(async () => {
         Volver a Programados
       </button>
 
+      <!-- Banner pre-llenado desde alerta -->
+      <div v-if="route.query.tipo" class="banner-alerta">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Formulario pre-llenado desde una alerta predictiva. Revisa y ajusta si es necesario.
+      </div>
+
       <div class="form-card">
         <h2 class="form-titulo">{{ tituloForm }}</h2>
 
@@ -246,46 +318,27 @@ onMounted(async () => {
 
           <div class="form-group">
             <label class="label">Tipo de Mantención <span class="req">*</span></label>
+            <select v-model="tipoSeleccionado" class="input">
+              <option value="">— Seleccionar tipo —</option>
+              <option v-for="t in TIPOS_MANTENCION" :key="t.key" :value="t.key">{{ t.label }}</option>
+            </select>
             <input
-              v-model="form.tipo_mantencion"
-              class="input"
-              required
-              placeholder="Ej: Cambio de aceite, Revisión 10.000 km, Frenos..."
+              v-if="tipoSeleccionado === 'otro'"
+              v-model="tipoOtro"
+              class="input mt-1"
+              placeholder="Describe el tipo de mantención..."
+              autocomplete="off"
             />
             <p v-if="errores.tipo_mantencion" class="field-error">{{ errores.tipo_mantencion[0] }}</p>
           </div>
 
-          <div class="form-group">
-            <label class="label">Descripción</label>
-            <textarea
-              v-model="form.descripcion"
-              class="input textarea"
-              rows="3"
-              placeholder="Detalla el trabajo a realizar, piezas, observaciones..."
-            />
-          </div>
-
           <!-- Sección: Programación -->
           <div class="seccion-titulo mt-2">Programación</div>
-          <p class="seccion-hint">Ingresa al menos una fecha o un kilometraje programado.</p>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label class="label">Fecha programada</label>
-              <input v-model="form.fecha_programada" type="date" class="input"/>
-              <p v-if="errores.fecha_programada" class="field-error">{{ errores.fecha_programada[0] }}</p>
-            </div>
-            <div class="form-group">
-              <label class="label">Kilometraje programado</label>
-              <input
-                v-model="form.kilometraje_programado"
-                type="number"
-                class="input"
-                min="0"
-                placeholder="Ej: 50000"
-              />
-              <p v-if="errores.kilometraje_programado" class="field-error">{{ errores.kilometraje_programado[0] }}</p>
-            </div>
+          <div class="form-group">
+            <label class="label">Fecha programada <span class="req">*</span></label>
+            <input v-model="form.fecha_programada" type="date" class="input"/>
+            <p v-if="errores.fecha_programada" class="field-error">{{ errores.fecha_programada[0] }}</p>
           </div>
 
           <!-- Sección: Taller y presupuesto -->
@@ -297,8 +350,13 @@ onMounted(async () => {
               <input
                 v-model="form.taller_proveedor"
                 class="input"
-                placeholder="Ej: Taller Mecánico López, AutoCenter..."
+                list="talleres-list"
+                placeholder="Ej: Taller Mecánico López..."
+                autocomplete="off"
               />
+              <datalist id="talleres-list">
+                <option v-for="t in sugerencias.talleres" :key="t" :value="t"/>
+              </datalist>
             </div>
             <div class="form-group">
               <label class="label">Presupuesto estimado ($)</label>
@@ -310,6 +368,10 @@ onMounted(async () => {
                 step="1"
                 placeholder="Opcional"
               />
+              <p v-if="errores.presupuesto" class="field-error">{{ errores.presupuesto[0] }}</p>
+              <p v-else-if="sugerencias.presupuesto_por_tipo[tipoMantencion]" class="field-hint">
+                Sugerido por el plan: ${{ Number(sugerencias.presupuesto_por_tipo[tipoMantencion]).toLocaleString('es-CL') }}
+              </p>
             </div>
           </div>
 
@@ -346,6 +408,14 @@ onMounted(async () => {
 .btn-volver:hover { border-color: #4F46E5; color: #4F46E5; }
 .btn-volver svg { width: 16px; height: 16px; }
 
+.banner-alerta {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px;
+  padding: 0.625rem 1rem; font-size: 0.8125rem; color: #1D4ED8;
+  margin-bottom: 1.25rem;
+}
+.banner-alerta svg { width: 16px; height: 16px; flex-shrink: 0; }
+
 .form-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 14px; padding: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); max-width: 720px; }
 .form-titulo { font-size: 1.125rem; font-weight: 700; color: #111827; margin: 0 0 1.5rem; }
 
@@ -353,6 +423,7 @@ onMounted(async () => {
 
 .seccion-titulo { font-size: 0.8125rem; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: 0.05em; padding-bottom: 0.5rem; border-bottom: 1px solid #E5E7EB; margin-bottom: 1rem; }
 .seccion-hint { font-size: 0.8rem; color: #9CA3AF; margin: -0.5rem 0 1rem; }
+.mt-1 { margin-top: 0.375rem; }
 .mt-2 { margin-top: 1.5rem; }
 
 .form { display: flex; flex-direction: column; }
@@ -364,6 +435,7 @@ onMounted(async () => {
 .input:focus { border-color: #4F46E5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
 .textarea { resize: vertical; font-family: inherit; }
 .field-error { font-size: 0.75rem; color: #EF4444; margin: 0; }
+.field-hint { font-size: 0.75rem; color: #6B7280; margin: 0; }
 
 .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.75rem; padding-top: 1.25rem; border-top: 1px solid #E5E7EB; }
 .btn-secondary { padding: 0.625rem 1.25rem; background: #fff; border: 1px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; transition: background 0.15s; }

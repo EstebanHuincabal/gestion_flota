@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { tienePermiso } from '../../utils/permisos.js'
+import NotificacionesBell from '../../components/NotificacionesBell.vue'
 
 const router  = useRouter()
 const route   = useRoute()
@@ -39,6 +40,13 @@ const navItems = [
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`,
+  },
+  {
+    label: 'Predictivo',
+    path: '/empresa/predictivo',
+    permiso: 'mantenciones.ver',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M13 10V3L4 14h7v7l9-11h-7z"/>`
   },
   {
     label: 'Documentos',
@@ -120,30 +128,31 @@ const cerrarSesion = () => {
         </router-link>
       </nav>
 
-      <!-- Footer -->
-      <div class="sidebar-footer">
-        <div class="user-block" v-if="!collapsed">
-          <div class="user-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
-          <div class="user-info">
-            <p class="user-name">{{ usuario.nombre }}</p>
-            <p class="user-role">{{ usuario.rol }}</p>
-          </div>
-        </div>
-        <div v-else class="user-avatar solo">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
-
-        <button class="logout-btn" @click="cerrarSesion" :title="collapsed ? 'Cerrar sesión' : ''">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-          </svg>
-          <span v-if="!collapsed">Salir</span>
-        </button>
-      </div>
-
     </aside>
 
     <main class="main-content">
-      <RouterView />
+      <header class="topbar">
+        <div class="topbar-right">
+          <NotificacionesBell />
+          <div class="session-pill">
+            <div class="session-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
+            <div class="session-details">
+              <span class="session-name">{{ usuario.nombre }}</span>
+              <span class="session-role">{{ usuario.rol }}</span>
+            </div>
+          </div>
+          <button class="topbar-logout" @click="cerrarSesion" title="Cerrar sesión">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+            </svg>
+            <span>Salir</span>
+          </button>
+        </div>
+      </header>
+      <div class="page-content">
+        <RouterView />
+      </div>
     </main>
 
   </div>
@@ -208,37 +217,41 @@ const cerrarSesion = () => {
 .nav-label { flex: 1; }
 .active-bar { width: 3px; height: 16px; background: #fff; border-radius: 2px; }
 
-.sidebar-footer {
-  padding: 0.75rem 0.625rem; border-top: 1px solid rgba(255,255,255,0.12);
-  display: flex; flex-direction: column; gap: 0.5rem;
+.main-content {
+  margin-left: 240px; flex: 1; min-height: 100vh;
+  transition: margin-left 0.25s ease;
+  display: flex; flex-direction: column;
 }
-
-.user-block {
-  display: flex; align-items: center; gap: 0.625rem;
-  padding: 0.5rem; border-radius: 10px; background: rgba(255,255,255,0.1);
-}
-.user-avatar {
-  flex-shrink: 0; width: 32px; height: 32px;
-  background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 0.8125rem; font-weight: 700; color: #fff;
-}
-.user-avatar.solo { margin: 0 auto; }
-.user-info { overflow: hidden; }
-.user-name { font-size: 0.8125rem; font-weight: 600; color: #fff; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.user-role { font-size: 0.7rem; color: rgba(255,255,255,0.55); margin: 0; }
-
-.logout-btn {
-  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
-  width: 100%; padding: 0.55rem 0.75rem;
-  border: 1.5px solid rgba(255,255,255,0.2); border-radius: 10px;
-  background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.75);
-  font-size: 0.8125rem; font-weight: 500; cursor: pointer;
-  transition: border-color 0.2s, color 0.2s, background 0.2s; font-family: inherit;
-}
-.logout-btn:hover { border-color: rgba(255,255,255,0.5); color: #fff; background: rgba(255,255,255,0.15); }
-.logout-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
-
-.main-content { margin-left: 240px; flex: 1; min-height: 100vh; transition: margin-left 0.25s ease; }
 .sidebar.collapsed ~ .main-content { margin-left: 68px; }
+
+.topbar {
+  height: 64px; background: #fff; border-bottom: 1px solid #E5E7EB;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 1.5rem; flex-shrink: 0;
+}
+.topbar-right { display: flex; align-items: center; gap: 0.75rem; }
+.session-pill {
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.4rem;
+  background: #F3F4F6; border-radius: 50px;
+}
+.session-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 0.8125rem; font-weight: 700; flex-shrink: 0;
+}
+.session-details { display: flex; flex-direction: column; }
+.session-name { font-size: 0.8125rem; font-weight: 600; color: #111827; line-height: 1.2; }
+.session-role { font-size: 0.6875rem; color: #6B7280; }
+.topbar-logout {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 0.875rem; border-radius: 8px;
+  border: 1px solid #E5E7EB; background: #fff;
+  color: #6B7280; font-size: 0.8125rem; font-weight: 500;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; font-family: inherit;
+}
+.topbar-logout:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
+.topbar-logout svg { width: 16px; height: 16px; }
+.page-content { flex: 1; overflow-y: auto; }
 </style>

@@ -2,11 +2,13 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { useToast } from '../../utils/useToast.js'
 
 const router = useRouter()
 const route  = useRoute()
 const id     = route.params.id
 
+const toast     = useToast()
 const cargando  = ref(true)
 const guardando = ref(false)
 const error     = ref('')
@@ -85,6 +87,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al actualizar el usuario'
       return
     }
+    toast.success('Usuario actualizado exitosamente')
     router.push('/usuarios')
   } catch {
     error.value = 'Error de conexión con el servidor'

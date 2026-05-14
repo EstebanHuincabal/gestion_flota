@@ -4,12 +4,12 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../../utils/permisos.js'
-import AppToast from '../../../../components/AppToast.vue'
+import { useToast } from '../../../../utils/useToast.js'
 import ConfirmModal from '../../../../components/ConfirmModal.vue'
 
 const router    = useRouter()
 const { ruta }  = useEmpresaNav()
-const toast     = ref(null)
+const toast = useToast()
 
 const esSuperadmin = JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN'
 
@@ -54,10 +54,11 @@ const cargando       = ref(true)
 const filtroEstado   = ref('')
 const filtroVehiculo = ref('')
 
-const confirmState  = ref({ visible: false, id: null })
-const modalRealizar = ref({ visible: false, item: null })
-const formRealizar  = ref({ fecha_realizada: '', kilometraje_realizado: '', costo: 0 })
-const guardandoR    = ref(false)
+const confirmState   = ref({ visible: false, id: null })
+const modalRealizar  = ref({ visible: false, item: null })
+const formRealizar   = ref({ fecha_realizada: '', kilometraje_realizado: '', costo: 0 })
+const erroresModal   = ref({})
+const guardandoR     = ref(false)
 
 const mantencionesFiltradas = computed(() =>
   mantenciones.value
@@ -84,23 +85,46 @@ const cargar = async () => {
 }
 
 const marcarEnProceso = async (m) => {
-  if (!tienePermiso('mantenciones.editar')) { toast.value?.agregar('Sin permisos', 'error'); return }
+  if (!tienePermiso('mantenciones.editar')) { toast.agregar('Sin permisos', 'error'); return }
   const res = await apiFetchEmpresa(`/api/empresa/mantenciones/${m.id}/`, { method: 'PUT', body: { estado: 'en_proceso' } })
-  if (res.ok) { toast.value?.agregar('Mantención en proceso', 'success'); await cargar() }
-  else toast.value?.agregar('Error al actualizar', 'error')
+  if (res.ok) { toast.agregar('Mantención en proceso', 'success'); await cargar() }
+  else toast.agregar('Error al actualizar', 'error')
 }
 
 const abrirCompletar = (m) => {
-  if (!tienePermiso('mantenciones.editar')) { toast.value?.agregar('Sin permisos', 'error'); return }
+  if (!tienePermiso('mantenciones.editar')) { toast.agregar('Sin permisos', 'error'); return }
+  erroresModal.value = {}
   formRealizar.value = {
-    fecha_realizada: new Date().toISOString().split('T')[0],
+    fecha_realizada:       new Date().toISOString().split('T')[0],
     kilometraje_realizado: m.kilometraje_programado || '',
-    costo: 0,
+    costo:                 m.presupuesto || 0,
   }
   modalRealizar.value = { visible: true, item: m }
 }
 
 const confirmarCompletar = async () => {
+  erroresModal.value = {}
+  const hoy          = new Date().toISOString().split('T')[0]
+  const fechaR       = formRealizar.value.fecha_realizada
+  const fechaProg    = modalRealizar.value.item?.fecha_programada
+
+  if (!fechaR) {
+    erroresModal.value.fecha = 'La fecha realizada es obligatoria.'
+    return
+  }
+  if (fechaR > hoy) {
+    erroresModal.value.fecha = 'La fecha realizada no puede ser una fecha futura.'
+    return
+  }
+  if (fechaProg && fechaR < fechaProg) {
+    erroresModal.value.fecha = `La fecha realizada no puede ser anterior a la programada (${formatFecha(fechaProg)}).`
+    return
+  }
+  if (!formRealizar.value.costo || Number(formRealizar.value.costo) <= 0) {
+    erroresModal.value.costo = 'El costo real debe ser mayor a 0.'
+    return
+  }
+
   guardandoR.value = true
   const { id } = modalRealizar.value.item
   const payload = { estado: 'realizada', ...formRealizar.value }
@@ -109,20 +133,21 @@ const confirmarCompletar = async () => {
   guardandoR.value = false
   if (res.ok) {
     modalRealizar.value.visible = false
-    toast.value?.agregar('Mantención completada', 'success')
+    toast.agregar('Mantención completada', 'success')
     await cargar()
   } else {
-    toast.value?.agregar('Error al completar', 'error')
+    const data = await res.json().catch(() => null)
+    toast.agregar(data?.error || 'Error al completar', 'error')
   }
 }
 
 const irEditar = (m) => {
-  if (!tienePermiso('mantenciones.editar')) { toast.value?.agregar('Sin permisos', 'error'); return }
+  if (!tienePermiso('mantenciones.editar')) { toast.agregar('Sin permisos', 'error'); return }
   router.push(ruta(`/mantenciones/${m.id}/editar`))
 }
 
 const pedirEliminar = (m) => {
-  if (!tienePermiso('mantenciones.eliminar')) { toast.value?.agregar('Sin permisos', 'error'); return }
+  if (!tienePermiso('mantenciones.eliminar')) { toast.agregar('Sin permisos', 'error'); return }
   confirmState.value = { visible: true, id: m.id }
 }
 
@@ -130,8 +155,8 @@ const eliminar = async () => {
   const id = confirmState.value.id
   confirmState.value.visible = false
   const res = await apiFetchEmpresa(`/api/empresa/mantenciones/${id}/`, { method: 'DELETE' })
-  if (res.ok) { toast.value?.agregar('Mantención eliminada', 'success'); await cargar() }
-  else toast.value?.agregar('Error al eliminar', 'error')
+  if (res.ok) { toast.agregar('Mantención eliminada', 'success'); await cargar() }
+  else toast.agregar('Error al eliminar', 'error')
 }
 
 const formatFecha = (f) => f ? new Date(f + 'T12:00:00').toLocaleDateString('es-CL') : '—'
@@ -149,7 +174,6 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
     <ConfirmModal
       v-if="confirmState.visible"
       titulo="Eliminar mantención"
@@ -219,6 +243,7 @@ onMounted(async () => {
       <router-link :to="ruta('/mantenciones')"            class="subnav-tab" active-class="subnav-tab-active" exact>Programados</router-link>
       <router-link :to="ruta('/mantenciones/calendario')" class="subnav-tab" active-class="subnav-tab-active">Calendario</router-link>
       <router-link :to="ruta('/mantenciones/historial')"  class="subnav-tab" active-class="subnav-tab-active">Historial</router-link>
+      <router-link :to="ruta('/mantenciones/predictivo')" class="subnav-tab" active-class="subnav-tab-active">Predictivo</router-link>
       <router-link :to="ruta('/mantenciones/nueva')"      class="subnav-btn">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Programar
@@ -302,6 +327,13 @@ onMounted(async () => {
               <td>
                 <div class="acciones">
                   <button
+                    class="btn-icon"
+                    title="Ver detalle"
+                    @click="router.push(ruta(`/mantenciones/${m.id}`))"
+                  >
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  </button>
+                  <button
                     v-if="m.estado === 'pendiente'"
                     class="btn-icon"
                     title="Marcar En Proceso"
@@ -342,7 +374,8 @@ onMounted(async () => {
           <form @submit.prevent="confirmarCompletar" class="form mt-4">
             <div class="form-group">
               <label class="label">Fecha Realizada <span class="req">*</span></label>
-              <input v-model="formRealizar.fecha_realizada" type="date" class="input" required/>
+              <input v-model="formRealizar.fecha_realizada" type="date" class="input" :max="new Date().toISOString().split('T')[0]"/>
+              <p v-if="erroresModal.fecha" class="modal-error">{{ erroresModal.fecha }}</p>
             </div>
             <div class="form-row">
               <div class="form-group">
@@ -351,7 +384,11 @@ onMounted(async () => {
               </div>
               <div class="form-group">
                 <label class="label">Costo Real ($) <span class="req">*</span></label>
-                <input v-model="formRealizar.costo" type="number" class="input" required min="0"/>
+                <input v-model="formRealizar.costo" type="number" class="input" min="1"/>
+                <p v-if="erroresModal.costo" class="modal-error">{{ erroresModal.costo }}</p>
+                <p v-else-if="modalRealizar.item?.presupuesto" class="modal-hint">
+                  Presupuesto estimado: ${{ Number(modalRealizar.item.presupuesto).toLocaleString('es-CL') }}
+                </p>
               </div>
             </div>
             <div class="modal-actions mt-6">
@@ -474,4 +511,5 @@ onMounted(async () => {
 .btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; }
 .btn-success { padding: 0.6rem 1.25rem; background: linear-gradient(135deg,#10B981,#059669); color: #fff; font-size: 0.875rem; font-weight: 600; border: none; border-radius: 10px; cursor: pointer; transition: opacity 0.15s; }
 .btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
+.modal-hint { font-size: 0.75rem; color: #6B7280; margin: 0.25rem 0 0; }
 </style>

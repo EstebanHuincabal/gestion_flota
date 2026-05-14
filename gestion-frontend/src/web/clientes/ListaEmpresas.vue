@@ -3,14 +3,14 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
-import AppToast from '../../components/AppToast.vue'
+import { useToast } from '../../utils/useToast.js'
 
 const router = useRouter()
 const empresas = ref([])
 const cargando = ref(true)
 const error = ref('')
 
-const toast = ref(null)
+const toast = useToast()
 const confirm = ref({ visible: false, empresa: null, accion: 'desactivar' })
 
 const cargarEmpresas = async () => {
@@ -42,18 +42,18 @@ const confirmarAccion = async () => {
     if (accion === 'desactivar') {
       const res = await apiFetch(`/api/empresas/${empresa.id}/`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al desactivar la empresa')
-      toast.value?.agregar(`"${empresa.nombre}" fue desactivada.`, 'success')
+      toast.agregar(`"${empresa.nombre}" fue desactivada.`, 'success')
     } else {
       const res = await apiFetch(`/api/empresas/${empresa.id}/`, {
         method: 'PUT',
         body: { estado: 'activa' },
       })
       if (!res.ok) throw new Error('Error al activar la empresa')
-      toast.value?.agregar(`"${empresa.nombre}" fue activada.`, 'success')
+      toast.agregar(`"${empresa.nombre}" fue activada.`, 'success')
     }
     await cargarEmpresas()
   } catch (e) {
-    toast.value?.agregar(e.message, 'error')
+    toast.agregar(e.message, 'error')
   }
 }
 
@@ -61,7 +61,6 @@ onMounted(cargarEmpresas)
 </script>
 
 <template>
-  <AppToast ref="toast" />
 
   <ConfirmModal
     v-if="confirm.visible"

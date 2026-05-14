@@ -1,10 +1,10 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const toasts = ref([])
 let nextId = 0
 
-const agregar = (mensaje, tipo = 'error', duracion = 4000) => {
+const agregar = (mensaje, tipo = 'info', duracion = 4000) => {
   const id = ++nextId
   toasts.value.push({ id, mensaje, tipo })
   setTimeout(() => eliminar(id), duracion)
@@ -13,6 +13,11 @@ const agregar = (mensaje, tipo = 'error', duracion = 4000) => {
 const eliminar = (id) => {
   toasts.value = toasts.value.filter(t => t.id !== id)
 }
+
+const onGlobalToast = (e) => agregar(e.detail.msg, e.detail.tipo)
+
+onMounted(()   => window.addEventListener('app-toast', onGlobalToast))
+onUnmounted(() => window.removeEventListener('app-toast', onGlobalToast))
 
 defineExpose({ agregar })
 </script>

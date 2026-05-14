@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { useToast } from '../../../utils/useToast.js'
 
 const props = defineProps({ modo: { type: String, default: 'nuevo' } })
 const router = useRouter()
@@ -10,6 +11,7 @@ const { ruta } = useEmpresaNav()
 const vehiculoId = route.params.id
 const flotaIdParam = route.params.flotaId   // solo en modo nuevo desde flota
 
+const toast     = useToast()
 const cargando  = ref(props.modo === 'editar')
 const guardando = ref(false)
 const error     = ref('')
@@ -63,6 +65,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al guardar'
       return
     }
+    toast.success(props.modo === 'editar' ? 'Vehículo actualizado exitosamente' : 'Vehículo registrado exitosamente')
     router.push(ruta('/flota'))
   } catch { error.value = 'Error de conexión' }
   finally { guardando.value = false }

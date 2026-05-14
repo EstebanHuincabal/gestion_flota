@@ -767,3 +767,104 @@ class LogAuditoriaSerializer(serializers.ModelSerializer):
 
     def get_usuario_nombre(self, obj):
         return obj.usuario.nombre if obj.usuario else None
+
+
+# ─────────────────────────────────────────
+# Mantenimiento Predictivo
+# ─────────────────────────────────────────
+
+from .models import (
+    PlanMantenimiento, ReglaMantenimiento, VehiculoPlan,
+    MantencionProgramada, AlertaMantencion
+)
+
+class ReglaMantenimientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReglaMantenimiento
+        fields = ['id', 'tipo', 'prioridad', 'intervalo_dias', 'umbral_alerta_dias', 
+                  'canal', 'escalar_sin_respuesta', 'bloquear_despacho', 'costo_estimado']
+
+class PlanMantenimientoSerializer(serializers.ModelSerializer):
+    reglas = ReglaMantenimientoSerializer(many=True, read_only=False)
+
+    class Meta:
+        model = PlanMantenimiento
+        fields = ['id', 'nombre', 'descripcion', 'activo', 'created_at', 'reglas']
+
+    def create(self, validated_data):
+        reglas_data = validated_data.pop('reglas', [])
+        empresa = self.context['request'].user.empresa
+        plan = PlanMantenimiento.objects.create(empresa=empresa, **validated_data)
+        for regla_data in reglas_data:
+            ReglaMantenimiento.objects.create(plan=plan, **regla_data)
+        return plan
+
+    def update(self, instance, validated_data):
+        reglas_data = validated_data.pop('reglas', [])
+        instance.nombre = validated_data.get('nombre', instance.nombre)
+        instance.descripcion = validated_data.get('descripcion', instance.descripcion)
+        instance.activo = validated_data.get('activo', instance.activo)
+        instance.save()
+
+        # Update o create reglas
+        # Por simplicidad, si se envían reglas se eliminan las actuales y se recrean (o se puede hacer más fino)
+        instance.reglas.all().delete()
+        for regla_data in reglas_data:
+            ReglaMantenimiento.objects.create(plan=instance, **regla_data)
+        return instance
+
+class VehiculoPlanSerializer(serializers.ModelSerializer):
+    vehiculo_patente = serializers.CharField(source='vehiculo.patente', read_only=True)
+    plan_nombre = serializers.CharField(source='plan.nombre', read_only=True)
+
+    class Meta:
+        model = VehiculoPlan
+        fields = ['id', 'vehiculo', 'vehiculo_patente', 'plan', 'plan_nombre', 'fecha_asignacion']
+
+class MantencionProgramadaSerializer(serializers.ModelSerializer):
+    vehiculo_patente = serializers.CharField(source='vehiculo.patente', read_only=True)
+    regla_tipo = serializers.CharField(source='regla.tipo', read_only=True)
+
+    class Meta:
+        model = MantencionProgramada
+        fields = ['id', 'vehiculo', 'vehiculo_patente', 'regla', 'regla_tipo', 
+                  'fecha_ultima', 'fecha_siguiente', 'estado']
+
+class AlertaMantencionSerializer(serializers.ModelSerializer):
+    vehiculo_patente = serializers.CharField(source='mantencion_programada.vehiculo.patente', read_only=True)
+    vehiculo_id      = serializers.IntegerField(source='mantencion_programada.vehiculo.id', read_only=True)
+    tipo_mantencion  = serializers.CharField(source='mantencion_programada.regla.tipo', read_only=True)
+    costo_estimado   = serializers.DecimalField(source='mantencion_programada.regla.costo_estimado', max_digits=12, decimal_places=2, read_only=True)
+    fecha_vencimiento = serializers.DateField(source='mantencion_programada.fecha_siguiente', read_only=True)
+
+    class Meta:
+        model = AlertaMantencion
+        fields = ['id', 'nivel', 'dias_restantes', 'pct_avance', 'enviada', 'atendida',
+                  'fecha_creacion', 'fecha_atencion', 'vehiculo_patente', 'vehiculo_id',
+                  'tipo_mantencion', 'costo_estimado', 'fecha_vencimiento']
+
+
+# ─────────────────────────────────────────
+# Notificaciones
+# ─────────────────────────────────────────
+
+from .models import Notificacion, NOTIF_PREFS_DEFAULT
+
+class NotificacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Notificacion
+        fields = ['id', 'tipo', 'titulo', 'mensaje', 'leida', 'url_accion', 'extra', 'fecha']
+
+
+class PreferenciasNotificacionSerializer(serializers.Serializer):
+    inapp  = serializers.ListField(child=serializers.CharField(), default=list)
+    email  = serializers.ListField(child=serializers.CharField(), default=list)
+    push_token = serializers.CharField(default='', allow_blank=True)
+
+    CATEGORIAS_VALIDAS = {'mantencion', 'documentos', 'seguridad', 'actividad'}
+
+    def validate_inapp(self, value):
+        return [v for v in value if v in self.CATEGORIAS_VALIDAS]
+
+    def validate_email(self, value):
+        return [v for v in value if v in self.CATEGORIAS_VALIDAS]

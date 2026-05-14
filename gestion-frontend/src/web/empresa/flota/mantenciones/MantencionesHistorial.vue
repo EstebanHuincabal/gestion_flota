@@ -4,11 +4,11 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../../utils/permisos.js'
-import AppToast from '../../../../components/AppToast.vue'
+import { useToast } from '../../../../utils/useToast.js'
 
 const router = useRouter()
 const { ruta } = useEmpresaNav()
-const toast = ref(null)
+const toast = useToast()
 
 const historial   = ref([])
 const vehiculos   = ref([])
@@ -82,7 +82,7 @@ const cargar = async () => {
 }
 
 const irEditar = (m) => {
-  if (!tienePermiso('mantenciones.editar')) { toast.value?.agregar('Sin permisos', 'error'); return }
+  if (!tienePermiso('mantenciones.editar')) { toast.agregar('Sin permisos', 'error'); return }
   router.push(ruta(`/mantenciones/${m.id}/editar`))
 }
 
@@ -98,7 +98,6 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargar()]) })
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
 
     <!-- Encabezado -->
     <div class="page-header">

@@ -2,9 +2,11 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { useToast } from '../../../utils/useToast.js'
 
 const router    = useRouter()
 const { ruta }  = useEmpresaNav()
+const toast     = useToast()
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
@@ -101,6 +103,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al crear el conductor'
       return
     }
+    toast.success('Conductor creado exitosamente')
     router.push(ruta('/conductores'))
   } catch {
     error.value = 'Error de conexión con el servidor'

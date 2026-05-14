@@ -2,9 +2,11 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { useToast } from '../../utils/useToast.js'
 
 const router  = useRouter()
 const route   = useRoute()
+const toast     = useToast()
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
@@ -88,6 +90,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al crear el usuario'
       return
     }
+    toast.success('Usuario creado exitosamente')
     router.push(desdeEmpresa.value ? '/empresas' : '/usuarios')
   } catch {
     error.value = 'Error de conexión con el servidor'

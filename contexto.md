@@ -9,6 +9,7 @@ Sistema web de gestión de flotas vehiculares con arquitectura desacoplada: fron
 - **Base de datos:** SQLite3 (desarrollo)
 - **Zona horaria:** America/Santiago (Chile)
 - **Idioma:** Español de Chile (es-cl)
+- **Rama activa:** `test` (rama `main` es la de producción)
 
 ---
 
@@ -43,49 +44,83 @@ Sistema web de gestión de flotas vehiculares con arquitectura desacoplada: fron
 gestion-de-flota/
 ├── gestion-frontend/              # Aplicación Vue 3
 │   ├── src/
-│   │   ├── router/                # Rutas Vue Router
-│   │   ├── utils/                 # Utilidades (api.js, permisos.js, empresaActiva.js)
-│   │   ├── components/            # Componentes reutilizables
-│   │   │   ├── AppToast.vue
-│   │   │   ├── ConfirmModal.vue
-│   │   │   └── PermisoToast.vue
-│   │   ├── stores/                # Almacenes de estado (vacío)
+│   │   ├── router/index.js        # Rutas Vue Router (SUPERADMIN + EMPRESA)
+│   │   ├── utils/
+│   │   │   ├── api.js             # Helper apiFetch centralizado
+│   │   │   ├── permisos.js        # Helper tienePermiso()
+│   │   │   └── empresaActiva.js   # Helper empresa activa
+│   │   ├── components/
+│   │   │   ├── AppToast.vue       # Notificaciones toast globales
+│   │   │   ├── ConfirmModal.vue   # Modal de confirmación genérico
+│   │   │   └── PermisoToast.vue   # Toast de permisos denegados
 │   │   ├── assets/                # CSS y recursos estáticos
 │   │   └── web/                   # Vistas de la aplicación
 │   │       ├── login.vue
 │   │       ├── Base.vue            # Layout SUPERADMIN
-│   │       ├── Dashboard.vue
-│   │       ├── clientes/           # Gestión de empresas
-│   │       ├── usuarios/           # Gestión de usuarios
+│   │       ├── Dashboard.vue       # Dashboard compartido (SUPERADMIN y EMPRESA)
+│   │       ├── clientes/           # Gestión de empresas (SUPERADMIN)
+│   │       │   ├── ListaEmpresas.vue
+│   │       │   ├── NuevaEmpresa.vue
+│   │       │   ├── DetalleEmpresa.vue
+│   │       │   └── EditarEmpresa.vue
+│   │       ├── usuarios/           # Gestión de usuarios (SUPERADMIN)
+│   │       │   ├── ListaUsuarios.vue
+│   │       │   ├── NuevoUsuario.vue
+│   │       │   └── EditarUsuario.vue
+│   │       ├── configuracion/
+│   │       │   └── Configuracion.vue  # Gestión de planes de suscripción
+│   │       ├── logs/
+│   │       │   └── Logs.vue           # Logs de auditoría
+│   │       ├── permisos/
+│   │       │   └── GestionPermisos.vue
 │   │       └── empresa/            # Vistas del panel de empresa
-│   ├── package.json
-│   ├── vite.config.js
-│   └── tailwind.config.js
+│   │           ├── EmpresaLayout.vue  # Sidebar + layout USUARIO
+│   │           ├── conductores/
+│   │           │   ├── ListaConductores.vue
+│   │           │   ├── NuevoConductor.vue
+│   │           │   ├── EditarConductor.vue
+│   │           │   └── DetalleConductor.vue
+│   │           ├── flota/
+│   │           │   ├── ListaFlota.vue
+│   │           │   ├── NuevaFlota.vue
+│   │           │   ├── EditarFlota.vue
+│   │           │   ├── FormVehiculo.vue  # Crear/editar vehículo (modo: nuevo|editar)
+│   │           │   └── mantenciones/
+│   │           │       ├── MantencionesLista.vue
+│   │           │       ├── MantencionesCalendario.vue
+│   │           │       ├── MantencionesForm.vue
+│   │           │       └── MantencionesHistorial.vue
+│   │           └── predictivo/
+│   │               └── MantencionPredictiva.vue  # ★ NUEVO: Módulo predictivo completo
 │
 ├── gestion_backend/               # Backend Django
 │   ├── g_de_flota/                # App principal
 │   │   ├── models.py              # Modelos de datos
-│   │   ├── views.py               # Vistas/Controladores (1.227 líneas)
-│   │   ├── serializers.py         # Serializadores DRF (761 líneas)
-│   │   ├── urls.py                # Rutas de la API
+│   │   ├── views.py               # Vistas/Controladores (~1.435 líneas)
+│   │   ├── serializers.py         # Serializadores DRF (~761 líneas)
 │   │   ├── admin.py               # Panel de administración
 │   │   ├── middleware.py          # Timeout de sesión
 │   │   ├── audit.py               # Sistema de auditoría
 │   │   ├── backends.py            # Autenticación por RUT
-│   │   └── migrations/            # 15 migraciones aplicadas
+│   │   └── migrations/            # 18 migraciones aplicadas
+│   │       └── 0018_mantencionprogramada_alertamantencion_and_more.py  # ★ NUEVA
+│   │   └── management/commands/
+│   │       ├── crear_superusuario.py
+│   │       └── evaluar_mantenciones_predictivas.py  # ★ NUEVO: Job diario
 │   ├── gestion_backend/
 │   │   ├── settings.py
 │   │   ├── urls.py
 │   │   ├── wsgi.py
 │   │   └── asgi.py
 │   ├── manage.py
-│   ├── db.sqlite3                 # Base de datos (315 KB)
+│   ├── db.sqlite3
 │   └── .env                       # Variables de entorno
 │
-├── docs/                          # Documentación del proyecto
+├── docs/documentacion.md          # Documentación del proyecto
+├── Mejoras.md                     # Especificación del módulo predictivo
+├── contexto.md                    # Este archivo
 ├── iniciar.ps1                    # Script de inicio PowerShell
-├── iniciar.bat                    # Script de inicio Batch
-└── .gitignore
+└── iniciar.bat                    # Script de inicio Batch
 ```
 
 ---
@@ -97,7 +132,7 @@ gestion-de-flota/
 - Backend personalizado `RutBackend` para validar RUT chileno
 - Bloqueo automático tras **5 intentos fallidos**
 - Desbloqueo manual por SUPERADMIN
-- Reset de contraseña
+- Reset de contraseña (resetea al RUT del usuario)
 - Timeout de sesión por inactividad (middleware)
 - Logout con destrucción de sesión
 
@@ -109,29 +144,31 @@ Tres roles con permisos diferenciados:
 |---|---|
 | `SUPERADMIN` | Acceso global a todas las empresas, configuración del sistema |
 | `USUARIO` | Administrador dentro de una empresa específica |
-| `CONDUCTOR` | Perfil operativo, asignación de vehículos |
+| `CONDUCTOR` | Perfil operativo, asignación de vehículos (sin panel web) |
 
-Sistema de **permisos granulares** M2M: cada usuario puede tener permisos individuales asignados por código y categoría, verificados mediante decoradores `@permission_classes`.
+Sistema de **permisos granulares** M2M: cada usuario puede tener permisos individuales asignados por código y categoría. Los permisos se verifican con el helper `tiene_permiso(user, codigo)`.
+
+Categorías de permisos existentes: `flotas`, `vehiculos`, `conductores`, `mantenciones`, `usuarios`, `documentos`.
 
 ### 3. Gestión de Empresas (Multitenancy)
 - CRUD completo de empresas
 - Planes de suscripción: **Básico**, **Pro**, **Enterprise**
 - Límites por plan: número máximo de flotas, vehículos y conductores
-- Estados: **Activa** / **Suspendida**
+- Estados: **Activa** / **Suspendida** (DELETE hace soft-delete)
 - Encriptación de datos sensibles: RUT, email, teléfono, dirección (Fernet)
 - Aislamiento total de datos por empresa
 - 16 regiones de Chile disponibles
 
 ### 4. Gestión de Usuarios
 - CRUD de usuarios con roles SUPERADMIN y USUARIO
-- Asignación/revocación de permisos individuales
+- Asignación/revocación de permisos individuales (solo SUPERADMIN)
 - Bloqueo y desbloqueo de cuentas
 - Historial de logins del usuario (últimos 20)
-- Reset de contraseña por SUPERADMIN
+- Reset de contraseña por SUPERADMIN (resetea a RUT del usuario)
 
 ### 5. Gestión de Conductores
 - CRUD de conductores dentro de cada empresa
-- Asignación y desasignación de vehículos
+- Asignación y desasignación de vehículos (1 conductor ↔ 1 vehículo activo)
 - Documentos del conductor: licencia, certificado de salud, antecedentes
 - Control de vencimiento de documentos (vigente / por vencer / vencido)
 - Historial de asignaciones de vehículos
@@ -140,9 +177,9 @@ Sistema de **permisos granulares** M2M: cada usuario puede tener permisos indivi
 - CRUD de flotas agrupadas por empresa
 - CRUD de vehículos dentro de cada flota
 - Tipos de combustible: Bencina, Diésel, Eléctrico, Híbrido
-- Documentos de vehículos: permiso de circulación, seguro, revisión técnica
+- Documentos de vehículos: permiso de circulación, seguro (SOAP), revisión técnica
 - Tracking de kilometraje actual
-- Estado activo/inactivo
+- Estado activo/inactivo (DELETE hace soft-delete)
 
 ### 7. Sistema de Asignaciones
 - Vincula Conductor ↔ Vehículo con registro temporal (desde/hasta)
@@ -151,34 +188,69 @@ Sistema de **permisos granulares** M2M: cada usuario puede tener permisos indivi
   - Un conductor solo puede tener 1 vehículo activo
 - Historial completo de asignaciones
 
-### 8. Gestión de Mantenciones
+### 8. Gestión de Mantenciones (Manual)
 - CRUD de mantenciones por vehículo
 - Programación por fecha y/o kilometraje
 - Registro de realización (fecha y km reales)
-- Estado de la mantención (pendiente, completada, etc.)
-- Registro de costo
+- Estados: `pendiente`, `en_proceso`, `realizada`, `cancelada`
+- Registro de costo, presupuesto, taller/proveedor, descripción
+- Vista de lista, historial y calendario mensual
 
-### 9. Dashboard Analítico
+### 9. ★ Módulo de Mantenimiento Predictivo (NUEVO)
+Ubicación frontend: `/empresa/predictivo` y `/predictivo` (SUPERADMIN)
 
-**Panel SUPERADMIN:**
-- KPIs: empresas activas/inactivas, total usuarios, conductores, vehículos
+**Interfaz de 4 tabs:**
+
+#### Tab Alertas
+- Listado de alertas ordenadas por urgencia (vencidas primero)
+- Filtros por nivel (`por_vencer` / `vencida`) y estado (`pendiente` / `atendida`)
+- Por cada alerta: patente, tipo de mantención, nivel con badge de color, días restantes, barra de progreso del intervalo
+- Acción inline "Registrar Mantención": abre modal, solicita fecha de realización y costo, cierra la alerta, crea registro en historial y recalcula próxima fecha
+
+#### Tab Planes
+- Listado de planes con sus reglas expandidas
+- Botón para crear nuevo plan o eliminar existente
+
+#### Tab Nuevo Plan
+- Formulario de plan con reglas dinámicas (agregar/quitar sin recargar)
+- Por cada regla: tipo de mantención, intervalo en días (con helper visual que muestra equivalencia en meses/años), umbral de alerta, prioridad, costo estimado, checkbox escalar (48h), checkbox bloquear despacho
+
+#### Tab Simulador
+- Selector de vehículo y período (3, 6 o 12 meses)
+- Proyecta todos los eventos de mantención futuros con fecha exacta y costo estimado por evento
+- Muestra totales: cantidad de eventos y presupuesto estimado total
+
+**Motor de alertas automático:**
+- Comando de management: `python manage.py evaluar_mantenciones_predictivas`
+- Debe ejecutarse diariamente a las 07:00 (configurar con cron o Celery Beat)
+- Evalúa todos los vehículos activos con plan asignado
+- Crea `AlertaMantencion` si `dias_restantes <= umbral_alerta_dias` y no hay alerta pendiente
+- Actualiza nivel de `por_vencer` a `vencida` si `dias_restantes <= 0`
+- Lógica de escalamiento a supervisor si `escalar_sin_respuesta = True` y han pasado ≥ 2 días
+- El envío real de notificaciones por canal (email/push/WhatsApp/SMS) está como `pass` — **pendiente de implementar**
+
+### 10. Dashboard Analítico
+
+**Panel SUPERADMIN (`/dashboard`):**
+- KPIs: empresas activas/inactivas, total usuarios, conductores, vehículos, empresas nuevas del mes, usuarios activos hoy
 - Gráfico de línea: crecimiento de empresas (configurable: 7d / 30d / 3m / 6m / 12m)
-- Gráfico de torta: distribución por tamaño de flota
+- Gráfico de torta: distribución por tamaño de flota (0 / 1-5 / 6-10 / +10 vehículos)
 - Gráfico de barras: top 5 empresas por vehículos
 
-**Panel EMPRESA:**
-- KPIs: flotas, vehículos, conductores, mantenciones pendientes, documentos por vencer
+**Panel EMPRESA (`/empresa/dashboard`):**
+- KPIs: flotas, vehículos, conductores, mantenciones pendientes, documentos por vencer (próximos 30 días)
 - Gráfico de barras: vehículos por flota
 - Gráfico de línea: mantenciones programadas por período
 
-### 10. Sistema de Auditoría
+### 11. Sistema de Auditoría
 - Modelo `LogAuditoria` con dos categorías:
-  - **SEGURIDAD:** logins, cambios de rol, reset de contraseña, bloqueos de cuenta
-  - **ACTIVIDAD:** crear, modificar y eliminar recursos
+  - **SEGURIDAD:** logins, cambios de rol, reset de contraseña, bloqueos de cuenta, cambio de permisos
+  - **ACTIVIDAD:** crear, modificar y eliminar recursos, atender alertas, crear/modificar/eliminar planes de mantenimiento
 - Captura: usuario, IP, acción, detalle en JSON, timestamp
-- Vista de logs disponible para SUPERADMIN
+- Vista de logs paginada (50 por página) disponible solo para SUPERADMIN
+- Filtros: tipo, acción, búsqueda por email/IP, rango de fechas
 
-### 11. Telemetría (infraestructura lista, UI pendiente)
+### 12. Telemetría (infraestructura lista, UI pendiente)
 - Modelo `Ubicacion`: coordenadas GPS, velocidad, nivel de combustible
 - Modelo `Evento`: eventos del vehículo con descripción
 
@@ -245,15 +317,59 @@ activo, desde, hasta
 ```
 id, conductor/vehiculo (FK), tipo (choice)
 numero, fecha_vencimiento
-estado (vigente | por_vencer | vencido)
+estado (vigente | por_vencer | vencido) — calculado automáticamente en save()
 ```
 
 ### Mantencion
 ```
 id, vehiculo (FK), tipo_mantencion
+descripcion, taller_proveedor, presupuesto
 fecha_programada, kilometraje_programado
 fecha_realizada, kilometraje_realizado
-estado, costo
+estado (pendiente | en_proceso | realizada | cancelada)
+costo
+```
+
+### ★ PlanMantenimiento (NUEVO)
+```
+id, empresa (FK → Empresa), nombre, descripcion
+activo, created_at
+```
+
+### ★ ReglaMantenimiento (NUEVO)
+```
+id, plan (FK → PlanMantenimiento)
+tipo (texto libre, ej: "Aceite", "Frenos")
+prioridad (alta | media | baja)
+intervalo_dias (int)
+umbral_alerta_dias (int)
+canal (email | push | whatsapp | sms)
+escalar_sin_respuesta (bool), bloquear_despacho (bool)
+costo_estimado (decimal)
+```
+
+### ★ VehiculoPlan (NUEVO)
+```
+id, vehiculo (FK), plan (FK)
+fecha_asignacion
+[unique_together: vehiculo + plan]
+```
+
+### ★ MantencionProgramada (NUEVO)
+```
+id, vehiculo (FK), regla (FK → ReglaMantenimiento)
+fecha_ultima (date), fecha_siguiente (date)
+estado (activa | inactiva)
+```
+
+### ★ AlertaMantencion (NUEVO)
+```
+id, mantencion_programada (FK)
+nivel (por_vencer | vencida)
+dias_restantes (int — negativo si vencida)
+pct_avance (float — dias_transcurridos / intervalo_dias * 100)
+enviada (bool), atendida (bool)
+fecha_creacion, fecha_atencion (nullable)
 ```
 
 ### Ubicacion
@@ -275,42 +391,127 @@ usuario (FK, nullable), detalle (JSONField), ip, fecha (indexed)
 
 ---
 
-## API REST — Endpoints Principales
+## API REST — Endpoints Completos
 
+### Autenticación y Dashboard
 | Método | Endpoint | Descripción |
 |---|---|---|
 | POST | `/api/login/` | Autenticación por RUT |
 | GET | `/api/dashboard/` | Dashboard SUPERADMIN |
 | GET | `/api/empresa/dashboard/` | Dashboard de empresa |
-| GET/POST | `/api/empresas/` | Listar / crear empresas |
+
+### Empresas
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/api/empresas/` | Listar empresas (SUPERADMIN) |
+| POST | `/api/empresas/crear/` | Crear empresa |
 | GET/PUT/DELETE | `/api/empresas/:id/` | Ver / editar / suspender empresa |
-| GET/POST | `/api/usuarios/` | Listar / crear usuarios |
+
+### Usuarios
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/api/usuarios/` | Listar usuarios |
+| POST | `/api/usuarios/crear/` | Crear usuario |
 | GET/PUT/DELETE | `/api/usuarios/:id/` | Ver / editar / desactivar usuario |
-| POST | `/api/usuarios/:id/reset-password/` | Reset de contraseña |
+| POST | `/api/usuarios/:id/reset-password/` | Reset de contraseña al RUT |
 | POST | `/api/usuarios/:id/toggle-block/` | Bloquear / desbloquear usuario |
 | GET | `/api/usuarios/:id/historial/` | Historial de logins |
 | GET/PUT | `/api/usuarios/:id/permisos/` | Ver / modificar permisos |
+
+### Flotas y Vehículos
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/api/admin/flotas/` | Vista global de flotas (SUPERADMIN) |
 | GET/POST | `/api/empresa/flotas/` | Listar / crear flotas |
 | GET/PUT/DELETE | `/api/empresa/flotas/:id/` | Ver / editar / eliminar flota |
 | GET/POST | `/api/empresa/vehiculos/` | Listar / crear vehículos |
-| GET/PUT/DELETE | `/api/empresa/vehiculos/:id/` | Ver / editar / eliminar vehículo |
+| GET/PUT/DELETE | `/api/empresa/vehiculos/:id/` | Ver / editar / desactivar vehículo |
+
+### Conductores
+| Método | Endpoint | Descripción |
+|---|---|---|
 | GET/POST | `/api/empresa/conductores/` | Listar / crear conductores |
-| GET/PUT/DELETE | `/api/empresa/conductores/:id/` | Ver / editar / eliminar conductor |
+| GET/PUT/DELETE | `/api/empresa/conductores/:id/` | Ver / editar / desactivar conductor |
 | POST | `/api/empresa/conductores/:id/asignar/` | Asignar vehículo |
 | POST | `/api/empresa/conductores/:id/desasignar/` | Desasignar vehículo |
+
+### Mantenciones Manuales
+| Método | Endpoint | Descripción |
+|---|---|---|
 | GET/POST | `/api/empresa/mantenciones/` | Listar / crear mantenciones |
-| GET | `/api/empresa/mantenciones/resumen/` | Resumen de mantenciones |
-| PUT | `/api/empresa/mantenciones/:id/` | Editar mantenimiento |
+| GET | `/api/empresa/mantenciones/resumen/` | Resumen: costos, conteos por estado |
+| GET | `/api/empresa/mantenciones/calendario/` | Mantenciones por mes (año+mes en query) |
+| GET/PUT/DELETE | `/api/empresa/mantenciones/:id/` | Ver / editar / eliminar mantención |
+
+### ★ Mantenimiento Predictivo (NUEVO — via DRF Router)
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET/POST | `/api/empresa/planes-mantenimiento/` | Listar / crear planes |
+| GET/PUT/PATCH/DELETE | `/api/empresa/planes-mantenimiento/:id/` | CRUD de plan |
+| GET | `/api/empresa/alertas-mantenimiento/` | Listar alertas (filtros: nivel, estado) |
+| POST | `/api/empresa/alertas-mantenimiento/:id/atender/` | Atender alerta: cierra y registra en historial |
+| GET | `/api/empresa/simulador-vencimientos/` | Proyección futura (params: vehiculo_id, meses) |
+
+### Configuración, Permisos y Logs
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET/POST | `/api/configuracion/planes/` | Listar / crear planes de suscripción |
+| GET/PUT/DELETE | `/api/configuracion/planes/:id/` | Ver / editar / eliminar plan |
 | GET | `/api/permisos/` | Listar permisos disponibles |
-| GET | `/api/logs/` | Ver logs de auditoría |
-| GET/POST | `/api/configuracion/planes/` | Listar / crear planes |
-| GET/PUT | `/api/configuracion/planes/:id/` | Ver / editar plan |
+| GET | `/api/logs/` | Ver logs de auditoría (paginado, 50/página) |
+
+---
+
+## Rutas del Frontend (Vue Router)
+
+Dos layouts paralelos con las mismas rutas de operación:
+
+### Panel SUPERADMIN (layout: `Base.vue`)
+```
+/dashboard
+/empresas, /empresas/nueva, /empresas/:id, /empresas/:id/editar
+/usuarios, /usuarios/nuevo, /usuarios/:id/editar
+/planes, /permisos, /logs
+/flota, /flota/nueva, /flota/:id/editar
+/flota/:flotaId/nuevo-vehiculo, /vehiculos/:id/editar
+/conductores, /conductores/nuevo, /conductores/:id, /conductores/:id/editar
+/mantenciones, /mantenciones/calendario, /mantenciones/nueva
+/mantenciones/:id/editar, /mantenciones/historial
+/predictivo        ← MantencionPredictiva.vue
+/documentos, /finanzas, /reportes   (páginas "Próximamente")
+```
+
+### Panel EMPRESA (layout: `EmpresaLayout.vue`, solo rol `USUARIO`)
+```
+/empresa/dashboard
+/empresa/flota, /empresa/flota/nueva, /empresa/flota/:id/editar
+/empresa/flota/:flotaId/nuevo-vehiculo, /empresa/vehiculos/:id/editar
+/empresa/conductores, /empresa/conductores/nuevo
+/empresa/conductores/:id, /empresa/conductores/:id/editar
+/empresa/mantenciones, /empresa/mantenciones/calendario
+/empresa/mantenciones/nueva, /empresa/mantenciones/:id/editar
+/empresa/mantenciones/historial
+/empresa/predictivo  ← MantencionPredictiva.vue
+/empresa/documentos, /empresa/finanzas, /empresa/reportes  (páginas "Próximamente")
+```
+
+### Sidebar EmpresaLayout — ítems de navegación
+| Label | Ruta | Permiso requerido |
+|---|---|---|
+| Dashboard | `/empresa/dashboard` | — |
+| Flota | `/empresa/flota` | `flotas.ver` |
+| Conductores | `/empresa/conductores` | `conductores.ver` |
+| Mantenciones | `/empresa/mantenciones` | `mantenciones.ver` |
+| Predictivo | `/empresa/predictivo` | `mantenciones.ver` |
+| Documentos | `/empresa/documentos` | `documentos.ver` |
+| Finanzas | `/empresa/finanzas` | — |
+| Reportes | `/empresa/reportes` | — |
 
 ---
 
 ## Seguridad
 
-- **Encriptación Fernet** de todos los datos sensibles (RUT, nombre, teléfono, dirección)
+- **Encriptación Fernet** de todos los datos sensibles (RUT, nombre, teléfono, dirección, email, comuna, ciudad)
 - **Hash SHA256** de RUT para búsquedas sin exponer datos cifrados
 - **CSRF protection** con tokens en headers
 - **CORS** restringido a `localhost:7183` y `127.0.0.1:7183`
@@ -338,9 +539,10 @@ npm run preview     # Preview del build
 
 # Backend
 cd gestion_backend
-python manage.py runserver          # Puerto 8000
+python manage.py runserver                            # Puerto 8000
 python manage.py migrate
-python manage.py createsuperuser    # Comando personalizado
+python manage.py createsuperuser                      # Comando personalizado
+python manage.py evaluar_mantenciones_predictivas     # ★ NUEVO: Job predictivo
 ```
 
 ---
@@ -354,19 +556,26 @@ python manage.py createsuperuser    # Comando personalizado
 - Gestión de conductores con documentos
 - Gestión de flotas y vehículos con documentos
 - Sistema de asignaciones conductor-vehículo
-- Gestión de mantenciones
+- Gestión de mantenciones (manual: lista, historial, calendario)
 - Dashboards analíticos con Chart.js (SUPERADMIN y EMPRESA)
 - Sistema de auditoría completo (seguridad + actividad)
 - Encriptación Fernet para datos sensibles
 - Bloqueos de cuenta y control de accesos
 - Scripts de inicio del proyecto
+- **★ Módulo de Mantenimiento Predictivo completo:**
+  - Modelos: `PlanMantenimiento`, `ReglaMantenimiento`, `VehiculoPlan`, `MantencionProgramada`, `AlertaMantencion`
+  - API REST via DRF ViewSets + endpoints de atención y simulación
+  - Migración `0018` aplicada
+  - Frontend `MantencionPredictiva.vue` con 4 tabs: Alertas, Planes, Nuevo Plan, Simulador
+  - Comando de management `evaluar_mantenciones_predictivas` para ejecución programada
 
 ### Pendiente / En desarrollo
-- Módulo de Documentos (infraestructura lista, UI completa pendiente)
+- Notificaciones reales por canal (email/push/WhatsApp/SMS): la lógica está marcada como `pass` en el comando de management
+- Programación automática del job (cron, Celery Beat u otro scheduler)
+- Módulo de Documentos (infraestructura lista, UI pendiente)
 - Módulo de Finanzas (ruta definida, sin implementar)
 - Módulo de Reportes (ruta definida, sin implementar)
 - Sistema de telemetría GPS en tiempo real (modelos listos, sin UI)
-- Sistema de notificaciones (infraestructura presente, sin implementar)
 - Migración a PostgreSQL para producción
 
 ---
@@ -396,3 +605,6 @@ AUTHENTICATION_BACKENDS = [
 ]
 AUTH_USER_MODEL = 'g_de_flota.Usuario'
 ```
+
+### Migraciones
+Se han aplicado 18 migraciones en total. La última (`0018`) agrega los modelos del módulo predictivo: `MantencionProgramada`, `AlertaMantencion`, y campos relacionados de `PlanMantenimiento`, `ReglaMantenimiento` y `VehiculoPlan`.

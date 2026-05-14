@@ -3,13 +3,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
-import AppToast from '../../components/AppToast.vue'
+import { useToast } from '../../utils/useToast.js'
 const router = useRouter()
 const usuarios = ref([])
 const empresas = ref([])
 const cargando = ref(true)
 const error    = ref('')
-const toast    = ref(null)
+const toast = useToast()
 const confirm  = ref({ visible: false, usuario: null, accion: 'desactivar' })
 
 const filtros = ref({ q: '', empresa_id: '', rol: '', estado: '' })
@@ -53,9 +53,9 @@ const resetPassword = async (u) => {
   try {
     const res = await apiFetch(`/api/usuarios/${u.id}/reset-password/`, { method: 'POST' })
     if (!res.ok) throw new Error('Error al resetear clave')
-    toast.value?.agregar('Contraseña reseteada al RUT exitosamente.', 'success')
+    toast.agregar('Contraseña reseteada al RUT exitosamente.', 'success')
   } catch (e) {
-    toast.value?.agregar(e.message, 'error')
+    toast.agregar(e.message, 'error')
   }
 }
 
@@ -64,10 +64,10 @@ const toggleBlock = async (u) => {
     const res = await apiFetch(`/api/usuarios/${u.id}/toggle-block/`, { method: 'POST' })
     if (!res.ok) throw new Error('Error al cambiar bloqueo')
     const data = await res.json()
-    toast.value?.agregar(data.message, 'success')
+    toast.agregar(data.message, 'success')
     await cargar()
   } catch (e) {
-    toast.value?.agregar(e.message, 'error')
+    toast.agregar(e.message, 'error')
   }
 }
 
@@ -96,18 +96,18 @@ const confirmarAccion = async () => {
     if (accion === 'desactivar') {
       const res = await apiFetch(`/api/usuarios/${usuario.id}/`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al desactivar')
-      toast.value?.agregar(`"${usuario.nombre}" fue desactivado.`, 'success')
+      toast.agregar(`"${usuario.nombre}" fue desactivado.`, 'success')
     } else {
       const res = await apiFetch(`/api/usuarios/${usuario.id}/`, {
         method: 'PUT',
         body: { is_active: true },
       })
       if (!res.ok) throw new Error('Error al activar')
-      toast.value?.agregar(`"${usuario.nombre}" fue activado.`, 'success')
+      toast.agregar(`"${usuario.nombre}" fue activado.`, 'success')
     }
     await cargar()
   } catch (e) {
-    toast.value?.agregar(e.message, 'error')
+    toast.agregar(e.message, 'error')
   }
 }
 
@@ -118,7 +118,6 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppToast ref="toast" />
 
   <ConfirmModal
     v-if="confirm.visible"

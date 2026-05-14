@@ -1,5 +1,6 @@
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from g_de_flota.views import (
     home_view, login_view, dashboard_global_view, empresa_dashboard_view,
     empresas_lista, empresas_crear, empresas_detalle,
@@ -9,10 +10,17 @@ from g_de_flota.views import (
     admin_flotas_lista, flotas_lista_crear, flotas_detalle,
     vehiculos_lista_crear, vehiculos_detalle,
     planes_lista_crear, planes_detalle,
-    mantenciones_lista_crear, mantenciones_detalle, mantenciones_resumen, mantenciones_calendario,
+    mantenciones_lista_crear, mantenciones_detalle, mantenciones_resumen,
+    mantenciones_calendario, mantenciones_sugerencias,
     logs_lista,
     permisos_lista, usuario_permisos,
+    PlanMantenimientoViewSet, AlertaMantencionViewSet, simulador_vencimientos,
+    notificaciones_lista, notificaciones_no_leidas, notificaciones_leer, notificaciones_preferencias,
 )
+
+router = DefaultRouter()
+router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
+router.register(r'empresa/alertas-mantenimiento', AlertaMantencionViewSet, basename='alertas-mantenimiento')
 
 urlpatterns = [
     path('',                          home_view,         name='home'),
@@ -51,10 +59,19 @@ urlpatterns = [
     path('api/empresa/mantenciones/',              mantenciones_lista_crear,  name='mantenciones-lista'),
     path('api/empresa/mantenciones/resumen/',      mantenciones_resumen,      name='mantenciones-resumen'),
     path('api/empresa/mantenciones/calendario/',   mantenciones_calendario,   name='mantenciones-calendario'),
+    path('api/empresa/mantenciones/sugerencias/', mantenciones_sugerencias,   name='mantenciones-sugerencias'),
     path('api/empresa/mantenciones/<int:pk>/',     mantenciones_detalle,      name='mantenciones-detalle'),
+
+    path('api/', include(router.urls)),
+    path('api/empresa/simulador-vencimientos/',    simulador_vencimientos,    name='simulador-vencimientos'),
 
     path('api/logs/',                        logs_lista,            name='logs-lista'),
 
     path('api/permisos/',                              permisos_lista,   name='permisos-lista'),
     path('api/usuarios/<int:pk>/permisos/',            usuario_permisos, name='usuario-permisos'),
+
+    path('api/notificaciones/',              notificaciones_lista,         name='notificaciones-lista'),
+    path('api/notificaciones/no-leidas/',    notificaciones_no_leidas,     name='notificaciones-no-leidas'),
+    path('api/notificaciones/leer/',         notificaciones_leer,          name='notificaciones-leer'),
+    path('api/notificaciones/preferencias/', notificaciones_preferencias,  name='notificaciones-preferencias'),
 ]

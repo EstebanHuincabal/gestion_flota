@@ -245,6 +245,10 @@ class Usuario(AbstractUser):
     intentos_fallidos = models.IntegerField(default=0)
     is_blocked        = models.BooleanField(default=False)
 
+    # Preferencias de notificación
+    # Estructura: {"inapp": ["mantencion","documentos","seguridad"], "email": ["mantencion","documentos"], "push_token": ""}
+    notif_prefs = models.JSONField(default=dict, blank=True)
+
     USERNAME_FIELD  = "email"
     REQUIRED_FIELDS = []
 
@@ -468,3 +472,134 @@ class LogAuditoria(models.Model):
 
     def __str__(self):
         return f"{self.tipo} | {self.accion} | {self.fecha}"
+
+
+# ─────────────────────────────────────────
+# Notificaciones
+# ─────────────────────────────────────────
+
+NOTIF_PREFS_DEFAULT = {
+    "inapp": ["mantencion", "documentos", "seguridad"],
+    "email": ["mantencion", "documentos"],
+    "push_token": "",
+}
+
+TIPO_NOTIF_CATEGORIA = {
+    "mantencion_por_vencer": "mantencion",
+    "mantencion_vencida":    "mantencion",
+    "documento_por_vencer":  "documentos",
+    "documento_vencido":     "documentos",
+    "seguridad":             "seguridad",
+    "actividad":             "actividad",
+}
+
+
+class TipoNotificacion(models.TextChoices):
+    MANTENCION_POR_VENCER = "mantencion_por_vencer", "Mantención por vencer"
+    MANTENCION_VENCIDA    = "mantencion_vencida",    "Mantención vencida"
+    DOCUMENTO_POR_VENCER  = "documento_por_vencer",  "Documento por vencer"
+    DOCUMENTO_VENCIDO     = "documento_vencido",     "Documento vencido"
+    SEGURIDAD             = "seguridad",             "Seguridad"
+    ACTIVIDAD             = "actividad",             "Actividad"
+
+
+class Notificacion(models.Model):
+    usuario    = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='notificaciones')
+    tipo       = models.CharField(max_length=30, choices=TipoNotificacion.choices)
+    titulo     = models.CharField(max_length=200)
+    mensaje    = models.TextField()
+    leida      = models.BooleanField(default=False)
+    url_accion = models.CharField(max_length=300, blank=True, default='')
+    extra      = models.JSONField(default=dict, blank=True)
+    fecha      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-fecha']
+        verbose_name = "Notificación"
+        verbose_name_plural = "Notificaciones"
+
+    def __str__(self):
+        return f"{self.tipo} → {self.usuario_id} | {self.fecha}"
+
+
+# ─────────────────────────────────────────
+# Mantenimiento Predictivo
+# ─────────────────────────────────────────
+
+class PlanMantenimiento(models.Model):
+    empresa     = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="planes_mantenimiento")
+    nombre      = models.CharField(max_length=200)
+    descripcion = models.TextField(blank=True, default='')
+    activo      = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.nombre} ({self.empresa.nombre})"
+
+
+class ReglaMantenimiento(models.Model):
+    PRIORIDADES = [
+        ('alta', 'Alta'),
+        ('media', 'Media'),
+        ('baja', 'Baja'),
+    ]
+    CANALES = [
+        ('email', 'Email'),
+        ('push', 'Push'),
+        ('whatsapp', 'WhatsApp'),
+        ('sms', 'SMS'),
+    ]
+    plan                  = models.ForeignKey(PlanMantenimiento, on_delete=models.CASCADE, related_name="reglas")
+    tipo                  = models.CharField(max_length=100)
+    prioridad             = models.CharField(max_length=20, choices=PRIORIDADES, default='media')
+    intervalo_dias        = models.IntegerField()
+    umbral_alerta_dias    = models.IntegerField()
+    canal                 = models.CharField(max_length=20, choices=CANALES, default='email')
+    escalar_sin_respuesta = models.BooleanField(default=False)
+    bloquear_despacho     = models.BooleanField(default=False)
+    costo_estimado        = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    def __str__(self):
+        return f"{self.tipo} - Cada {self.intervalo_dias} días"
+
+
+class VehiculoPlan(models.Model):
+    vehiculo         = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name="planes_asignados")
+    plan             = models.ForeignKey(PlanMantenimiento, on_delete=models.CASCADE, related_name="vehiculos_asignados")
+    fecha_asignacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('vehiculo', 'plan')
+
+
+class MantencionProgramada(models.Model):
+    ESTADOS = [
+        ('activa', 'Activa'),
+        ('inactiva', 'Inactiva'),
+    ]
+    vehiculo        = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name="mantenciones_programadas")
+    regla           = models.ForeignKey(ReglaMantenimiento, on_delete=models.CASCADE, related_name="mantenciones_programadas")
+    fecha_ultima    = models.DateField()
+    fecha_siguiente = models.DateField()
+    estado          = models.CharField(max_length=20, choices=ESTADOS, default='activa')
+
+    def __str__(self):
+        return f"{self.regla.tipo} para {self.vehiculo.patente}"
+
+
+class AlertaMantencion(models.Model):
+    NIVELES = [
+        ('por_vencer', 'Por vencer'),
+        ('vencida', 'Vencida'),
+    ]
+    mantencion_programada = models.ForeignKey(MantencionProgramada, on_delete=models.CASCADE, related_name="alertas")
+    nivel                 = models.CharField(max_length=20, choices=NIVELES)
+    dias_restantes        = models.IntegerField()
+    pct_avance            = models.FloatField()
+    enviada               = models.BooleanField(default=False)
+    atendida              = models.BooleanField(default=False)
+    fecha_creacion        = models.DateTimeField(auto_now_add=True)
+    fecha_atencion        = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.nivel} - {self.mantencion_programada}"

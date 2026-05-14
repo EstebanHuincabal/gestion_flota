@@ -16,9 +16,11 @@ from django.core.paginator import Paginator
 
 from .models import (
     Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
-    Mantencion, DocumentoVehiculo, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion
+    Mantencion, DocumentoVehiculo, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
+    TipoNotificacion
 )
 from .audit import registrar_log
+from .notificaciones import notificar, notificar_admins_empresa
 from .serializers import (
     EmpresaSerializer,
     PermisoSerializer,
@@ -366,6 +368,16 @@ def login_view(request):
                 user_obj.is_blocked = True
             user_obj.save()
             LogAuditoria.objects.create(tipo=TipoLog.SEGURIDAD, accion='login_fallido', usuario=user_obj, ip=ip, detalle={'intentos': user_obj.intentos_fallidos, 'bloqueado': user_obj.is_blocked})
+            if user_obj.is_blocked:
+                notificar(user_obj, TipoNotificacion.SEGURIDAD,
+                          "Cuenta bloqueada",
+                          "Tu cuenta fue bloqueada por exceso de intentos fallidos. Contacta a un administrador.",
+                          url_accion='')
+                for superadmin in Usuario.objects.filter(rol=Rol.SUPERADMIN, is_active=True):
+                    notificar(superadmin, TipoNotificacion.SEGURIDAD,
+                              f"Cuenta bloqueada: {user_obj.nombre or user_obj.email}",
+                              f"La cuenta de '{user_obj.nombre or user_obj.email}' fue bloqueada automáticamente por {user_obj.intentos_fallidos} intentos fallidos desde IP {ip}.",
+                              url_accion='/usuarios')
         else:
             LogAuditoria.objects.create(tipo=TipoLog.SEGURIDAD, accion='login_fallido', ip=ip, detalle={'motivo': 'usuario_no_encontrado'})
 
@@ -636,6 +648,10 @@ def usuario_reset_password(request, pk):
     usuario.save()
     registrar_log('SEGURIDAD', 'cambio_password', request,
                   detalle={'usuario_email': usuario.email, 'usuario_id': pk})
+    notificar(usuario, TipoNotificacion.SEGURIDAD,
+              "Contraseña restablecida",
+              "Un administrador restableció tu contraseña. Si no lo solicitaste, contacta al soporte.",
+              url_accion='')
 
     return Response({"message": f"Contraseña reseteada exitosamente al RUT del usuario: {rut_plain}"})
 
@@ -783,6 +799,12 @@ def conductores_asignar(request, pk):
         desde=timezone.now()
     )
     conductor.refresh_from_db()
+    notificar_admins_empresa(
+        empresa, TipoNotificacion.ACTIVIDAD,
+        "Nueva asignación de vehículo",
+        f"El conductor {conductor.nombre or conductor.email} fue asignado al vehículo {vehiculo.patente}.",
+        url_accion='/empresa/conductores'
+    )
     return Response(ConductorListSerializer(conductor).data)
 
 
@@ -800,8 +822,13 @@ def conductores_desasignar(request, pk):
         return Response({"error": "Conductor no encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
     Asignacion.objects.filter(conductor=conductor, activo=True).update(activo=False)
-    
     conductor.refresh_from_db()
+    notificar_admins_empresa(
+        empresa, TipoNotificacion.ACTIVIDAD,
+        "Conductor desasignado",
+        f"El conductor {conductor.nombre or conductor.email} fue desasignado de su vehículo.",
+        url_accion='/empresa/conductores'
+    )
     return Response(ConductorListSerializer(conductor).data)
 
 
@@ -1096,6 +1123,10 @@ def usuario_permisos(request, pk):
             'usuario_email': usuario.email,
             'permisos': list(usuario.permisos.values_list('codigo', flat=True)),
         })
+        notificar(usuario, TipoNotificacion.SEGURIDAD,
+                  "Tus permisos fueron actualizados",
+                  "Un administrador modificó los permisos de tu cuenta.",
+                  url_accion='')
         return Response({
             "usuario_id": usuario.pk,
             "permisos": list(usuario.permisos.values_list('codigo', flat=True)),
@@ -1132,10 +1163,44 @@ def mantenciones_lista_crear(request):
     if not tiene_permiso(request.user, 'mantenciones.crear'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
-    # Validar que el vehículo pertenece a la empresa
-    vehiculo_id = request.data.get('vehiculo_id')
-    if not Vehiculo.objects.filter(pk=vehiculo_id, flota__empresa=empresa).exists():
+    vehiculo_id      = request.data.get('vehiculo_id')
+    tipo_mantencion  = request.data.get('tipo_mantencion', '').strip()
+    fecha_programada = request.data.get('fecha_programada')
+
+    # Vehículo válido y activo
+    vehiculo = Vehiculo.objects.filter(pk=vehiculo_id, flota__empresa=empresa).first()
+    if not vehiculo:
         return Response({"error": "Vehículo no válido."}, status=status.HTTP_400_BAD_REQUEST)
+    if not vehiculo.activo:
+        return Response({"error": "No se pueden programar mantenciones para un vehículo inactivo."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Duplicado: mismo tipo en estado activo para este vehículo
+    if Mantencion.objects.filter(
+        vehiculo_id=vehiculo_id,
+        tipo_mantencion=tipo_mantencion,
+        estado__in=['pendiente', 'en_proceso']
+    ).exists():
+        return Response({"error": f"Ya existe una mantención de '{tipo_mantencion}' pendiente o en proceso para este vehículo."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Dos mantenciones el mismo día para el mismo vehículo
+    if fecha_programada and Mantencion.objects.filter(
+        vehiculo_id=vehiculo_id,
+        fecha_programada=fecha_programada,
+        estado__in=['pendiente', 'en_proceso']
+    ).exists():
+        return Response({"error": "Este vehículo ya tiene una mantención programada para esa fecha."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Límite de flota: no más del 50 % de vehículos activos en mantenimiento simultáneamente
+    total_activos = Vehiculo.objects.filter(flota__empresa=empresa, activo=True).count()
+    if total_activos > 0:
+        en_mantencion = Mantencion.objects.filter(
+            vehiculo__flota__empresa=empresa,
+            estado__in=['pendiente', 'en_proceso']
+        ).values('vehiculo_id').distinct().count()
+        if en_mantencion / total_activos >= 0.50:
+            return Response({
+                "error": f"El {round(en_mantencion/total_activos*100)}% de la flota ya está en mantenimiento ({en_mantencion} de {total_activos} vehículos). Completa o cancela mantenciones activas antes de agregar más."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     serializer = MantencionSerializer(data=request.data)
     if serializer.is_valid():
@@ -1163,15 +1228,37 @@ def mantenciones_detalle(request, pk):
     if request.method == 'PUT':
         if not tiene_permiso(request.user, 'mantenciones.editar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        
-        # Check if marking as done
-        data = request.data.copy()
-        if data.get('estado') == 'realizada' and mantencion.estado != 'realizada':
+
+        data          = request.data.copy()
+        estado_actual = mantencion.estado
+        nuevo_estado  = data.get('estado', estado_actual)
+
+        # Cancelación definitiva
+        if estado_actual == 'cancelada':
+            return Response({"error": "Una mantención cancelada no puede modificarse."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Estado solo avanza: transiciones válidas
+        TRANSICIONES_VALIDAS = {
+            'pendiente':  {'pendiente', 'en_proceso', 'realizada', 'cancelada'},
+            'en_proceso': {'en_proceso', 'realizada', 'cancelada'},
+            'realizada':  {'realizada'},
+        }
+        if nuevo_estado not in TRANSICIONES_VALIDAS.get(estado_actual, set()):
+            return Response({"error": f"No se puede cambiar el estado de '{estado_actual}' a '{nuevo_estado}'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Al completar: fecha y costo obligatorios
+        if nuevo_estado == 'realizada' and estado_actual != 'realizada':
             if not data.get('fecha_realizada'):
                 data['fecha_realizada'] = timezone.now().date().isoformat()
-            if not data.get('kilometraje_realizado') and mantencion.vehiculo.km_actuales:
-                data['kilometraje_realizado'] = mantencion.vehiculo.km_actuales
-                
+            costo = data.get('costo')
+            if costo is None or float(costo) <= 0:
+                return Response({"error": "El costo real debe ser mayor a 0 para marcar una mantención como realizada."}, status=status.HTTP_400_BAD_REQUEST)
+            # Fecha realizada no puede ser futura
+            from datetime import date as date_type
+            fecha_r = data.get('fecha_realizada')
+            if fecha_r and str(fecha_r) > timezone.now().date().isoformat():
+                return Response({"error": "La fecha realizada no puede ser una fecha futura."}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = MantencionSerializer(mantencion, data=data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -1239,6 +1326,64 @@ def mantenciones_resumen(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def mantenciones_sugerencias(request):
+    try:
+        empresa = get_empresa(request)
+    except PermissionError:
+        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+
+    vehiculo_id = request.query_params.get('vehiculo_id')
+
+    # Tipos desde historial de mantenciones de la empresa
+    tipos_historial = list(
+        Mantencion.objects
+        .filter(vehiculo__flota__empresa=empresa)
+        .exclude(tipo_mantencion='')
+        .values_list('tipo_mantencion', flat=True)
+        .distinct()
+        .order_by('tipo_mantencion')
+    )
+
+    # Tipos y presupuestos desde reglas de planes activos de la empresa
+    from .models import ReglaMantenimiento, VehiculoPlan
+    reglas_qs = ReglaMantenimiento.objects.filter(
+        plan__vehiculos_asignados__vehiculo__flota__empresa=empresa
+    ).distinct()
+    if vehiculo_id:
+        reglas_qs = ReglaMantenimiento.objects.filter(
+            plan__vehiculos_asignados__vehiculo_id=vehiculo_id
+        ).distinct()
+
+    tipos_planes = list(reglas_qs.values_list('tipo', flat=True).order_by('tipo'))
+    presupuesto_por_tipo = {
+        r['tipo']: float(r['costo_estimado'])
+        for r in reglas_qs.values('tipo', 'costo_estimado')
+        if r['costo_estimado']
+    }
+
+    # Unión sin duplicados manteniendo orden: planes primero, luego historial
+    tipos_vistos = set(tipos_planes)
+    tipos = tipos_planes + [t for t in tipos_historial if t not in tipos_vistos]
+
+    # Talleres desde historial
+    talleres = list(
+        Mantencion.objects
+        .filter(vehiculo__flota__empresa=empresa)
+        .exclude(taller_proveedor='')
+        .values_list('taller_proveedor', flat=True)
+        .distinct()
+        .order_by('taller_proveedor')
+    )
+
+    return Response({
+        "tipos": tipos,
+        "talleres": talleres,
+        "presupuesto_por_tipo": presupuesto_por_tipo,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def mantenciones_calendario(request):
     try:
         empresa = get_empresa(request)
@@ -1268,3 +1413,252 @@ def mantenciones_calendario(request):
             'estado_display':   m.get_estado_display(),
         })
     return Response(result)
+
+
+# ─────────────────────────────────────────
+# Mantenimiento Predictivo
+# ─────────────────────────────────────────
+
+from rest_framework import viewsets
+from .models import (
+    PlanMantenimiento, VehiculoPlan, ReglaMantenimiento,
+    MantencionProgramada, AlertaMantencion, Vehiculo, EstadoMantencion
+)
+from .serializers import (
+    PlanMantenimientoSerializer, AlertaMantencionSerializer
+)
+from rest_framework.decorators import action
+
+class PlanMantenimientoViewSet(viewsets.ModelViewSet):
+    serializer_class = PlanMantenimientoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        try:
+            empresa = get_empresa(self.request)
+            return PlanMantenimiento.objects.filter(empresa=empresa).prefetch_related('reglas')
+        except PermissionError:
+            return PlanMantenimiento.objects.none()
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        if request.method in ['POST', 'PUT', 'PATCH', 'DELETE']:
+            if not tiene_permiso(request.user, 'mantenciones.crear'): # O el permiso que aplique
+                self.permission_denied(request, message="No tienes permisos para modificar planes.")
+
+    def perform_create(self, serializer):
+        serializer.save()
+        registrar_log('ACTIVIDAD', 'crear_plan_mantenimiento', self.request, 
+                      detalle={"plan_id": serializer.instance.id})
+
+    def perform_update(self, serializer):
+        serializer.save()
+        registrar_log('ACTIVIDAD', 'actualizar_plan_mantenimiento', self.request, 
+                      detalle={"plan_id": serializer.instance.id})
+
+    def perform_destroy(self, instance):
+        registrar_log('ACTIVIDAD', 'eliminar_plan_mantenimiento', self.request, 
+                      detalle={"plan_id": instance.id})
+        instance.delete()
+
+
+class AlertaMantencionViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AlertaMantencionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        try:
+            empresa = get_empresa(self.request)
+            qs = AlertaMantencion.objects.filter(
+                mantencion_programada__vehiculo__flota__empresa=empresa
+            ).select_related('mantencion_programada__vehiculo', 'mantencion_programada__regla')
+            
+            estado = self.request.query_params.get('estado')
+            nivel = self.request.query_params.get('nivel')
+            
+            if estado == 'pendiente':
+                qs = qs.filter(atendida=False)
+            elif estado == 'atendida':
+                qs = qs.filter(atendida=True)
+                
+            if nivel in ['por_vencer', 'vencida']:
+                qs = qs.filter(nivel=nivel)
+
+            # Order by urgency: vencida first, then dias_restantes asc
+            return qs.order_by('-nivel', 'dias_restantes') # vencida is after por_vencer alphabetically? 'vencida' > 'por_vencer'
+
+        except PermissionError:
+            return AlertaMantencion.objects.none()
+
+    @action(detail=True, methods=['post'])
+    def atender(self, request, pk=None):
+        if not tiene_permiso(request.user, 'mantenciones.crear'):
+            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+            
+        alerta = self.get_object()
+        if alerta.atendida:
+            return Response({"error": "La alerta ya fue atendida."}, status=status.HTTP_400_BAD_REQUEST)
+
+        fecha_realizada_str = request.data.get('fecha_realizada')
+        if not fecha_realizada_str:
+            return Response({"error": "fecha_realizada es requerida."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from datetime import datetime, timedelta
+        fecha_realizada = datetime.strptime(fecha_realizada_str, '%Y-%m-%d').date()
+
+        # Crear mantención en historial
+        prog = alerta.mantencion_programada
+        Mantencion.objects.create(
+            vehiculo=prog.vehiculo,
+            tipo_mantencion=prog.regla.tipo,
+            fecha_programada=prog.fecha_siguiente,
+            fecha_realizada=fecha_realizada,
+            estado=EstadoMantencion.REALIZADA,
+            costo=request.data.get('costo', 0.00),
+            descripcion=f"Mantención preventiva - Plan: {prog.regla.plan.nombre}"
+        )
+
+        # Actualizar programación
+        prog.fecha_ultima = fecha_realizada
+        prog.fecha_siguiente = fecha_realizada + timedelta(days=prog.regla.intervalo_dias)
+        prog.save()
+
+        # Cerrar alerta
+        alerta.atendida = True
+        alerta.fecha_atencion = timezone.now()
+        alerta.save()
+
+        registrar_log('ACTIVIDAD', 'atender_alerta_mantencion', request, detalle={"alerta_id": alerta.id})
+        return Response({"status": "Alerta atendida y mantención registrada."})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def simulador_vencimientos(request):
+    try:
+        empresa = get_empresa(request)
+    except PermissionError:
+        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+
+    vehiculo_id = request.query_params.get('vehiculo_id')
+    meses = int(request.query_params.get('meses', 3))
+
+    if not vehiculo_id:
+        return Response({"error": "vehiculo_id es requerido."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        vehiculo = Vehiculo.objects.get(id=vehiculo_id, flota__empresa=empresa)
+    except Vehiculo.DoesNotExist:
+        return Response({"error": "Vehículo no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    # Buscar mantenciones programadas para el vehículo
+    programadas = MantencionProgramada.objects.filter(vehiculo=vehiculo, estado='activa').select_related('regla')
+    
+    from datetime import timedelta
+    hoy = timezone.now().date()
+    fecha_fin = hoy + timedelta(days=meses * 30) # Aprox 30 dias por mes
+
+    eventos = []
+    presupuesto_total = 0
+
+    for prog in programadas:
+        fecha_actual = prog.fecha_siguiente
+        while fecha_actual <= fecha_fin:
+            if fecha_actual >= hoy:
+                eventos.append({
+                    'tipo': prog.regla.tipo,
+                    'fecha': fecha_actual.isoformat(),
+                    'costo_estimado': float(prog.regla.costo_estimado)
+                })
+                presupuesto_total += float(prog.regla.costo_estimado)
+            fecha_actual += timedelta(days=prog.regla.intervalo_dias)
+
+    eventos.sort(key=lambda x: x['fecha'])
+
+    return Response({
+        'eventos': eventos,
+        'total_eventos': len(eventos),
+        'presupuesto_total': presupuesto_total
+    })
+
+
+# ─────────────────────────────────────────
+# Notificaciones
+# ─────────────────────────────────────────
+
+from .models import Notificacion, NOTIF_PREFS_DEFAULT
+from .serializers import NotificacionSerializer, PreferenciasNotificacionSerializer
+from django.core.paginator import Paginator as _Paginator
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notificaciones_lista(request):
+    qs = Notificacion.objects.filter(usuario=request.user)
+
+    leida = request.query_params.get('leida')
+    tipo  = request.query_params.get('tipo')
+    if leida == 'false':
+        qs = qs.filter(leida=False)
+    elif leida == 'true':
+        qs = qs.filter(leida=True)
+    if tipo:
+        qs = qs.filter(tipo=tipo)
+
+    page_num  = max(1, int(request.query_params.get('page', 1)))
+    paginator = _Paginator(qs, 20)
+    page      = paginator.get_page(page_num)
+
+    return Response({
+        'count':     paginator.count,
+        'num_pages': paginator.num_pages,
+        'results':   NotificacionSerializer(page.object_list, many=True).data,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notificaciones_no_leidas(request):
+    count = Notificacion.objects.filter(usuario=request.user, leida=False).count()
+    return Response({'count': count})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def notificaciones_leer(request):
+    todas = request.data.get('todas', False)
+    ids   = request.data.get('ids', [])
+
+    qs = Notificacion.objects.filter(usuario=request.user, leida=False)
+    if not todas:
+        qs = qs.filter(id__in=ids)
+    updated = qs.update(leida=True)
+    return Response({'marcadas': updated})
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def notificaciones_preferencias(request):
+    usuario = request.user
+    prefs   = usuario.notif_prefs or {}
+
+    current = {
+        'inapp':      prefs.get('inapp',      NOTIF_PREFS_DEFAULT['inapp']),
+        'email':      prefs.get('email',      NOTIF_PREFS_DEFAULT['email']),
+        'push_token': prefs.get('push_token', ''),
+    }
+
+    if request.method == 'GET':
+        return Response(current)
+
+    serializer = PreferenciasNotificacionSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    usuario.notif_prefs = {
+        'inapp':      serializer.validated_data['inapp'],
+        'email':      serializer.validated_data['email'],
+        'push_token': serializer.validated_data.get('push_token', current['push_token']),
+    }
+    usuario.save(update_fields=['notif_prefs'])
+    return Response(usuario.notif_prefs)

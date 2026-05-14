@@ -5,7 +5,7 @@ import { apiFetch } from '../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
-import AppToast     from '../../../components/AppToast.vue'
+import { useToast } from '../../../utils/useToast.js'
 
 const router     = useRouter()
 const { ruta }   = useEmpresaNav()
@@ -49,7 +49,7 @@ const cargando    = ref(true)
 const sinEmpresa  = ref(false)
 
 const confirmState = ref({ visible: false, accion: null, conductor: null })
-const toast   = ref(null)
+const toast = useToast()
 
 // modal asignar vehículo
 const modalAsignar   = ref(false)
@@ -89,9 +89,9 @@ const guardarAsignacion = async () => {
     const idx  = conductores.value.findIndex(c => c.id === conductorActivo.value.id)
     if (idx !== -1) conductores.value[idx] = data
     modalAsignar.value = false
-    toast.value.agregar('Vehículo asignado correctamente', 'success')
+    toast.agregar('Vehículo asignado correctamente', 'success')
   } else {
-    toast.value.agregar(data.error || 'Error al asignar vehículo', 'error')
+    toast.agregar(data.error || 'Error al asignar vehículo', 'error')
   }
 }
 
@@ -102,7 +102,7 @@ const desasignar = async (c, desdModal = false) => {
     const idx  = conductores.value.findIndex(x => x.id === c.id)
     if (idx !== -1) conductores.value[idx] = data
     if (desdModal) modalAsignar.value = false
-    toast.value.agregar('Asignación removida', 'success')
+    toast.agregar('Asignación removida', 'success')
   }
 }
 
@@ -125,7 +125,7 @@ const confirmarToggle = async () => {
 
   if (res.ok) {
     await cargar()
-    toast.value.agregar(`Conductor ${c.is_active ? 'desactivado' : 'activado'}`, 'success')
+    toast.agregar(`Conductor ${c.is_active ? 'desactivado' : 'activado'}`, 'success')
   }
 }
 
@@ -162,7 +162,6 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
     <ConfirmModal
       v-if="confirmState.visible"
       :titulo="confirmState.accion === 'desactivar' ? 'Desactivar conductor' : 'Activar conductor'"
