@@ -1442,9 +1442,12 @@ class PlanMantenimientoViewSet(viewsets.ModelViewSet):
 
     def check_permissions(self, request):
         super().check_permissions(request)
-        if request.method in ['POST', 'PUT', 'PATCH', 'DELETE']:
-            if not tiene_permiso(request.user, 'mantenciones.crear'): # O el permiso que aplique
-                self.permission_denied(request, message="No tienes permisos para modificar planes.")
+        if request.method == 'GET':
+            if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
+                self.permission_denied(request, message="Sin permisos.")
+        else:
+            if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
+                self.permission_denied(request, message="Sin permisos.")
 
     def perform_create(self, serializer):
         serializer.save()
@@ -1467,32 +1470,33 @@ class AlertaMantencionViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        if not es_superadmin(self.request.user) and not tiene_permiso(self.request.user, 'predictivo.ver'):
+            return AlertaMantencion.objects.none()
         try:
             empresa = get_empresa(self.request)
             qs = AlertaMantencion.objects.filter(
                 mantencion_programada__vehiculo__flota__empresa=empresa
             ).select_related('mantencion_programada__vehiculo', 'mantencion_programada__regla')
-            
+
             estado = self.request.query_params.get('estado')
-            nivel = self.request.query_params.get('nivel')
-            
+            nivel  = self.request.query_params.get('nivel')
+
             if estado == 'pendiente':
                 qs = qs.filter(atendida=False)
             elif estado == 'atendida':
                 qs = qs.filter(atendida=True)
-                
+
             if nivel in ['por_vencer', 'vencida']:
                 qs = qs.filter(nivel=nivel)
 
-            # Order by urgency: vencida first, then dias_restantes asc
-            return qs.order_by('-nivel', 'dias_restantes') # vencida is after por_vencer alphabetically? 'vencida' > 'por_vencer'
+            return qs.order_by('-nivel', 'dias_restantes')
 
         except PermissionError:
             return AlertaMantencion.objects.none()
 
     @action(detail=True, methods=['post'])
     def atender(self, request, pk=None):
-        if not tiene_permiso(request.user, 'mantenciones.crear'):
+        if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
             
         alerta = self.get_object()
@@ -1535,6 +1539,9 @@ class AlertaMantencionViewSet(viewsets.ReadOnlyModelViewSet):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def simulador_vencimientos(request):
+    if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
+        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+
     try:
         empresa = get_empresa(request)
     except PermissionError:

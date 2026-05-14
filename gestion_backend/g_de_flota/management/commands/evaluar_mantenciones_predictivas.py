@@ -9,9 +9,9 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         hoy = timezone.now().date()
         vehiculos_planes = VehiculoPlan.objects.filter(
-            vehiculo__activo=True, 
+            vehiculo__activo=True,
             plan__activo=True
-        ).select_related('vehiculo', 'plan')
+        ).select_related('vehiculo', 'plan').prefetch_related('plan__reglas')
 
         alertas_creadas = 0
 
@@ -84,11 +84,19 @@ class Command(BaseCommand):
                         alerta_existente.pct_avance = round(pct_avance, 2)
                         alerta_existente.save()
                         
-                        # Escalar si han pasado 48h (2 días)
+                        # Escalar si han pasado 48h sin atención
                         if regla.escalar_sin_respuesta and not alerta_existente.atendida:
                             dias_desde_alerta = (timezone.now() - alerta_existente.fecha_creacion).days
                             if dias_desde_alerta >= 2:
-                                # Lógica para reenviar al supervisor
-                                pass
+                                empresa = prog.vehiculo.flota.empresa
+                                notificar_admins_empresa(
+                                    empresa,
+                                    TipoNotificacion.MANTENCION_VENCIDA,
+                                    f"⚠ Alerta sin atender: {prog.vehiculo.patente}",
+                                    f"La alerta de '{prog.regla.tipo}' para el vehículo {prog.vehiculo.patente} "
+                                    f"lleva {dias_desde_alerta} días sin ser atendida.",
+                                    url_accion='/empresa/predictivo',
+                                    extra={'vehiculo_id': prog.vehiculo.id, 'alerta_id': alerta_existente.id}
+                                )
 
         self.stdout.write(self.style.SUCCESS(f'Evaluación completada. Alertas creadas: {alertas_creadas}'))
