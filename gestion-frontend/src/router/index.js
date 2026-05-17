@@ -11,7 +11,7 @@ import EditarEmpresa from '../web/clientes/EditarEmpresa.vue'
 import ListaUsuarios from '../web/usuarios/ListaUsuarios.vue'
 import NuevoUsuario  from '../web/usuarios/NuevoUsuario.vue'
 import EditarUsuario from '../web/usuarios/EditarUsuario.vue'
-import Planes from '../web/configuracion/Configuracion.vue'
+import Planes from '../web/configuracion/Planes.vue'
 import Logs from '../web/logs/Logs.vue'
 import GestionPermisos from '../web/permisos/GestionPermisos.vue'
 

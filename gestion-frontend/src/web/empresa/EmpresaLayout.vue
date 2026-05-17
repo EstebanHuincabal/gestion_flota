@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { tienePermiso } from '../../utils/permisos.js'
 import NotificacionesBell from '../../components/NotificacionesBell.vue'
+import PlanUsageBanner from './PlanUsageBanner.vue'
+import LimitePlanModal from '../planes/LimitePlanModal.vue'
 
 const router  = useRouter()
 const route   = useRoute()
@@ -78,7 +80,11 @@ const navItemsFiltrados = computed(() =>
 const isActive = (path) => route.path.startsWith(path)
 
 const cerrarSesion = () => {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
   localStorage.removeItem('usuario')
+  sessionStorage.removeItem('plan_modulos')
+  sessionStorage.removeItem('plan_nombre')
   router.push('/login')
 }
 </script>
@@ -150,12 +156,15 @@ const cerrarSesion = () => {
           </button>
         </div>
       </header>
+      <PlanUsageBanner />
       <div class="page-content">
         <RouterView />
       </div>
     </main>
 
   </div>
+
+  <LimitePlanModal />
 </template>
 
 <style scoped>

@@ -109,13 +109,23 @@ class PlanSuscripcion(models.Model):
         ('pro', 'Pro'),
         ('enterprise', 'Enterprise'),
     ]
-    nombre = models.CharField(max_length=20, choices=PLANES, unique=True)
-    max_flotas = models.IntegerField(default=1)
-    max_vehiculos = models.IntegerField(default=10)
-    max_conductores = models.IntegerField(default=10)
+    nombre          = models.CharField(max_length=20, choices=PLANES, unique=True)
+    descripcion     = models.CharField(max_length=500, blank=True, default='')
+    precio_mensual  = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    precio_anual    = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    max_flotas      = models.PositiveIntegerField(default=1)
+    max_vehiculos   = models.PositiveIntegerField(default=10)
+    max_conductores = models.PositiveIntegerField(default=10)
+    max_usuarios    = models.PositiveIntegerField(default=5)
+    modulos         = models.JSONField(default=list, blank=True)
+    activo          = models.BooleanField(default=True)
+    orden           = models.PositiveSmallIntegerField(default=0)
+    created_at      = models.DateTimeField(auto_now_add=True, null=True)
+    updated_at      = models.DateTimeField(auto_now=True, null=True)
 
     class Meta:
-        verbose_name = "Plan de Suscripción"
+        ordering         = ['orden', 'id']
+        verbose_name     = "Plan de Suscripción"
         verbose_name_plural = "Planes de Suscripción"
 
     def __str__(self):
@@ -212,6 +222,29 @@ class Empresa(models.Model):
 
     def __str__(self):
         return self.nombre
+
+
+# ─────────────────────────────────────────
+# Cambios de Plan (auditoría)
+# ─────────────────────────────────────────
+
+class CambioPlan(models.Model):
+    empresa      = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='cambios_plan')
+    plan_antes   = models.ForeignKey(PlanSuscripcion, on_delete=models.SET_NULL, null=True, blank=True, related_name='cambios_salida')
+    plan_despues = models.ForeignKey(PlanSuscripcion, on_delete=models.SET_NULL, null=True, blank=True, related_name='cambios_entrada')
+    cambiado_por = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='cambios_plan')
+    motivo       = models.CharField(max_length=500, blank=True, default='')
+    fecha        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering     = ['-fecha']
+        verbose_name = "Cambio de Plan"
+        verbose_name_plural = "Cambios de Plan"
+
+    def __str__(self):
+        antes  = self.plan_antes.get_nombre_display() if self.plan_antes else 'Sin plan'
+        despues = self.plan_despues.get_nombre_display() if self.plan_despues else 'Sin plan'
+        return f"{self.empresa.nombre}: {antes} → {despues}"
 
 
 # ─────────────────────────────────────────
@@ -491,6 +524,7 @@ TIPO_NOTIF_CATEGORIA = {
     "documento_vencido":     "documentos",
     "seguridad":             "seguridad",
     "actividad":             "actividad",
+    "limite_plan":           "seguridad",
 }
 
 
@@ -501,6 +535,7 @@ class TipoNotificacion(models.TextChoices):
     DOCUMENTO_VENCIDO     = "documento_vencido",     "Documento vencido"
     SEGURIDAD             = "seguridad",             "Seguridad"
     ACTIVIDAD             = "actividad",             "Actividad"
+    LIMITE_PLAN           = "limite_plan",           "Límite de plan"
 
 
 class Notificacion(models.Model):

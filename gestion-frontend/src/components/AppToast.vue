@@ -65,7 +65,7 @@ defineExpose({ agregar })
   position: fixed;
   top: 1.25rem;
   right: 1.25rem;
-  z-index: 2000;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   gap: 0.625rem;

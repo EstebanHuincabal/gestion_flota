@@ -12,6 +12,7 @@ const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
 const fechaRegistro = ref('')
+const planes    = ref([])
 
 const REGIONES = [
   { value: 'arica_y_parinacota', label: 'Arica y Parinacota' },
@@ -36,6 +37,7 @@ const form = ref({
   nombre:   '',
   rut:      '',
   estado:   'activa',
+  plan_id:  null,
   email:    '',
   telefono: '',
   direccion: '',
@@ -63,7 +65,8 @@ const cargarEmpresa = async () => {
   try {
     const res = await apiFetch(`/api/empresas/${id}/`)
     if (!res.ok) throw new Error('Empresa no encontrada')
-    const data = await res.json()
+    const raw  = await res.json()
+    const data = raw.informacion || raw
     form.value.nombre    = data.nombre    || ''
     form.value.rut       = aplicarFormatoRut(data.rut || '')
     form.value.estado    = data.estado    || 'activa'
@@ -74,6 +77,7 @@ const cargarEmpresa = async () => {
     form.value.ciudad    = data.ciudad    || ''
     form.value.region    = data.region    || ''
     form.value.pais      = data.pais      || 'Chile'
+    form.value.plan_id   = data.plan_id   || null
     if (data.created_at) {
       fechaRegistro.value = new Date(data.created_at).toLocaleDateString('es-CL', {
         year: 'numeric', month: 'long', day: 'numeric'
@@ -110,7 +114,13 @@ const guardar = async () => {
   }
 }
 
-onMounted(cargarEmpresa)
+onMounted(async () => {
+  const [, planesRes] = await Promise.all([
+    cargarEmpresa(),
+    apiFetch('/api/configuracion/planes/'),
+  ])
+  if (planesRes.ok) planes.value = await planesRes.json()
+})
 </script>
 
 <template>
@@ -175,6 +185,19 @@ onMounted(cargarEmpresa)
           <select id="estado" v-model="form.estado" class="input select">
             <option value="activa">Activa</option>
             <option value="suspendida">Suspendida</option>
+          </select>
+        </div>
+
+        <!-- ── Suscripción ── -->
+        <h2 class="section-title">Suscripción</h2>
+
+        <div class="form-group form-group--small">
+          <label class="label" for="plan_id">Plan</label>
+          <select id="plan_id" v-model="form.plan_id" class="input select">
+            <option :value="null">Sin plan</option>
+            <option v-for="p in planes" :key="p.id" :value="p.id">
+              {{ p.nombre_display }} — {{ p.precio_display || 'A convenir' }}
+            </option>
           </select>
         </div>
 

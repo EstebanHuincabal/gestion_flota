@@ -4,10 +4,10 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Count, Max, Subquery, OuterRef, IntegerField, Q
 from django.db.models.functions import TruncDay, TruncWeek, TruncMonth, Coalesce
-from django.contrib.auth import authenticate, login
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.middleware.csrf import get_token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -17,8 +17,9 @@ from django.core.paginator import Paginator
 from .models import (
     Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
     Mantencion, DocumentoVehiculo, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
-    TipoNotificacion
+    TipoNotificacion, CambioPlan
 )
+from .views_planes import verificar_limite_plan, verificar_modulo_plan
 from .audit import registrar_log
 from .notificaciones import notificar, notificar_admins_empresa
 from .serializers import (
@@ -388,18 +389,28 @@ def login_view(request):
     user.save()
     LogAuditoria.objects.create(tipo=TipoLog.SEGURIDAD, accion='login_exitoso', usuario=user, ip=ip)
 
-    login(request, user)
-    get_token(request)  # fuerza que Django emita la cookie csrftoken en esta respuesta
+    refresh = RefreshToken.for_user(user)
+
+    plan_modulos = []
+    plan_nombre  = ''
+    if user.empresa and user.empresa.plan:
+        plan_modulos = user.empresa.plan.modulos or []
+        plan_nombre  = user.empresa.plan.get_nombre_display()
 
     return JsonResponse({
         "message": "Login exitoso",
+        "access":  str(refresh.access_token),
+        "refresh": str(refresh),
         "user": {
-            "nombre":   user.nombre or user.email,
-            "rut":      rut,
-            "email":    user.email,
-            "rol":      user.rol,
-            "empresa":  user.empresa.nombre if user.empresa else None,
-            "permisos": list(user.permisos.values_list('codigo', flat=True)),
+            "nombre":      user.nombre or user.email,
+            "rut":         rut,
+            "email":       user.email,
+            "rol":         user.rol,
+            "empresa":     user.empresa.nombre if user.empresa else None,
+            "empresa_id":  user.empresa_id,
+            "permisos":    list(user.permisos.values_list('codigo', flat=True)),
+            "plan_modulos": plan_modulos,
+            "plan_nombre":  plan_nombre,
         },
     })
 
@@ -438,10 +449,24 @@ def empresas_crear(request):
 
     serializer = EmpresaSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        empresa = serializer.save()
+
+        plan_id = request.data.get('plan_id')
+        if plan_id:
+            try:
+                plan = PlanSuscripcion.objects.get(pk=plan_id)
+                CambioPlan.objects.create(
+                    empresa=empresa, plan_antes=None, plan_despues=plan,
+                    cambiado_por=request.user, motivo='Asignado al crear la empresa'
+                )
+                empresa.plan = plan
+                empresa.save(update_fields=['plan'])
+            except PlanSuscripcion.DoesNotExist:
+                pass
+
         registrar_log('ACTIVIDAD', 'empresa_creada', request,
-                      detalle={'empresa_nombre': serializer.data['nombre'], 'empresa_id': serializer.data['id']})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+                      detalle={'empresa_nombre': empresa.nombre, 'empresa_id': empresa.pk})
+        return Response(EmpresaSerializer(empresa).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -494,8 +519,27 @@ def empresas_detalle(request, pk):
     if request.method == 'PUT':
         serializer = EmpresaSerializer(empresa, data=request.data, partial=True)
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
+            empresa = serializer.save()
+
+            if 'plan_id' in request.data:
+                plan_id      = request.data.get('plan_id')
+                plan_anterior = empresa.plan
+                nuevo_plan    = None
+                if plan_id:
+                    try:
+                        nuevo_plan = PlanSuscripcion.objects.get(pk=plan_id)
+                    except PlanSuscripcion.DoesNotExist:
+                        nuevo_plan = plan_anterior
+
+                if nuevo_plan != plan_anterior:
+                    CambioPlan.objects.create(
+                        empresa=empresa, plan_antes=plan_anterior, plan_despues=nuevo_plan,
+                        cambiado_por=request.user, motivo='Modificado desde formulario de empresa'
+                    )
+                    empresa.plan = nuevo_plan
+                    empresa.save(update_fields=['plan'])
+
+            return Response(EmpresaSerializer(empresa).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == 'DELETE':
@@ -564,6 +608,18 @@ def usuarios_crear(request):
         if data.get('rol') in (Rol.SUPERADMIN, Rol.USUARIO):
             return Response({"error": "Sin permisos para crear ese rol."}, status=status.HTTP_403_FORBIDDEN)
         data['empresa_id'] = request.user.empresa_id
+
+    # Enforcement de límite de usuarios por plan (solo para rol USUARIO)
+    empresa_id_para_check = data.get('empresa_id') or (request.user.empresa_id if not es_superadmin(request.user) else None)
+    rol_nuevo = data.get('rol')
+    if rol_nuevo == Rol.USUARIO and empresa_id_para_check:
+        try:
+            empresa_check = Empresa.objects.select_related('plan').get(pk=empresa_id_para_check)
+            puede, error_resp, _, _, _ = verificar_limite_plan(empresa_check, 'usuarios')
+            if not puede:
+                return error_resp
+        except Empresa.DoesNotExist:
+            pass
 
     serializer = UsuarioCrearSerializer(data=data)
     if serializer.is_valid():
@@ -723,6 +779,10 @@ def conductores_lista_crear(request):
 
     if not tiene_permiso(request.user, 'conductores.crear'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+
+    puede, error_resp, _, _, _ = verificar_limite_plan(empresa, 'conductores')
+    if not puede:
+        return error_resp
 
     serializer = ConductorCrearSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
@@ -895,6 +955,10 @@ def flotas_lista_crear(request):
     if not tiene_permiso(request.user, 'flotas.crear'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
+    puede, error_resp, _, _, _ = verificar_limite_plan(empresa, 'flotas')
+    if not puede:
+        return error_resp
+
     serializer = FlotaSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
         serializer.save(empresa=empresa)
@@ -957,6 +1021,10 @@ def vehiculos_lista_crear(request):
     if not tiene_permiso(request.user, 'vehiculos.crear'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
+    puede, error_resp, _, _, _ = verificar_limite_plan(empresa, 'vehiculos')
+    if not puede:
+        return error_resp
+
     serializer = VehiculoSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
         serializer.save()
@@ -995,51 +1063,6 @@ def vehiculos_detalle(request, pk):
         vehiculo.activo = False
         vehiculo.save(update_fields=['activo'])
         return Response({"message": "Vehículo desactivado."})
-
-
-# ─────────────────────────────────────────
-# Planes
-# ─────────────────────────────────────────
-
-@api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
-def planes_lista_crear(request):
-    if not es_superadmin(request.user):
-        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-    
-    if request.method == 'GET':
-        planes = PlanSuscripcion.objects.all().order_by('id')
-        return Response(PlanSuscripcionSerializer(planes, many=True).data)
-
-    if request.method == 'POST':
-        serializer = PlanSuscripcionSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['PUT', 'DELETE'])
-@permission_classes([IsAuthenticated])
-def planes_detalle(request, pk):
-    if not es_superadmin(request.user):
-        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        plan = PlanSuscripcion.objects.get(pk=pk)
-    except PlanSuscripcion.DoesNotExist:
-        return Response({"error": "Plan no encontrado."}, status=status.HTTP_404_NOT_FOUND)
-
-    if request.method == 'PUT':
-        serializer = PlanSuscripcionSerializer(plan, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    if request.method == 'DELETE':
-        plan.delete()
-        return Response({"message": "Plan eliminado."})
 
 
 # ─────────────────────────────────────────
@@ -1102,7 +1125,7 @@ def usuario_permisos(request, pk):
         return Response({"error": "Solo el Superadmin puede gestionar permisos."}, status=403)
 
     try:
-        usuario = Usuario.objects.get(pk=pk)
+        usuario = Usuario.objects.select_related('empresa__plan').get(pk=pk)
     except Usuario.DoesNotExist:
         return Response({"error": "Usuario no encontrado."}, status=404)
 
@@ -1110,9 +1133,16 @@ def usuario_permisos(request, pk):
         return Response({"error": "Los permisos solo aplican a usuarios con rol USUARIO."}, status=400)
 
     if request.method == 'GET':
+        plan_modulos = []
+        plan_nombre  = ''
+        if usuario.empresa and usuario.empresa.plan:
+            plan_modulos = usuario.empresa.plan.modulos or []
+            plan_nombre  = usuario.empresa.plan.get_nombre_display()
         return Response({
-            "usuario_id": usuario.pk,
-            "permisos": list(usuario.permisos.values_list('codigo', flat=True)),
+            "usuario_id":   usuario.pk,
+            "permisos":     list(usuario.permisos.values_list('codigo', flat=True)),
+            "plan_modulos": plan_modulos,
+            "plan_nombre":  plan_nombre,
         })
 
     if request.method == 'PUT':

@@ -3,7 +3,7 @@ import hashlib
 from rest_framework import serializers
 from .models import (
     Empresa, Usuario, Rol, Permiso, normalizar_rut, REGIONES_CHILE,
-    Flota, Vehiculo, Asignacion, PlanSuscripcion, LogAuditoria,
+    Flota, Vehiculo, Asignacion, PlanSuscripcion, CambioPlan, LogAuditoria,
     DocumentoConductor, DocumentoVehiculo, Mantencion
 )
 
@@ -66,11 +66,15 @@ class EmpresaSerializer(serializers.Serializer):
     region   = serializers.CharField(required=False, allow_blank=True, default='')
     pais     = serializers.CharField(required=False, allow_blank=True, default='Chile')
     estado   = serializers.CharField(default='activa')
+    plan_id   = serializers.IntegerField(required=False, allow_null=True, default=None)
+    plan_nombre = serializers.SerializerMethodField()
     created_at           = serializers.DateTimeField(read_only=True)
     cantidad_flotas      = serializers.SerializerMethodField()
     cantidad_vehiculos   = serializers.SerializerMethodField()
     cantidad_conductores = serializers.SerializerMethodField()
     ultima_actividad     = serializers.SerializerMethodField()
+
+    def get_plan_nombre(self, obj):          return obj.plan.get_nombre_display() if obj.plan else None
 
     def get_cantidad_flotas(self, obj):      return getattr(obj, 'cantidad_flotas', None)
     def get_cantidad_vehiculos(self, obj):   return getattr(obj, 'cantidad_vehiculos', None)
@@ -119,6 +123,7 @@ class EmpresaSerializer(serializers.Serializer):
         return value
 
     def create(self, validated_data):
+        validated_data.pop('plan_id', None)
         rut       = validated_data.pop('rut', None)
         email     = validated_data.pop('email', '')
         telefono  = validated_data.pop('telefono', '')
@@ -143,6 +148,7 @@ class EmpresaSerializer(serializers.Serializer):
         return empresa
 
     def update(self, instance, validated_data):
+        validated_data.pop('plan_id', None)
         rut       = validated_data.pop('rut', None)
         email     = validated_data.pop('email', None)
         telefono  = validated_data.pop('telefono', None)
@@ -749,9 +755,53 @@ class VehiculoSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class PlanSuscripcionSerializer(serializers.ModelSerializer):
+    nombre_display   = serializers.CharField(source='get_nombre_display', read_only=True)
+    precio_display   = serializers.SerializerMethodField()
+    empresas_activas = serializers.SerializerMethodField()
+
     class Meta:
-        model = PlanSuscripcion
-        fields = '__all__'
+        model  = PlanSuscripcion
+        fields = [
+            'id', 'nombre', 'nombre_display', 'descripcion',
+            'precio_mensual', 'precio_anual', 'precio_display',
+            'max_flotas', 'max_vehiculos', 'max_conductores', 'max_usuarios',
+            'modulos', 'activo', 'orden', 'empresas_activas',
+            'created_at', 'updated_at',
+        ]
+
+    def get_precio_display(self, obj):
+        if obj.precio_mensual:
+            return f"${int(obj.precio_mensual):,}/mes".replace(',', '.')
+        return "A convenir"
+
+    def get_empresas_activas(self, obj):
+        return obj.empresas.filter(estado='activa').count()
+
+
+class CambioPlanSerializer(serializers.ModelSerializer):
+    empresa_nombre      = serializers.CharField(source='empresa.nombre', read_only=True)
+    plan_antes_nombre   = serializers.SerializerMethodField()
+    plan_despues_nombre = serializers.SerializerMethodField()
+    cambiado_por_email  = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CambioPlan
+        fields = [
+            'id', 'empresa', 'empresa_nombre',
+            'plan_antes', 'plan_antes_nombre',
+            'plan_despues', 'plan_despues_nombre',
+            'cambiado_por', 'cambiado_por_email',
+            'motivo', 'fecha',
+        ]
+
+    def get_plan_antes_nombre(self, obj):
+        return obj.plan_antes.get_nombre_display() if obj.plan_antes else None
+
+    def get_plan_despues_nombre(self, obj):
+        return obj.plan_despues.get_nombre_display() if obj.plan_despues else None
+
+    def get_cambiado_por_email(self, obj):
+        return obj.cambiado_por.email if obj.cambiado_por else None
 
 
 class LogAuditoriaSerializer(serializers.ModelSerializer):

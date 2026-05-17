@@ -57,7 +57,13 @@ const handleLogin = async () => {
     })
     const data = await response.json()
     if (response.ok) {
+      localStorage.setItem('access_token',  data.access)
+      localStorage.setItem('refresh_token', data.refresh)
       localStorage.setItem('usuario', JSON.stringify(data.user))
+      if (Array.isArray(data.user.plan_modulos)) {
+        sessionStorage.setItem('plan_modulos', JSON.stringify(data.user.plan_modulos))
+      }
+      sessionStorage.setItem('plan_nombre', data.user.plan_nombre || '')
       const destino = data.user.rol === 'SUPERADMIN' ? '/dashboard' : (data.user.rol === 'USUARIO' ? '/empresa/dashboard' : '/login')
       router.push(destino)
     } else {

@@ -122,8 +122,12 @@ const navSoporte = [
 const isActive = (path) => route.path.startsWith(path)
 
 const cerrarSesion = () => {
-  clearEmpresaActiva()
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
   localStorage.removeItem('usuario')
+  sessionStorage.removeItem('plan_modulos')
+  sessionStorage.removeItem('plan_nombre')
+  clearEmpresaActiva()
   router.push('/login')
 }
 </script>

@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework_simplejwt',
     'corsheaders',
     'g_de_flota',
 ]
@@ -105,6 +106,24 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL  = os.getenv('DEFAULT_FROM_EMAIL', 'Sistema de Flota <no-reply@flota.cl>')
 
 AUTHENTICATION_BACKENDS = [
-    'g_de_flota.backends.RutBackend',          # login frontend: RUT + password
+    'g_de_flota.backends.RutBackend',           # login frontend: RUT + password
     'django.contrib.auth.backends.ModelBackend', # login admin:    username + password
 ]
+
+# ── JWT ────────────────────────────────────────────────────────────────────────
+from datetime import timedelta
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME':  timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS':  True,
+    'AUTH_HEADER_TYPES':      ('Bearer',),
+    'USER_ID_FIELD':          'id',
+    'USER_ID_CLAIM':          'user_id',
+}

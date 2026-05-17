@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView
 from g_de_flota.views import (
     home_view, login_view, dashboard_global_view, empresa_dashboard_view,
     empresas_lista, empresas_crear, empresas_detalle,
@@ -9,13 +10,16 @@ from g_de_flota.views import (
     conductores_lista_crear, conductores_detalle, conductores_asignar, conductores_desasignar,
     admin_flotas_lista, flotas_lista_crear, flotas_detalle,
     vehiculos_lista_crear, vehiculos_detalle,
-    planes_lista_crear, planes_detalle,
     mantenciones_lista_crear, mantenciones_detalle, mantenciones_resumen,
     mantenciones_calendario, mantenciones_sugerencias,
     logs_lista,
     permisos_lista, usuario_permisos,
     PlanMantenimientoViewSet, AlertaMantencionViewSet, simulador_vencimientos,
     notificaciones_lista, notificaciones_no_leidas, notificaciones_leer, notificaciones_preferencias,
+)
+from g_de_flota.views_planes import (
+    planes_lista_crear, planes_detalle,
+    plan_asignar_empresa, plan_uso,
 )
 
 router = DefaultRouter()
@@ -25,14 +29,17 @@ router.register(r'empresa/alertas-mantenimiento', AlertaMantencionViewSet, basen
 urlpatterns = [
     path('',                          home_view,         name='home'),
     path('admin/',                    admin.site.urls),
-    path('api/login/',                login_view,        name='login'),
+    path('api/login/',                login_view,           name='login'),
+    path('api/token/refresh/',        TokenRefreshView.as_view(), name='token-refresh'),
     
     path('api/dashboard/',            dashboard_global_view,  name='dashboard-global'),
     path('api/empresa/dashboard/',    empresa_dashboard_view, name='empresa-dashboard'),
 
-    # Configuración Global del Sistema
-    path('api/configuracion/planes/',     planes_lista_crear,         name='config-planes-lista'),
-    path('api/configuracion/planes/<int:pk>/', planes_detalle,        name='config-planes-detalle'),
+    # Configuración Global del Sistema — Planes de Suscripción
+    path('api/configuracion/planes/',               planes_lista_crear,      name='config-planes-lista'),
+    path('api/configuracion/planes/<int:pk>/',      planes_detalle,          name='config-planes-detalle'),
+    path('api/configuracion/planes/<int:pk>/asignar/', plan_asignar_empresa, name='config-planes-asignar'),
+    path('api/empresa/plan-uso/',                   plan_uso,                name='empresa-plan-uso'),
 
     path('api/empresas/',             empresas_lista,    name='empresas-lista'),
     path('api/empresas/crear/',       empresas_crear,    name='empresas-crear'),

@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 
@@ -7,6 +7,7 @@ const router = useRouter()
 const guardando = ref(false)
 const error = ref('')
 const errores = ref({})
+const planes = ref([])
 
 const REGIONES = [
   { value: 'arica_y_parinacota', label: 'Arica y Parinacota' },
@@ -31,6 +32,7 @@ const form = ref({
   nombre:   '',
   rut:      '',
   estado:   'activa',
+  plan_id:  null,
   email:    '',
   telefono: '',
   direccion: '',
@@ -53,6 +55,11 @@ const aplicarFormatoRut = (val) => {
 const formatRut = (e) => {
   form.value.rut = aplicarFormatoRut(e.target.value)
 }
+
+onMounted(async () => {
+  const res = await apiFetch('/api/configuracion/planes/')
+  if (res.ok) planes.value = await res.json()
+})
 
 const guardar = async () => {
   error.value   = ''
@@ -125,6 +132,19 @@ const guardar = async () => {
           <select id="estado" v-model="form.estado" class="input select">
             <option value="activa">Activa</option>
             <option value="suspendida">Suspendida</option>
+          </select>
+        </div>
+
+        <!-- ── Suscripción ── -->
+        <h2 class="section-title">Suscripción</h2>
+
+        <div class="form-group form-group--small">
+          <label class="label" for="plan_id">Plan</label>
+          <select id="plan_id" v-model="form.plan_id" class="input select">
+            <option :value="null">Sin plan</option>
+            <option v-for="p in planes" :key="p.id" :value="p.id">
+              {{ p.nombre_display }} — {{ p.precio_display || 'A convenir' }}
+            </option>
           </select>
         </div>
 

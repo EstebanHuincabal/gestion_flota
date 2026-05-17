@@ -1,12 +1,14 @@
-$root     = $PSScriptRoot
-$backend  = Join-Path $root "gestion_backend"
-$frontend = Join-Path $root "gestion-frontend"
+$root           = $PSScriptRoot
+$backend        = Join-Path $root "gestion_backend"
+$frontend       = Join-Path $root "gestion-frontend"
+$backendScript  = Join-Path $backend  "start.ps1"
+$frontendScript = Join-Path $frontend "start.ps1"
 
 if (Get-Command wt -ErrorAction SilentlyContinue) {
-    # Windows Terminal: abre dos pestanas
-    wt --title "Django Backend" -d $backend pwsh -NoExit -Command "python manage.py runserver" `; new-tab --title "Vite Frontend" -d $frontend pwsh -NoExit -Command "npm run dev"
+    # Windows Terminal: abre dos pestañas
+    wt --title "Django Backend" -d "$backend" pwsh -NoExit -File "$backendScript" `; new-tab --title "Vite Frontend" -d "$frontend" pwsh -NoExit -File "$frontendScript"
 } else {
     # Fallback: dos ventanas PowerShell separadas
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$backend'; python manage.py runserver"
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$frontend'; npm run dev"
+    Start-Process powershell -ArgumentList @("-NoExit", "-File", $backendScript)
+    Start-Process powershell -ArgumentList @("-NoExit", "-File", $frontendScript)
 }
