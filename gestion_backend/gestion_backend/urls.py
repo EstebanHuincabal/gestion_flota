@@ -25,6 +25,11 @@ from g_de_flota.views_planes import (
 from g_de_flota.views_config import (
     usuario_perfil, usuario_cambiar_password, plan_historial,
 )
+from g_de_flota.views_gastos import (
+    GastosListView, GastoDetailView, GastosExportarView,
+    PresupuestoView, PresupuestoDetailView,
+    FinanzasSaasView, FinanzasHistoricoView,
+)
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -91,4 +96,15 @@ urlpatterns = [
     path('api/notificaciones/no-leidas/',    notificaciones_no_leidas,     name='notificaciones-no-leidas'),
     path('api/notificaciones/leer/',         notificaciones_leer,          name='notificaciones-leer'),
     path('api/notificaciones/preferencias/', notificaciones_preferencias,  name='notificaciones-preferencias'),
+
+    # Finanzas — gastos operativos (USUARIO)
+    path('api/empresa/gastos/',                  GastosListView.as_view(),       name='gastos-lista'),
+    path('api/empresa/gastos/exportar/',         GastosExportarView.as_view(),   name='gastos-exportar'),
+    path('api/empresa/gastos/<int:gasto_id>/',   GastoDetailView.as_view(),      name='gastos-detalle'),
+    path('api/empresa/presupuesto/',             PresupuestoView.as_view(),      name='presupuesto-lista'),
+    path('api/empresa/presupuesto/<int:pk>/',    PresupuestoDetailView.as_view(), name='presupuesto-detalle'),
+
+    # Finanzas — dashboard SaaS (SUPERADMIN)
+    path('api/admin/finanzas/',              FinanzasSaasView.as_view(),      name='finanzas-saas'),
+    path('api/admin/finanzas/historico/',    FinanzasHistoricoView.as_view(), name='finanzas-historico'),
 ]

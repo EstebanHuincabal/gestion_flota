@@ -37,6 +37,10 @@ import PreferenciasNotificaciones from '../web/notificaciones/PreferenciasNotifi
 // Layout empresa (solo USUARIO)
 import EmpresaLayout from '../web/empresa/EmpresaLayout.vue'
 
+// Finanzas
+import FinanzasEmpresa    from '../web/finanzas/FinanzasEmpresa.vue'
+import FinanzasSuperAdmin from '../web/finanzas/FinanzasSuperAdmin.vue'
+
 const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
@@ -91,7 +95,7 @@ const routes = [
       { path: 'notificaciones',             component: Notificaciones },
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
       { path: 'documentos',   component: Pendiente('Documentos')    },
-      { path: 'finanzas',     component: Pendiente('Finanzas')      },
+      { path: 'finanzas',     component: FinanzasSuperAdmin },
       { path: 'reportes',     component: Pendiente('Reportes')      },
     ],
   },
@@ -122,7 +126,7 @@ const routes = [
       { path: 'notificaciones',              component: Notificaciones },
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
       { path: 'documentos',      component: Pendiente('Documentos')    },
-      { path: 'finanzas',        component: Pendiente('Finanzas')      },
+      { path: 'finanzas',        component: FinanzasEmpresa },
       { path: 'reportes',        component: Pendiente('Reportes')      },
       { path: 'configuracion',   component: ConfiguracionPage },
     ],

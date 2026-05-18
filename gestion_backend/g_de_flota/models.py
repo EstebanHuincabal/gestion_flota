@@ -642,3 +642,50 @@ class AlertaMantencion(models.Model):
 
     def __str__(self):
         return f"{self.nivel} - {self.mantencion_programada}"
+
+
+# ─────────────────────────────────────────
+# Finanzas operativas
+# ─────────────────────────────────────────
+
+class GastoOperativo(models.Model):
+    CATEGORIAS = [
+        ('combustible', 'Combustible'),
+        ('mantencion',  'Mantención'),
+        ('multa',       'Multa'),
+        ('peaje',       'Peaje'),
+        ('seguro',      'Seguro'),
+        ('otro',        'Otro'),
+    ]
+    empresa        = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='gastos')
+    vehiculo       = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True)
+    conductor      = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='gastos_conductor')
+    categoria      = models.CharField(max_length=20, choices=CATEGORIAS)
+    descripcion    = models.CharField(max_length=300)
+    monto          = models.DecimalField(max_digits=10, decimal_places=0)
+    fecha          = models.DateField()
+    comprobante    = models.FileField(upload_to='comprobantes/', null=True, blank=True)
+    registrado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name='gastos_registrados')
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-fecha', '-created_at']
+        verbose_name = 'Gasto operativo'
+
+    def __str__(self):
+        return f"{self.get_categoria_display()} ${self.monto} — {self.fecha}"
+
+
+class PresupuestoMensual(models.Model):
+    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='presupuestos')
+    anio    = models.PositiveSmallIntegerField()
+    mes     = models.PositiveSmallIntegerField()
+    monto   = models.DecimalField(max_digits=12, decimal_places=0)
+
+    class Meta:
+        unique_together = ('empresa', 'anio', 'mes')
+        verbose_name = 'Presupuesto mensual'
+
+    def __str__(self):
+        return f"{self.empresa.nombre} — {self.mes}/{self.anio}: ${self.monto}"
