@@ -20,6 +20,10 @@ from g_de_flota.views import (
 from g_de_flota.views_planes import (
     planes_lista_crear, planes_detalle,
     plan_asignar_empresa, plan_uso, plan_permisos,
+    solicitar_cambio_plan,
+)
+from g_de_flota.views_config import (
+    usuario_perfil, usuario_cambiar_password, plan_historial,
 )
 
 router = DefaultRouter()
@@ -41,6 +45,7 @@ urlpatterns = [
     path('api/configuracion/planes/<int:pk>/asignar/',   plan_asignar_empresa, name='config-planes-asignar'),
     path('api/configuracion/planes/<int:pk>/permisos/', plan_permisos,        name='config-planes-permisos'),
     path('api/empresa/plan-uso/',                   plan_uso,                name='empresa-plan-uso'),
+    path('api/empresa/solicitar-cambio-plan/',      solicitar_cambio_plan,   name='empresa-solicitar-plan'),
 
     path('api/empresas/',             empresas_lista,    name='empresas-lista'),
     path('api/empresas/crear/',       empresas_crear,    name='empresas-crear'),
@@ -74,6 +79,10 @@ urlpatterns = [
     path('api/empresa/simulador-vencimientos/',    simulador_vencimientos,    name='simulador-vencimientos'),
 
     path('api/logs/',                        logs_lista,            name='logs-lista'),
+
+    path('api/usuario/perfil/',              usuario_perfil,             name='usuario-perfil'),
+    path('api/usuario/cambiar-password/',    usuario_cambiar_password,   name='usuario-cambiar-password'),
+    path('api/empresa/plan-historial/',      plan_historial,             name='plan-historial'),
 
     path('api/permisos/',                              permisos_lista,   name='permisos-lista'),
     path('api/usuarios/<int:pk>/permisos/',            usuario_permisos, name='usuario-permisos'),

@@ -26,8 +26,26 @@
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900;
+    font-family: var(--font-family, 'Inter', system-ui, -apple-system, sans-serif);
   }
 }
+
+/* ── Valores base de radio de bordes ── */
+:root {
+  --radius-card:  12px;
+  --radius-input: 8px;
+  --radius-btn:   8px;
+}
+
+/* ── Densidad de interfaz ── */
+html[data-density="compact"]  { font-size: 13px; }
+html[data-density="normal"]   { font-size: 14px; }
+html[data-density="spacious"] { font-size: 16px; }
+
+/* ── Radio de bordes ── */
+html[data-radius="sharp"]   { --radius-card: 4px;  --radius-input: 4px;  --radius-btn: 4px;  }
+html[data-radius="normal"]  { --radius-card: 12px; --radius-input: 8px;  --radius-btn: 8px;  }
+html[data-radius="soft"]    { --radius-card: 20px; --radius-input: 12px; --radius-btn: 12px; }
 
 @layer components {
   .glass-effect {

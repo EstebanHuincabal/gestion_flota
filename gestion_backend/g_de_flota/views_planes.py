@@ -116,12 +116,15 @@ def verificar_modulo_plan(empresa, modulo):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def planes_lista_crear(request):
+    if request.method == 'GET':
+        if _es_superadmin(request.user):
+            planes = PlanSuscripcion.objects.all().order_by('orden', 'id')
+        else:
+            planes = PlanSuscripcion.objects.filter(activo=True).order_by('orden', 'id')
+        return Response(PlanSuscripcionSerializer(planes, many=True).data)
+
     if not _es_superadmin(request.user):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-
-    if request.method == 'GET':
-        planes = PlanSuscripcion.objects.all().order_by('orden', 'id')
-        return Response(PlanSuscripcionSerializer(planes, many=True).data)
 
     serializer = PlanSuscripcionSerializer(data=request.data)
     if serializer.is_valid():
@@ -317,3 +320,56 @@ def plan_uso(request):
         "uso":     uso,
         "alertas": alertas,
     })
+
+
+# ─────────────────────────────────────────
+# Solicitud de cambio de plan (USUARIO → SUPERADMIN)
+# ─────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def solicitar_cambio_plan(request):
+    user = request.user
+    if user.rol != Rol.USUARIO:
+        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+    if not user.empresa_id:
+        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+
+    plan_id = request.data.get('plan_id')
+    if not plan_id:
+        return Response({"error": "Se requiere plan_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        plan = PlanSuscripcion.objects.get(pk=plan_id, activo=True)
+    except PlanSuscripcion.DoesNotExist:
+        return Response({"error": "Plan no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    empresa     = Empresa.objects.select_related('plan').get(pk=user.empresa_id)
+    plan_actual = empresa.plan
+
+    if plan_actual and plan_actual.pk == plan.pk:
+        return Response({"error": "Tu empresa ya tiene este plan activo."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Notificar directamente (sin filtro de prefs) a todos los SUPERADMIN
+    superadmins = Usuario.objects.filter(rol=Rol.SUPERADMIN, is_active=True)
+    titulo_notif  = 'Solicitud de cambio de plan'
+    mensaje_notif = (
+        f'La empresa "{empresa.nombre}" solicita cambiar al plan '
+        f'"{plan.get_nombre_display()}" '
+        f'(plan actual: "{plan_actual.get_nombre_display() if plan_actual else "Sin plan"}").'
+    )
+    extra_notif = {'tipo': 'solicitud_plan', 'empresa_id': empresa.id, 'plan_id': plan.id}
+    for sa in superadmins:
+        Notificacion.objects.create(
+            usuario    = sa,
+            tipo       = TipoNotificacion.ACTIVIDAD,
+            titulo     = titulo_notif,
+            mensaje    = mensaje_notif,
+            url_accion = '/empresas',
+            extra      = extra_notif,
+        )
+
+    registrar_log('ACTIVIDAD', 'solicitud_cambio_plan', request,
+                  detalle={'empresa': empresa.nombre, 'plan_solicitado': plan.nombre})
+
+    return Response({"message": "Solicitud enviada. El administrador recibirá una notificación."})

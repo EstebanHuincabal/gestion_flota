@@ -71,6 +71,14 @@ const navItems = [
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>`,
   },
+  {
+    label: 'Configuración',
+    path: '/empresa/configuracion',
+    permiso: null,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`,
+  },
 ]
 
 const navItemsFiltrados = computed(() =>
@@ -175,7 +183,7 @@ const cerrarSesion = () => {
 
 .sidebar {
   position: fixed; top: 0; left: 0; height: 100vh; width: 240px;
-  background: linear-gradient(160deg, #4F46E5 0%, #7C3AED 100%);
+  background: linear-gradient(160deg, var(--sidebar-from, #4F46E5) 0%, var(--sidebar-to, #7C3AED) 100%);
   display: flex; flex-direction: column;
   transition: width 0.25s ease; z-index: 100; overflow: hidden;
 }
@@ -200,12 +208,12 @@ const cerrarSesion = () => {
 
 .collapse-btn {
   position: absolute; top: 18px; right: -13px;
-  width: 26px; height: 26px; background: #7C3AED;
+  width: 26px; height: 26px; background: var(--sidebar-to, #7C3AED);
   border: 1px solid rgba(255,255,255,0.25); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; color: #fff; transition: background 0.2s; z-index: 10;
 }
-.collapse-btn:hover { background: #4F46E5; }
+.collapse-btn:hover { background: var(--sidebar-from, #4F46E5); }
 .collapse-btn svg { width: 14px; height: 14px; }
 
 .nav { flex: 1; padding: 1rem 0.625rem; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }

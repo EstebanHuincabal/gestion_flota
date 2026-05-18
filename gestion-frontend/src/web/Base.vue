@@ -113,10 +113,14 @@ const navConductor = [
   },
 ]
 
-const navSoporte = [
-  {label: 'Sistema de soporte',
-   path: '#',
-  }
+const navCuenta = [
+  {
+    label: 'Configuración',
+    path: '/configuracion',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`,
+  },
 ]
 
 const isActive = (path) => route.path.startsWith(path)
@@ -235,6 +239,23 @@ const cerrarSesion = () => {
           </router-link>
         </template>
 
+        <!-- Cuenta -->
+        <div class="nav-separator"/>
+        <p v-if="!navCollapsed" class="nav-section-label">Cuenta</p>
+        <router-link
+          v-for="item in navCuenta"
+          :key="item.path"
+          :to="item.path"
+          :class="['nav-item', { active: isActive(item.path) }]"
+          :title="navCollapsed ? item.label : ''"
+        >
+          <span class="nav-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+          </span>
+          <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
+          <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
+        </router-link>
+
       </nav>
 
     </aside>
@@ -285,7 +306,7 @@ const cerrarSesion = () => {
   top: 0; left: 0;
   height: 100vh;
   width: 240px;
-  background: linear-gradient(160deg, #4F46E5 0%, #7C3AED 100%);
+  background: linear-gradient(160deg, var(--sidebar-from, #4F46E5) 0%, var(--sidebar-to, #7C3AED) 100%);
   display: flex;
   flex-direction: column;
   transition: width 0.25s ease;
@@ -322,7 +343,7 @@ const cerrarSesion = () => {
   position: absolute;
   top: 18px; right: -13px;
   width: 26px; height: 26px;
-  background: #7C3AED;
+  background: var(--sidebar-to, #7C3AED);
   border: 1px solid rgba(255,255,255,0.25);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -331,7 +352,7 @@ const cerrarSesion = () => {
   transition: background 0.2s;
   z-index: 10;
 }
-.collapse-btn:hover { background: #4F46E5; }
+.collapse-btn:hover { background: var(--sidebar-from, #4F46E5); }
 .collapse-btn svg { width: 14px; height: 14px; }
 
 /* Nav */

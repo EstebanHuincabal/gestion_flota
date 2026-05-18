@@ -5,6 +5,9 @@ import Chart from 'chart.js/auto'
 import { apiFetch } from '../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav } from '../utils/empresaActiva.js'
 import { tienePermiso } from '../utils/permisos.js'
+import { useTema } from '../utils/tema.js'
+
+const { accentActual } = useTema()
 
 const router = useRouter()
 const { ruta } = useEmpresaNav()
@@ -151,16 +154,17 @@ const renderGraficosGlobal = (charts) => {
   if (distribucionChart) distribucionChart.destroy()
 
   if (crecimientoCanvas.value) {
+    const ac = accentActual()
     crecimientoChart = new Chart(crecimientoCanvas.value, {
       type: 'line',
       data: {
         labels: charts.crecimiento.labels,
         datasets: [{
           data: charts.crecimiento.data,
-          borderColor: '#4F46E5',
-          backgroundColor: 'rgba(79,70,229,0.07)',
+          borderColor: ac,
+          backgroundColor: `color-mix(in oklch, ${ac} 12%, transparent)`,
           tension: 0.4, fill: true,
-          pointRadius: 3, pointBackgroundColor: '#4F46E5',
+          pointRadius: 3, pointBackgroundColor: ac,
           pointHoverRadius: 5,
         }]
       },
@@ -176,13 +180,19 @@ const renderGraficosGlobal = (charts) => {
   }
 
   if (distribucionCanvas.value) {
+    const ac = accentActual()
     distribucionChart = new Chart(distribucionCanvas.value, {
       type: 'doughnut',
       data: {
         labels: charts.distribucion_flota.labels,
         datasets: [{
           data: charts.distribucion_flota.data,
-          backgroundColor: ['#E5E7EB', '#6366F1', '#10B981', '#F59E0B'],
+          backgroundColor: [
+            '#E5E7EB',
+            ac,
+            `color-mix(in oklch, ${ac} 60%, #10B981)`,
+            `color-mix(in oklch, ${ac} 40%, #F59E0B)`,
+          ],
           borderWidth: 0, hoverOffset: 6,
         }]
       },
@@ -200,14 +210,15 @@ const renderGraficosEmpresa = (charts) => {
   if (mantencionesChart) mantencionesChart.destroy()
 
   if (vehiculosCanvas.value) {
+    const ac = accentActual()
     vehiculosChart = new Chart(vehiculosCanvas.value, {
       type: 'bar',
       data: {
         labels: charts.vehiculos_por_flota.labels,
         datasets: [{
           data: charts.vehiculos_por_flota.data,
-          backgroundColor: '#6366F1',
-          hoverBackgroundColor: '#4F46E5',
+          backgroundColor: `color-mix(in oklch, ${ac} 80%, white)`,
+          hoverBackgroundColor: ac,
           borderRadius: 6,
           barThickness: 32,
         }]
@@ -636,12 +647,12 @@ onMounted(cargar)
   font-size: 0.875rem; font-weight: 500; color: #374151;
   cursor: pointer; transition: all 0.15s; font-family: inherit;
 }
-.btn-refresh:hover:not(:disabled) { border-color: #6366F1; color: #4F46E5; }
+.btn-refresh:hover:not(:disabled) { border-color: var(--color-accent, #6366F1); color: var(--color-accent, #4F46E5); }
 .btn-refresh:disabled { opacity: 0.5; cursor: default; }
 .btn-refresh svg { width: 15px; height: 15px; }
 
 .loading { display: flex; align-items: center; gap: 0.75rem; color: #6B7280; font-size: 0.875rem; padding: 3rem 0; }
-.spinner { width: 22px; height: 22px; border: 2.5px solid #E5E7EB; border-top-color: #7C3AED; border-radius: 50%; animation: spin 0.7s linear infinite; }
+.spinner { width: 22px; height: 22px; border: 2.5px solid #E5E7EB; border-top-color: var(--color-accent, #7C3AED); border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .alert-error { background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626; padding: 0.875rem 1rem; border-radius: 10px; font-size: 0.875rem; }
@@ -700,7 +711,7 @@ onMounted(cargar)
 .card-title    { font-size: 0.9375rem; font-weight: 700; color: #111827; margin: 0 0 0.2rem; }
 .card-subtitle { font-size: 0.8rem; color: #9CA3AF; margin: 0; }
 .btn-link {
-  font-size: 0.8125rem; font-weight: 600; color: #4F46E5;
+  font-size: 0.8125rem; font-weight: 600; color: var(--color-accent, #4F46E5);
   background: none; border: none; cursor: pointer; padding: 0; white-space: nowrap;
   font-family: inherit;
 }
@@ -717,7 +728,7 @@ onMounted(cargar)
   background: transparent; cursor: pointer; font-family: inherit;
   transition: all 0.15s; white-space: nowrap;
 }
-.periodo-btn.active { background: #fff; color: #4F46E5; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.periodo-btn.active { background: #fff; color: var(--color-accent, #4F46E5); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .periodo-btn:hover:not(.active):not(:disabled) { color: #374151; }
 .periodo-btn:disabled { opacity: 0.5; cursor: default; }
 
@@ -768,7 +779,7 @@ onMounted(cargar)
   cursor: pointer; transition: all 0.15s; font-family: inherit;
   box-shadow: 0 1px 4px rgba(0,0,0,0.04);
 }
-.acceso-card:hover { border-color: #6366F1; box-shadow: 0 4px 12px rgba(99,102,241,0.12); transform: translateY(-1px); }
+.acceso-card:hover { border-color: var(--color-accent, #6366F1); box-shadow: 0 4px 12px rgba(99,102,241,0.12); transform: translateY(-1px); }
 
 .acceso-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
 .acceso-icon svg { width: 22px; height: 22px; }

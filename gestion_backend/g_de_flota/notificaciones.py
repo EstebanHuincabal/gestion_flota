@@ -51,3 +51,12 @@ def notificar_admins_empresa(empresa, tipo: str, titulo: str, mensaje: str,
     admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
     for admin in admins:
         notificar(admin, tipo, titulo, mensaje, url_accion, extra)
+
+
+def notificar_superadmins(tipo: str, titulo: str, mensaje: str,
+                          url_accion: str = '', extra: dict = None):
+    """Notifica a todos los SUPERADMIN activos del sistema."""
+    from .models import Usuario, Rol
+    superadmins = Usuario.objects.filter(rol=Rol.SUPERADMIN, is_active=True)
+    for sa in superadmins:
+        notificar(sa, tipo, titulo, mensaje, url_accion, extra)

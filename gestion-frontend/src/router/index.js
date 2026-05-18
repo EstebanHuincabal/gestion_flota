@@ -12,6 +12,7 @@ import ListaUsuarios from '../web/usuarios/ListaUsuarios.vue'
 import NuevoUsuario  from '../web/usuarios/NuevoUsuario.vue'
 import EditarUsuario from '../web/usuarios/EditarUsuario.vue'
 import Planes from '../web/configuracion/Planes.vue'
+import ConfiguracionPage from '../web/configuracion/ConfiguracionPage.vue'
 import Logs from '../web/logs/Logs.vue'
 import GestionPermisos from '../web/permisos/GestionPermisos.vue'
 
@@ -68,6 +69,7 @@ const routes = [
       { path: 'planes',                 component: Planes },
       { path: 'permisos',               component: GestionPermisos },
       { path: 'logs',                   component: Logs },
+      { path: 'configuracion',          component: ConfiguracionPage },
 
       // Operaciones de empresa (sin prefijo /empresa/)
       { path: 'flota',                                    component: ListaFlota       },
@@ -119,9 +121,10 @@ const routes = [
       { path: 'predictivo', component: MantencionPredictiva },
       { path: 'notificaciones',              component: Notificaciones },
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
-      { path: 'documentos',   component: Pendiente('Documentos')    },
-      { path: 'finanzas',     component: Pendiente('Finanzas')      },
-      { path: 'reportes',     component: Pendiente('Reportes')      },
+      { path: 'documentos',      component: Pendiente('Documentos')    },
+      { path: 'finanzas',        component: Pendiente('Finanzas')      },
+      { path: 'reportes',        component: Pendiente('Reportes')      },
+      { path: 'configuracion',   component: ConfiguracionPage },
     ],
   },
 ]
