@@ -17,6 +17,7 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else []
 
 INSTALLED_APPS = [
+    'daphne',                       # debe ser primero: convierte runserver a ASGI
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -26,6 +27,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'channels',
     'g_de_flota',
 ]
 
@@ -86,6 +88,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:7183",
     "http://127.0.0.1:7183",
 ]
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # en dev permite todos los orígenes para WS
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:7183",
@@ -126,4 +129,16 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES':      ('Bearer',),
     'USER_ID_FIELD':          'id',
     'USER_ID_CLAIM':          'user_id',
+}
+
+# ── WebSockets (Django Channels) ───────────────────────────────────────────────
+ASGI_APPLICATION = 'gestion_backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        # Para producción con múltiples procesos, usar Redis:
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {'hosts': [('127.0.0.1', 6379)]},
+    }
 }

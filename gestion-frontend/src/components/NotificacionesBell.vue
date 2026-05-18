@@ -79,13 +79,56 @@ const recientes = ref([])
 const abierto   = ref(false)
 const bellRef   = ref(null)
 
-let intervalo = null
+let ws = null
+let wsReconnectDelay = 1000
+let wsReconnectTimer = null
 
 const fetchConteo = async () => {
   try {
     const res = await apiFetch('/api/notificaciones/no-leidas/')
     if (res.ok) noLeidas.value = (await res.json()).count
   } catch {}
+}
+
+function conectarWS() {
+  const token = localStorage.getItem('access_token')
+  if (!token) return
+
+  // En dev conecta directo al backend (evita problemas con el proxy WS de Vite)
+  // En producción usa el mismo host que sirve la app
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const host  = import.meta.env.DEV ? '127.0.0.1:8000' : location.host
+  ws = new WebSocket(`${proto}://${host}/ws/notificaciones/?token=${token}`)
+
+  ws.onopen = () => {
+    wsReconnectDelay = 1000
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (import.meta.env.DEV) console.log('[WS notif] recibido:', data)
+      if (data.type === 'nueva_notificacion') {
+        if (import.meta.env.DEV) console.log('[WS notif] noLeidas antes:', noLeidas.value, '→', data.count)
+        noLeidas.value = typeof data.count === 'number' ? data.count : noLeidas.value + 1
+        if (import.meta.env.DEV) console.log('[WS notif] noLeidas después:', noLeidas.value)
+        if (data.notificacion && !abierto.value) {
+          recientes.value = [data.notificacion, ...recientes.value].slice(0, 10)
+        }
+      }
+    } catch (e) {
+      if (import.meta.env.DEV) console.error('[WS notif] error:', e)
+    }
+  }
+
+  ws.onclose = () => {
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30_000)
+      conectarWS()
+    }, wsReconnectDelay)
+  }
+
+  ws.onerror = () => ws.close()
 }
 
 const fetchRecientes = async () => {
@@ -132,12 +175,13 @@ const formatRelativo = (fecha) => {
 
 onMounted(() => {
   fetchConteo()
-  intervalo = setInterval(fetchConteo, 30000)
+  conectarWS()
   document.addEventListener('click', cerrarSiAfuera)
 })
 
 onUnmounted(() => {
-  clearInterval(intervalo)
+  clearTimeout(wsReconnectTimer)
+  if (ws) ws.close()
   document.removeEventListener('click', cerrarSiAfuera)
 })
 </script>

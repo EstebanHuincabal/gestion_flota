@@ -9,7 +9,7 @@ from .models import (
     Rol, TipoNotificacion, Notificacion, Permiso
 )
 from .audit import registrar_log
-from .notificaciones import notificar_admins_empresa
+from .notificaciones import notificar, notificar_admins_empresa
 from .serializers import PlanSuscripcionSerializer, CambioPlanSerializer, PermisoSerializer
 
 
@@ -360,14 +360,8 @@ def solicitar_cambio_plan(request):
     )
     extra_notif = {'tipo': 'solicitud_plan', 'empresa_id': empresa.id, 'plan_id': plan.id}
     for sa in superadmins:
-        Notificacion.objects.create(
-            usuario    = sa,
-            tipo       = TipoNotificacion.ACTIVIDAD,
-            titulo     = titulo_notif,
-            mensaje    = mensaje_notif,
-            url_accion = '/empresas',
-            extra      = extra_notif,
-        )
+        notificar(sa, TipoNotificacion.ACTIVIDAD, titulo_notif, mensaje_notif,
+                  url_accion='/empresas', extra=extra_notif, forzar=True)
 
     registrar_log('ACTIVIDAD', 'solicitud_cambio_plan', request,
                   detalle={'empresa': empresa.nombre, 'plan_solicitado': plan.nombre})
