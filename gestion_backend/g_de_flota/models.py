@@ -118,6 +118,7 @@ class PlanSuscripcion(models.Model):
     max_conductores = models.PositiveIntegerField(default=10)
     max_usuarios    = models.PositiveIntegerField(default=5)
     modulos         = models.JSONField(default=list, blank=True)
+    permisos        = models.ManyToManyField('Permiso', blank=True, related_name='planes')
     activo          = models.BooleanField(default=True)
     orden           = models.PositiveSmallIntegerField(default=0)
     created_at      = models.DateTimeField(auto_now_add=True, null=True)
@@ -281,6 +282,9 @@ class Usuario(AbstractUser):
     # Preferencias de notificación
     # Estructura: {"inapp": ["mantencion","documentos","seguridad"], "email": ["mantencion","documentos"], "push_token": ""}
     notif_prefs = models.JSONField(default=dict, blank=True)
+
+    politicas_aceptadas = models.BooleanField(default=False)
+    primer_login        = models.BooleanField(default=True)
 
     USERNAME_FIELD  = "email"
     REQUIRED_FIELDS = []

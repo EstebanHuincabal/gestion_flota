@@ -85,6 +85,7 @@ const cerrarSesion = () => {
   localStorage.removeItem('usuario')
   sessionStorage.removeItem('plan_modulos')
   sessionStorage.removeItem('plan_nombre')
+  sessionStorage.removeItem('plan_permisos')
   router.push('/login')
 }
 </script>

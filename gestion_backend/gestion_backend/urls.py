@@ -19,7 +19,7 @@ from g_de_flota.views import (
 )
 from g_de_flota.views_planes import (
     planes_lista_crear, planes_detalle,
-    plan_asignar_empresa, plan_uso,
+    plan_asignar_empresa, plan_uso, plan_permisos,
 )
 
 router = DefaultRouter()
@@ -38,7 +38,8 @@ urlpatterns = [
     # Configuración Global del Sistema — Planes de Suscripción
     path('api/configuracion/planes/',               planes_lista_crear,      name='config-planes-lista'),
     path('api/configuracion/planes/<int:pk>/',      planes_detalle,          name='config-planes-detalle'),
-    path('api/configuracion/planes/<int:pk>/asignar/', plan_asignar_empresa, name='config-planes-asignar'),
+    path('api/configuracion/planes/<int:pk>/asignar/',   plan_asignar_empresa, name='config-planes-asignar'),
+    path('api/configuracion/planes/<int:pk>/permisos/', plan_permisos,        name='config-planes-permisos'),
     path('api/empresa/plan-uso/',                   plan_uso,                name='empresa-plan-uso'),
 
     path('api/empresas/',             empresas_lista,    name='empresas-lista'),

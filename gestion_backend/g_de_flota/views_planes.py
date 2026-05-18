@@ -6,11 +6,11 @@ from rest_framework import status
 
 from .models import (
     Empresa, Usuario, Flota, Vehiculo, PlanSuscripcion, CambioPlan,
-    Rol, TipoNotificacion, Notificacion
+    Rol, TipoNotificacion, Notificacion, Permiso
 )
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
-from .serializers import PlanSuscripcionSerializer, CambioPlanSerializer
+from .serializers import PlanSuscripcionSerializer, CambioPlanSerializer, PermisoSerializer
 
 
 def _es_superadmin(user):
@@ -230,6 +230,41 @@ def plan_asignar_empresa(request, pk):
     return Response({
         "message": f"Plan asignado correctamente a {empresa.nombre}.",
         "plan": PlanSuscripcionSerializer(plan).data,
+    })
+
+
+# ─────────────────────────────────────────
+# Permisos por plan
+# ─────────────────────────────────────────
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def plan_permisos(request, pk):
+    if not _es_superadmin(request.user):
+        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        plan = PlanSuscripcion.objects.get(pk=pk)
+    except PlanSuscripcion.DoesNotExist:
+        return Response({"error": "Plan no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    todos = Permiso.objects.all().order_by('categoria', 'codigo')
+
+    if request.method == 'GET':
+        return Response({
+            "plan_id":       plan.id,
+            "plan_nombre":   plan.get_nombre_display(),
+            "permisos_plan": list(plan.permisos.values_list('codigo', flat=True)),
+            "todos_permisos": PermisoSerializer(todos, many=True).data,
+        })
+
+    codigos = request.data.get('permisos', [])
+    nuevos  = Permiso.objects.filter(codigo__in=codigos)
+    plan.permisos.set(nuevos)
+    registrar_log('ACTIVIDAD', 'plan_permisos_editados', request,
+                  detalle={'plan': plan.nombre, 'plan_id': plan.id, 'total': nuevos.count()})
+    return Response({
+        "permisos_plan": list(plan.permisos.values_list('codigo', flat=True)),
     })
 
 

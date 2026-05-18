@@ -54,7 +54,10 @@ def tiene_permiso(user, codigo: str) -> bool:
         return True
     if rol == Rol.CONDUCTOR:
         return False
-    return user.permisos.filter(codigo=codigo).exists()
+    plan = getattr(user.empresa, 'plan', None) if user.empresa_id else None
+    if not plan:
+        return False
+    return plan.permisos.filter(codigo=codigo).exists()
 
 def get_empresa(request):
     user = request.user
@@ -391,26 +394,29 @@ def login_view(request):
 
     refresh = RefreshToken.for_user(user)
 
-    plan_modulos = []
-    plan_nombre  = ''
+    plan_modulos  = []
+    plan_nombre   = ''
+    plan_permisos = []
     if user.empresa and user.empresa.plan:
-        plan_modulos = user.empresa.plan.modulos or []
-        plan_nombre  = user.empresa.plan.get_nombre_display()
+        plan = user.empresa.plan
+        plan_modulos  = plan.modulos or []
+        plan_nombre   = plan.get_nombre_display()
+        plan_permisos = list(plan.permisos.values_list('codigo', flat=True))
 
     return JsonResponse({
         "message": "Login exitoso",
         "access":  str(refresh.access_token),
         "refresh": str(refresh),
         "user": {
-            "nombre":      user.nombre or user.email,
-            "rut":         rut,
-            "email":       user.email,
-            "rol":         user.rol,
-            "empresa":     user.empresa.nombre if user.empresa else None,
-            "empresa_id":  user.empresa_id,
-            "permisos":    list(user.permisos.values_list('codigo', flat=True)),
-            "plan_modulos": plan_modulos,
-            "plan_nombre":  plan_nombre,
+            "nombre":        user.nombre or user.email,
+            "rut":           rut,
+            "email":         user.email,
+            "rol":           user.rol,
+            "empresa":       user.empresa.nombre if user.empresa else None,
+            "empresa_id":    user.empresa_id,
+            "plan_modulos":  plan_modulos,
+            "plan_nombre":   plan_nombre,
+            "plan_permisos": plan_permisos,
         },
     })
 

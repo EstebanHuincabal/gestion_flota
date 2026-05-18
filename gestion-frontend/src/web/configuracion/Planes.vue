@@ -48,8 +48,12 @@ const MODULOS = [
 ]
 
 // ── Modal plan ─────────────────────────────────────────────────────────────
-const modalPlan = ref(false)
-const editandoPlan = ref(null)
+const modalPlan      = ref(false)
+const editandoPlan   = ref(null)
+const todosPermisos  = ref([])
+const permisosPlan   = ref([])
+const cargandoPermisos = ref(false)
+
 const formPlan = ref({
   nombre: 'basico', descripcion: '',
   precio_mensual: '', precio_anual: '',
@@ -58,7 +62,35 @@ const formPlan = ref({
   modulos: [], activo: true, orden: 0,
 })
 
-const abrirModalCrear = () => {
+// Permisos agrupados por categoría (igual que GestionPermisos)
+const permisosAgrupados = computed(() => {
+  const grupos = {}
+  for (const p of todosPermisos.value) {
+    if (!grupos[p.categoria]) grupos[p.categoria] = []
+    grupos[p.categoria].push(p)
+  }
+  return grupos
+})
+
+const categoriaCompleta = (permisosCat) =>
+  permisosCat.every(p => permisosPlan.value.includes(p.codigo))
+
+const categoriaIndeterminate = (permisosCat) => {
+  const alguno = permisosCat.some(p => permisosPlan.value.includes(p.codigo))
+  return alguno && !categoriaCompleta(permisosCat)
+}
+
+const toggleCategoria = (permisosCat) => {
+  const codigos = permisosCat.map(p => p.codigo)
+  if (categoriaCompleta(permisosCat)) {
+    permisosPlan.value = permisosPlan.value.filter(c => !codigos.includes(c))
+  } else {
+    const nuevos = codigos.filter(c => !permisosPlan.value.includes(c))
+    permisosPlan.value = [...permisosPlan.value, ...nuevos]
+  }
+}
+
+const abrirModalCrear = async () => {
   editandoPlan.value = null
   formPlan.value = {
     nombre: 'basico', descripcion: '',
@@ -67,10 +99,16 @@ const abrirModalCrear = () => {
     max_conductores: 15, max_usuarios: 3,
     modulos: [], activo: true, orden: 0,
   }
-  modalPlan.value = true
+  permisosPlan.value  = []
+  todosPermisos.value = []
+  modalPlan.value     = true
+  cargandoPermisos.value = true
+  const res = await apiFetch('/api/permisos/')
+  if (res.ok) todosPermisos.value = await res.json()
+  cargandoPermisos.value = false
 }
 
-const abrirModalEditar = (plan) => {
+const abrirModalEditar = async (plan) => {
   editandoPlan.value = plan
   formPlan.value = {
     nombre:          plan.nombre,
@@ -85,7 +123,17 @@ const abrirModalEditar = (plan) => {
     activo:          plan.activo,
     orden:           plan.orden,
   }
-  modalPlan.value = true
+  permisosPlan.value  = []
+  todosPermisos.value = []
+  modalPlan.value     = true
+  cargandoPermisos.value = true
+  const res = await apiFetch(`/api/configuracion/planes/${plan.id}/permisos/`)
+  if (res.ok) {
+    const data = await res.json()
+    permisosPlan.value  = [...(data.permisos_plan  || [])]
+    todosPermisos.value = data.todos_permisos || []
+  }
+  cargandoPermisos.value = false
 }
 
 const toggleModulo = (key) => {
@@ -106,14 +154,25 @@ const guardarPlan = async () => {
     const url    = editandoPlan.value ? `/api/configuracion/planes/${editandoPlan.value.id}/` : '/api/configuracion/planes/'
     const method = editandoPlan.value ? 'PUT' : 'POST'
     const res    = await apiFetch(url, { method, body })
-    if (res.ok) {
-      toast.success(editandoPlan.value ? 'Plan actualizado.' : 'Plan creado.')
-      modalPlan.value = false
-      await cargarPlanes()
-    } else {
+    if (!res.ok) {
       const err = await res.json()
       toast.error(err.error || JSON.stringify(err))
+      guardandoPlan.value = false
+      return
     }
+
+    const planGuardado = await res.json()
+    const planId = planGuardado.id || editandoPlan.value?.id
+
+    // Guardar permisos del plan
+    await apiFetch(`/api/configuracion/planes/${planId}/permisos/`, {
+      method: 'PUT',
+      body:   { permisos: permisosPlan.value },
+    })
+
+    toast.success(editandoPlan.value ? 'Plan actualizado.' : 'Plan creado.')
+    modalPlan.value = false
+    await cargarPlanes()
   } catch { toast.error('Error al guardar.') }
   guardandoPlan.value = false
 }
@@ -406,26 +465,52 @@ const badgePlan = (nombre) => ({
               </div>
             </div>
 
-            <!-- Módulos -->
-            <div>
-              <label class="field-label mb-2 block">Módulos incluidos</label>
-              <div v-for="cat in MODULOS" :key="cat.cat" class="mb-3">
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">{{ cat.cat }}</p>
-                <div class="flex flex-wrap gap-2">
-                  <label v-for="mod in cat.items" :key="mod.key"
-                    class="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input type="checkbox"
-                      :value="mod.key"
-                      :checked="formPlan.modulos.includes(mod.key)"
-                      @change="toggleModulo(mod.key)"
-                      class="rounded border-gray-300 text-indigo-600"/>
-                    <span class="text-sm text-gray-700">{{ mod.label }}</span>
-                  </label>
+            <!-- Permisos granulares -->
+            <div class="mt-5">
+              <div class="flex items-center justify-between mb-2">
+                <label class="field-label mb-0">Permisos incluidos</label>
+                <div class="flex gap-2">
+                  <button type="button" class="perm-btn-all"
+                    @click="permisosPlan = todosPermisos.map(p => p.codigo)">
+                    Todos
+                  </button>
+                  <button type="button" class="perm-btn-all perm-btn-none"
+                    @click="permisosPlan = []">
+                    Ninguno
+                  </button>
                 </div>
+              </div>
+
+              <div v-if="cargandoPermisos" class="perm-loading">Cargando permisos...</div>
+              <div v-else class="perm-grid">
+                <div v-for="(permisosCat, cat) in permisosAgrupados" :key="cat" class="perm-cat-card">
+                  <div class="perm-cat-header">
+                    <label class="perm-cat-label">
+                      <input
+                        type="checkbox"
+                        :checked="categoriaCompleta(permisosCat)"
+                        :indeterminate="categoriaIndeterminate(permisosCat)"
+                        @change="toggleCategoria(permisosCat)"
+                        class="perm-check"
+                      />
+                      <span class="perm-cat-nombre">{{ cat }}</span>
+                    </label>
+                    <span :class="['perm-cat-count', { completo: categoriaCompleta(permisosCat) }]">
+                      {{ permisosCat.filter(p => permisosPlan.includes(p.codigo)).length }}/{{ permisosCat.length }}
+                    </span>
+                  </div>
+                  <div class="perm-lista">
+                    <label v-for="p in permisosCat" :key="p.codigo" class="perm-item">
+                      <input type="checkbox" :value="p.codigo" v-model="permisosPlan" class="perm-check"/>
+                      <span class="perm-nombre">{{ p.nombre }}</span>
+                    </label>
+                  </div>
+                </div>
+                <p v-if="!todosPermisos.length" class="perm-vacio">Sin permisos disponibles.</p>
               </div>
             </div>
 
-            <div class="flex items-center gap-2 mt-3">
+            <div class="flex items-center gap-2 mt-4">
               <input type="checkbox" v-model="formPlan.activo" id="activo-check" class="rounded border-gray-300 text-indigo-600"/>
               <label for="activo-check" class="text-sm text-gray-700">Plan activo</label>
             </div>
@@ -503,4 +588,52 @@ textarea.field-input { resize: vertical; min-height: 60px; }
 .btn-save:not(:disabled):hover { opacity: 0.9; }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* ── Permisos dentro del modal ── */
+.perm-loading { font-size: 0.8125rem; color: #9CA3AF; padding: 0.75rem 0; }
+.perm-vacio   { font-size: 0.8125rem; color: #9CA3AF; padding: 0.5rem 0; grid-column: 1/-1; }
+
+.perm-btn-all {
+  font-size: 0.6875rem; font-weight: 600; padding: 0.2rem 0.625rem;
+  border-radius: 6px; border: 1px solid #C4B5FD;
+  background: #EEF2FF; color: #4338CA;
+  cursor: pointer; font-family: inherit; transition: background 0.15s;
+}
+.perm-btn-all:hover { background: #DDD6FE; }
+.perm-btn-none { background: #F9FAFB; border-color: #E5E7EB; color: #6B7280; }
+.perm-btn-none:hover { background: #F3F4F6; }
+
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 0.625rem;
+}
+.perm-cat-card {
+  border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden;
+}
+.perm-cat-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.625rem; background: #F9FAFB;
+  border-bottom: 1px solid #F3F4F6;
+}
+.perm-cat-label {
+  display: flex; align-items: center; gap: 0.375rem;
+  flex: 1; cursor: pointer; min-width: 0;
+}
+.perm-check { cursor: pointer; accent-color: #7C3AED; flex-shrink: 0; }
+.perm-cat-nombre {
+  font-size: 0.75rem; font-weight: 600; color: #374151;
+  text-transform: capitalize; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.perm-cat-count {
+  font-size: 0.625rem; font-weight: 600; padding: 0.1rem 0.35rem;
+  border-radius: 100px; background: #F3F4F6; color: #6B7280; flex-shrink: 0;
+}
+.perm-cat-count.completo { background: #EEF2FF; color: #4338CA; }
+.perm-lista { padding: 0.4rem 0.625rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.perm-item {
+  display: flex; align-items: center; gap: 0.375rem;
+  font-size: 0.75rem; color: #374151; cursor: pointer;
+}
+.perm-nombre { line-height: 1.4; }
 </style>

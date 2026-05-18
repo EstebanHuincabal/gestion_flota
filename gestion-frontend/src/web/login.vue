@@ -63,7 +63,8 @@ const handleLogin = async () => {
       if (Array.isArray(data.user.plan_modulos)) {
         sessionStorage.setItem('plan_modulos', JSON.stringify(data.user.plan_modulos))
       }
-      sessionStorage.setItem('plan_nombre', data.user.plan_nombre || '')
+      sessionStorage.setItem('plan_nombre',   data.user.plan_nombre   || '')
+      sessionStorage.setItem('plan_permisos', JSON.stringify(data.user.plan_permisos || []))
       const destino = data.user.rol === 'SUPERADMIN' ? '/dashboard' : (data.user.rol === 'USUARIO' ? '/empresa/dashboard' : '/login')
       router.push(destino)
     } else {
