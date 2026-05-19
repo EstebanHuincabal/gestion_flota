@@ -18,7 +18,7 @@ from decimal import Decimal
 
 from .models import (
     Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
-    Mantencion, DocumentoVehiculo, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
+    Mantencion, Documento, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
     TipoNotificacion, CambioPlan, GastoOperativo, PresupuestoMensual,
 )
 from .views_planes import verificar_limite_plan, verificar_modulo_plan
@@ -272,7 +272,8 @@ def empresa_dashboard_view(request):
     mantenciones_pendientes = Mantencion.objects.filter(
         vehiculo__flota__empresa=empresa, estado='pendiente'
     ).count()
-    docs_por_vencer = DocumentoVehiculo.objects.filter(
+    docs_por_vencer = Documento.objects.filter(
+        entidad='vehiculo',
         vehiculo__flota__empresa=empresa,
         fecha_vencimiento__gte=hoy,
         fecha_vencimiento__lte=hoy + timedelta(days=30),
@@ -603,7 +604,7 @@ def empresas_detalle(request, pk):
         cantidad_vehiculos = Vehiculo.objects.filter(flota__empresa=empresa).count()
         cantidad_conductores = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR).count()
         cantidad_mantenciones = Mantencion.objects.filter(vehiculo__flota__empresa=empresa).count()
-        cantidad_documentos = DocumentoVehiculo.objects.filter(vehiculo__flota__empresa=empresa).count()
+        cantidad_documentos = Documento.objects.filter(entidad='vehiculo', vehiculo__flota__empresa=empresa).count()
 
         usuarios = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO).order_by('email')
         usuarios_data = UsuarioListSerializer(usuarios, many=True).data
@@ -1659,13 +1660,14 @@ class AlertaMantencionViewSet(viewsets.ReadOnlyModelViewSet):
 
         # Crear mantención en historial
         prog = alerta.mantencion_programada
+        costo_val = request.data.get('costo', 0.00)
         Mantencion.objects.create(
             vehiculo=prog.vehiculo,
             tipo_mantencion=prog.regla.tipo,
             fecha_programada=prog.fecha_siguiente,
             fecha_realizada=fecha_realizada,
             estado=EstadoMantencion.REALIZADA,
-            costo=request.data.get('costo', 0.00),
+            costo=costo_val,
             descripcion=f"Mantención preventiva - Plan: {prog.regla.plan.nombre}"
         )
 
@@ -1734,6 +1736,162 @@ def simulador_vencimientos(request):
         'total_eventos': len(eventos),
         'presupuesto_total': presupuesto_total
     })
+
+
+# ── Asignación de planes a vehículos ─────────────────────────
+from .serializers import VehiculoPlanSerializer
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def vehiculo_planes_lista_crear(request):
+    if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
+        return Response({'error': 'Sin permisos.'}, status=403)
+    empresa = get_empresa(request)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=400)
+
+    if request.method == 'GET':
+        qs = VehiculoPlan.objects.filter(
+            vehiculo__flota__empresa=empresa
+        ).select_related('vehiculo', 'plan')
+        return Response(VehiculoPlanSerializer(qs, many=True).data)
+
+    if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
+        return Response({'error': 'Sin permisos para gestionar.'}, status=403)
+
+    vehiculo_id = request.data.get('vehiculo_id')
+    plan_id     = request.data.get('plan_id')
+    if not vehiculo_id or not plan_id:
+        return Response({'error': 'vehiculo_id y plan_id son requeridos.'}, status=400)
+
+    try:
+        vehiculo = Vehiculo.objects.get(id=vehiculo_id, flota__empresa=empresa)
+    except Vehiculo.DoesNotExist:
+        return Response({'error': 'Vehículo no encontrado.'}, status=404)
+    try:
+        plan = PlanMantenimiento.objects.get(id=plan_id, empresa=empresa)
+    except PlanMantenimiento.DoesNotExist:
+        return Response({'error': 'Plan no encontrado.'}, status=404)
+
+    asig, created = VehiculoPlan.objects.get_or_create(vehiculo=vehiculo, plan=plan)
+    if not created:
+        return Response({'error': 'Este vehículo ya tiene este plan asignado.'}, status=400)
+
+    registrar_log('ACTIVIDAD', 'asignar_plan_vehiculo', request,
+                  detalle={'vehiculo_id': vehiculo.id, 'plan_id': plan.id})
+    return Response(VehiculoPlanSerializer(asig).data, status=201)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def vehiculo_plan_detalle(request, pk):
+    if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
+        return Response({'error': 'Sin permisos.'}, status=403)
+    empresa = get_empresa(request)
+    try:
+        asig = VehiculoPlan.objects.get(id=pk, vehiculo__flota__empresa=empresa)
+    except VehiculoPlan.DoesNotExist:
+        return Response({'error': 'Asignación no encontrada.'}, status=404)
+    asig.delete()
+    registrar_log('ACTIVIDAD', 'desasignar_plan_vehiculo', request, detalle={'asignacion_id': pk})
+    return Response(status=204)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def predictivo_resumen(request):
+    if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
+        return Response({'error': 'Sin permisos.'}, status=403)
+    empresa = get_empresa(request)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=400)
+
+    alertas_qs = AlertaMantencion.objects.filter(
+        mantencion_programada__vehiculo__flota__empresa=empresa
+    )
+    pendientes    = alertas_qs.filter(atendida=False)
+    inicio_mes    = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    return Response({
+        'alertas_pendientes':  pendientes.count(),
+        'alertas_vencidas':    pendientes.filter(nivel='vencida').count(),
+        'alertas_por_vencer':  pendientes.filter(nivel='por_vencer').count(),
+        'atendidas_mes':       alertas_qs.filter(atendida=True, fecha_atencion__gte=inicio_mes).count(),
+        'vehiculos_con_alerta': pendientes.values('mantencion_programada__vehiculo_id').distinct().count(),
+        'planes_activos':      PlanMantenimiento.objects.filter(empresa=empresa, activo=True).count(),
+        'vehiculos_asignados': VehiculoPlan.objects.filter(
+            vehiculo__flota__empresa=empresa
+        ).values('vehiculo_id').distinct().count(),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def predictivo_generar_alertas(request):
+    if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
+        return Response({'error': 'Sin permisos.'}, status=403)
+    empresa = get_empresa(request)
+
+    hoy = timezone.now().date()
+    filtro = {'vehiculo__activo': True, 'plan__activo': True}
+    if empresa:
+        filtro['vehiculo__flota__empresa'] = empresa
+
+    vps = VehiculoPlan.objects.filter(**filtro).select_related(
+        'vehiculo', 'plan'
+    ).prefetch_related('plan__reglas')
+
+    creadas = actualizadas = 0
+    for vp in vps:
+        for regla in vp.plan.reglas.all():
+            prog, _ = MantencionProgramada.objects.get_or_create(
+                vehiculo=vp.vehiculo, regla=regla,
+                defaults={
+                    'fecha_ultima':    vp.fecha_asignacion.date(),
+                    'fecha_siguiente': vp.fecha_asignacion.date() + timedelta(days=regla.intervalo_dias),
+                    'estado':          'activa',
+                }
+            )
+            if prog.estado != 'activa':
+                continue
+
+            dias_transcurridos = (hoy - prog.fecha_ultima).days
+            dias_restantes     = (prog.fecha_siguiente - hoy).days
+            pct_avance         = round(dias_transcurridos / regla.intervalo_dias * 100, 2) if regla.intervalo_dias > 0 else 100.0
+            nivel              = 'vencida' if dias_restantes <= 0 else 'por_vencer'
+
+            if dias_restantes > regla.umbral_alerta_dias:
+                continue
+
+            existente = AlertaMantencion.objects.filter(
+                mantencion_programada=prog, atendida=False
+            ).first()
+
+            if not existente:
+                AlertaMantencion.objects.create(
+                    mantencion_programada=prog, nivel=nivel,
+                    dias_restantes=dias_restantes, pct_avance=pct_avance,
+                )
+                creadas += 1
+                tipo_notif = (TipoNotificacion.MANTENCION_VENCIDA if nivel == 'vencida'
+                              else TipoNotificacion.MANTENCION_POR_VENCER)
+                notificar_admins_empresa(
+                    prog.vehiculo.flota.empresa, tipo_notif,
+                    f"Mantención {nivel.replace('_',' ')}: {prog.vehiculo.patente}",
+                    f"El vehículo {prog.vehiculo.patente} requiere '{prog.regla.tipo}'. Días restantes: {dias_restantes}.",
+                    url_accion='/empresa/predictivo',
+                    extra={'vehiculo_id': prog.vehiculo.id},
+                )
+            else:
+                if existente.nivel != nivel or existente.dias_restantes != dias_restantes:
+                    existente.nivel = nivel
+                    existente.dias_restantes = dias_restantes
+                    existente.pct_avance = pct_avance
+                    existente.save()
+                    actualizadas += 1
+
+    registrar_log('ACTIVIDAD', 'generar_alertas_predictivas', request)
+    return Response({'alertas_creadas': creadas, 'alertas_actualizadas': actualizadas})
 
 
 # ─────────────────────────────────────────

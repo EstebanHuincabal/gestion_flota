@@ -1,6 +1,9 @@
 import csv
+import io
 from datetime import date as date_cls
 
+import openpyxl
+from openpyxl.styles import Alignment, Font, PatternFill
 from django.db.models import Sum
 from django.http import HttpResponse
 from rest_framework.decorators import api_view, permission_classes
@@ -9,9 +12,46 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from .models import (
-    Empresa, Vehiculo, Mantencion, DocumentoVehiculo, Rol,
+    Empresa, Vehiculo, Mantencion, Rol,
     GastoOperativo, Documento, Usuario,
 )
+
+
+def _xlsx_response(headers, rows, filename, sheet_title='Reporte'):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_title
+
+    header_font = Font(bold=True, color='FFFFFF', size=11)
+    header_fill = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    ws.append(headers)
+    ws.row_dimensions[1].height = 22
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+
+    for row in rows:
+        ws.append([str(v) if v is not None else '' for v in row])
+
+    for col in ws.columns:
+        max_len = max((len(str(cell.value or '')) for cell in col), default=0)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 45)
+
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = ws.dimensions
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
 
 
 def _es_superadmin(user):
@@ -138,7 +178,7 @@ def reporte_flota(request):
     vehiculos = Vehiculo.objects.filter(
         flota__empresa=empresa, activo=True
     ).select_related('flota').prefetch_related(
-        'documentos', 'mantenciones', 'asignaciones__conductor'
+        'docs_v', 'mantenciones', 'asignaciones__conductor'
     )
 
     vehiculos_data    = []
@@ -151,9 +191,10 @@ def reporte_flota(request):
         if not conductor:
             sin_conductor += 1
 
-        docs_vigentes   = sum(1 for d in v.documentos.all() if d.estado == 'vigente')
-        docs_por_vencer = sum(1 for d in v.documentos.all() if d.estado == 'por_vencer')
-        docs_vencidos   = sum(1 for d in v.documentos.all() if d.estado == 'vencido')
+        docs_v          = list(v.docs_v.all())
+        docs_vigentes   = sum(1 for d in docs_v if d.estado() == 'vigente')
+        docs_por_vencer = sum(1 for d in docs_v if d.estado() == 'por_vencer')
+        docs_vencidos   = sum(1 for d in docs_v if d.estado() == 'vencido')
         if docs_vencidos:
             con_docs_vencidos += 1
 
@@ -222,27 +263,21 @@ def reporte_exportar(request):
         if mes:         qs = qs.filter(fecha_programada__month=int(mes))
         if vehiculo_id: qs = qs.filter(vehiculo_id=int(vehiculo_id))
 
-        suffix   = f"_{anio}" if anio else ''
-        response = HttpResponse(content_type='text/csv; charset=utf-8')
-        response['Content-Disposition'] = f'attachment; filename="reporte_mantenciones{suffix}.csv"'
-        response.write('﻿')
-
-        writer = csv.writer(response)
-        writer.writerow([
-            'Vehículo', 'Tipo', 'Estado',
-            'Fecha Programada', 'Fecha Realizada', 'Costo', 'Taller',
-        ])
-        for m in qs.order_by('-fecha_programada'):
-            writer.writerow([
+        headers = ['Vehículo', 'Tipo', 'Estado', 'Fecha Programada', 'Fecha Realizada', 'Costo', 'Taller']
+        rows = [
+            [
                 _label_vehiculo(m.vehiculo),
                 m.tipo_mantencion or '',
                 m.estado,
-                m.fecha_programada.isoformat() if m.fecha_programada else '',
-                m.fecha_realizada.isoformat()  if m.fecha_realizada  else '',
+                m.fecha_programada.strftime('%d/%m/%Y') if m.fecha_programada else '',
+                m.fecha_realizada.strftime('%d/%m/%Y')  if m.fecha_realizada  else '',
                 int(m.costo or 0),
                 m.taller_proveedor or '',
-            ])
-        return response
+            ]
+            for m in qs.order_by('-fecha_programada')
+        ]
+        suffix = f"_{anio}" if anio else ''
+        return _xlsx_response(headers, rows, f'reporte_mantenciones{suffix}.xlsx', 'Mantenciones')
 
     elif tipo == 'flota':
         vehiculos = Vehiculo.objects.filter(
@@ -251,30 +286,26 @@ def reporte_exportar(request):
             'documentos', 'mantenciones', 'asignaciones__conductor'
         )
 
-        response = HttpResponse(content_type='text/csv; charset=utf-8')
-        response['Content-Disposition'] = 'attachment; filename="reporte_flota.csv"'
-        response.write('﻿')
-
-        writer = csv.writer(response)
-        writer.writerow([
+        headers = [
             'Patente', 'Marca', 'Modelo', 'Año', 'Flota',
             'KM', 'Conductor', 'Docs Vencidos',
             'Última Mantención', 'Costo Total Mantenciones',
-        ])
+        ]
+        rows = []
         for v in vehiculos:
             asig          = v.asignaciones.filter(activo=True).first()
             conductor     = asig.conductor.nombre if asig and asig.conductor else ''
             docs_vencidos = sum(1 for d in v.documentos.all() if d.estado == 'vencido')
             ultima        = v.mantenciones.filter(estado='realizada').order_by('-fecha_realizada').first()
             costo_total   = int(v.mantenciones.filter(estado='realizada').aggregate(t=Sum('costo'))['t'] or 0)
-            writer.writerow([
+            rows.append([
                 v.patente, v.marca, v.modelo, v.anio or '',
                 v.flota.nombre, v.km_actuales or 0, conductor,
                 docs_vencidos,
-                ultima.fecha_realizada.isoformat() if ultima and ultima.fecha_realizada else '',
+                ultima.fecha_realizada.strftime('%d/%m/%Y') if ultima and ultima.fecha_realizada else '',
                 costo_total,
             ])
-        return response
+        return _xlsx_response(headers, rows, 'reporte_flota.xlsx', 'Estado de Flota')
 
     return Response({'error': 'Tipo inválido. Use mantencion o flota.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -307,8 +338,9 @@ def reporte_admin_empresas(request):
         mant_count = mants.count()
         costo_mant = int(mants.aggregate(t=Sum('costo'))['t'] or 0)
 
-        docs_vencidos = DocumentoVehiculo.objects.filter(
-            vehiculo__flota__empresa=e, estado='vencido'
+        docs_vencidos = Documento.objects.filter(
+            empresa=e, entidad='vehiculo',
+            fecha_vencimiento__lt=date_cls.today(),
         ).count()
 
         total_vehiculos    += vehiculos_count

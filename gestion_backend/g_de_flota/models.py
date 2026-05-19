@@ -387,44 +387,6 @@ class Asignacion(models.Model):
         ]
 
 
-class DocumentoBase(models.Model):
-    ESTADOS = [
-        ('vigente',    'Vigente'),
-        ('por_vencer', 'Por vencer'),
-        ('vencido',    'Vencido'),
-    ]
-    fecha_vencimiento = models.DateField()
-    estado = models.CharField(max_length=20, choices=ESTADOS, default='vigente')
-
-    class Meta:
-        abstract = True
-
-    def save(self, *args, **kwargs):
-        hoy  = timezone.now().date()
-        dias = (self.fecha_vencimiento - hoy).days
-        self.estado = 'vencido' if dias < 0 else 'por_vencer' if dias <= 30 else 'vigente'
-        super().save(*args, **kwargs)
-
-
-class DocumentoConductor(DocumentoBase):
-    TIPOS = [
-        ('licencia_conducir', 'Licencia de Conducir'),
-        ('certificado_salud', 'Certificado de Salud'),
-        ('antecedentes',      'Antecedentes'),
-        ('otro',              'Otro'),
-    ]
-    conductor         = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='documentos_conductor', null=True, blank=True)
-    tipo              = models.CharField(max_length=30, choices=TIPOS, default='otro')
-    numero            = models.CharField(max_length=100, blank=True, default='')
-
-    class Meta:
-        ordering         = ['fecha_vencimiento']
-        verbose_name     = "Documento del Conductor"
-        verbose_name_plural = "Documentos de Conductores"
-
-    def __str__(self):
-        email = self.conductor.email if self.conductor else "Desconocido"
-        return f"{self.get_tipo_display()} — {email}"
 
 
 # ─────────────────────────────────────────
@@ -472,18 +434,6 @@ class Mantencion(models.Model):
 
     estado                 = models.CharField(max_length=50, choices=EstadoMantencion.choices, default=EstadoMantencion.PENDIENTE)
     costo                  = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-
-
-class DocumentoVehiculo(DocumentoBase):
-    TIPOS = [
-        ('permiso_circulacion', 'Permiso de Circulación'),
-        ('seguro',              'Seguro (SOAP)'),
-        ('revision_tecnica',   'Revisión Técnica'),
-        ('otro',               'Otro'),
-    ]
-
-    vehiculo          = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name="documentos")
-    tipo              = models.CharField(max_length=30, choices=TIPOS, default='otro')
 
 
 class TipoLog(models.TextChoices):

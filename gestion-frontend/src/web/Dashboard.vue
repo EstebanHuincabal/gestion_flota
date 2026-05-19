@@ -578,6 +578,21 @@ onMounted(cargar)
     <!-- ══════════════ USUARIO ══════════════ -->
     <template v-else>
 
+      <!-- Accesos rápidos empresa -->
+      <div v-if="accesosEmpresa.length" class="accesos accesos-top">
+        <button
+          v-for="a in accesosEmpresa"
+          :key="a.path"
+          class="acceso-top-btn"
+          @click="router.push(ruta(a.path))"
+        >
+          <div :class="['acceso-top-icon', a.color]">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="a.icon"/>
+          </div>
+          <span class="acceso-label">{{ a.label }}</span>
+        </button>
+      </div>
+
       <div class="kpis">
         <div class="kpi-card">
           <div class="kpi-icon bg-indigo">
@@ -685,25 +700,6 @@ onMounted(cargar)
             <canvas ref="mantencionesCanvas"/>
           </div>
         </div>
-      </div>
-
-      <!-- Accesos rápidos empresa -->
-      <div>
-        <h2 class="section-title">Accesos rápidos</h2>
-        <div v-if="accesosEmpresa.length" class="accesos accesos-auto">
-          <button
-            v-for="a in accesosEmpresa"
-            :key="a.path"
-            class="acceso-card"
-            @click="router.push(ruta(a.path))"
-          >
-            <div :class="['acceso-icon', a.color]">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="a.icon"/>
-            </div>
-            <span class="acceso-label">{{ a.label }}</span>
-          </button>
-        </div>
-        <p v-else class="accesos-vacio">Tu plan actual no tiene módulos habilitados.</p>
       </div>
 
       <!-- Nuevos widgets de empresa -->
@@ -938,6 +934,21 @@ onMounted(cargar)
 .accesos-2x2  { grid-template-columns: 1fr 1fr; }
 .accesos-auto { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 .accesos-vacio { font-size: 0.875rem; color: #9CA3AF; padding: 1rem 0; margin: 0; }
+
+.accesos-top {
+  display: flex; gap: 0.625rem; flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.acceso-top-btn {
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.55rem 1rem 0.55rem 0.65rem;
+  background: #fff; border: 1.5px solid #E5E7EB; border-radius: 10px;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.acceso-top-btn:hover { border-color: var(--color-accent, #6366F1); box-shadow: 0 3px 8px rgba(99,102,241,0.12); transform: translateY(-1px); }
+.acceso-top-icon { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.acceso-top-icon svg { width: 15px; height: 15px; }
 
 /* ── Widgets nuevos ────────────────────────── */
 .widgets-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; margin-top: 1.5rem; }

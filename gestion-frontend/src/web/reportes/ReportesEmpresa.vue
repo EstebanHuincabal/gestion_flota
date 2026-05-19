@@ -180,7 +180,7 @@ async function exportar(tipo) {
     const blob = await res.blob()
     const a    = document.createElement('a')
     a.href     = URL.createObjectURL(blob)
-    a.download = `reporte_${tipo}_${anioSel.value}.csv`
+    a.download = `reporte_${tipo}_${anioSel.value}.xlsx`
     a.click()
     URL.revokeObjectURL(a.href)
   } catch {
@@ -247,12 +247,14 @@ function exportarTco() {
       v.costo_por_km ?? '—',
     ]),
   ]
-  const csv  = '﻿' + rows.map(r => r.join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const contenido = 'sep=;\n' + rows.map(r => r.join(';')).join('\n')
+  const bom  = new Uint8Array([0xEF, 0xBB, 0xBF])
+  const blob = new Blob([bom, new TextEncoder().encode(contenido)], { type: 'text/csv;charset=utf-8;' })
   const a    = document.createElement('a')
   a.href     = URL.createObjectURL(blob)
   a.download = `reporte_tco_${anioSel.value}.csv`
   a.click()
+  URL.revokeObjectURL(a.href)
 }
 
 function exportarConductores() {
@@ -264,8 +266,9 @@ function exportarConductores() {
       c.docs_vigentes, c.docs_por_vencer, c.docs_vencidos, c.estado_docs, c.gastos_total,
     ]),
   ]
-  const csv  = '﻿' + rows.map(r => r.join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const contenido = 'sep=;\n' + rows.map(r => r.join(';')).join('\n')
+  const bom  = new Uint8Array([0xEF, 0xBB, 0xBF])
+  const blob = new Blob([bom, new TextEncoder().encode(contenido)], { type: 'text/csv;charset=utf-8;' })
   const a    = document.createElement('a')
   a.href     = URL.createObjectURL(blob)
   a.download = 'reporte_conductores.csv'

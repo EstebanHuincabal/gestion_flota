@@ -4,7 +4,7 @@ from rest_framework import serializers
 from .models import (
     Empresa, Usuario, Rol, Permiso, normalizar_rut, REGIONES_CHILE,
     Flota, Vehiculo, Asignacion, PlanSuscripcion, CambioPlan, LogAuditoria,
-    DocumentoConductor, DocumentoVehiculo, Mantencion
+    Mantencion, Documento
 )
 
 
@@ -365,18 +365,6 @@ class ConductorListSerializer(serializers.ModelSerializer):
             pass
         return None
 
-class DocumentoConductorSerializer(serializers.ModelSerializer):
-    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
-    class Meta:
-        model = DocumentoConductor
-        fields = ['id', 'tipo', 'tipo_display', 'numero', 'fecha_vencimiento', 'estado']
-
-class DocumentoVehiculoSerializer(serializers.ModelSerializer):
-    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
-    class Meta:
-        model = DocumentoVehiculo
-        fields = ['id', 'tipo', 'tipo_display', 'fecha_vencimiento', 'estado']
-
 class MantencionSerializer(serializers.ModelSerializer):
     vehiculo_id          = serializers.PrimaryKeyRelatedField(
                                queryset=Vehiculo.objects.all(),
@@ -429,10 +417,17 @@ class ConductorDetalleSerializer(ConductorListSerializer):
         return None
 
     def get_documentos_conductor(self, obj):
-        docs = list(obj.documentos_conductor.all())
-        if hasattr(obj, 'perfil'):
-            docs += list(obj.perfil.documentos.all())
-        return DocumentoConductorSerializer(docs, many=True).data
+        tipos = dict(Documento.TODOS_TIPOS)
+        return [
+            {
+                'id': d.id,
+                'tipo': d.tipo,
+                'tipo_display': tipos.get(d.tipo, d.tipo),
+                'fecha_vencimiento': d.fecha_vencimiento,
+                'estado': d.estado(),
+            }
+            for d in Documento.objects.filter(entidad='conductor', conductor=obj)
+        ]
 
     def get_vehiculo_detalle(self, obj):
         asig = obj.asignaciones_conductor.filter(activo=True).select_related('vehiculo__flota__empresa').first()
@@ -448,7 +443,16 @@ class ConductorDetalleSerializer(ConductorListSerializer):
             'tipo_combustible': v.get_tipo_combustible_display() if hasattr(v, 'get_tipo_combustible_display') else v.tipo_combustible,
             'km_actuales': v.km_actuales,
             'empresa_nombre': v.flota.empresa.nombre if v.flota and v.flota.empresa else None,
-            'documentos': DocumentoVehiculoSerializer(v.documentos.all(), many=True).data,
+            'documentos': [
+                {
+                    'id': d.id,
+                    'tipo': d.tipo,
+                    'tipo_display': dict(Documento.TODOS_TIPOS).get(d.tipo, d.tipo),
+                    'fecha_vencimiento': d.fecha_vencimiento,
+                    'estado': d.estado(),
+                }
+                for d in v.docs_v.all()
+            ],
             'mantenciones': MantencionSerializer(v.mantenciones.all(), many=True).data,
         }
 
@@ -843,7 +847,7 @@ class PlanMantenimientoSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         reglas_data = validated_data.pop('reglas', [])
-        empresa = self.context['request'].user.empresa
+        empresa = validated_data.pop('empresa', None) or self.context['request'].user.empresa
         plan = PlanMantenimiento.objects.create(empresa=empresa, **validated_data)
         for regla_data in reglas_data:
             ReglaMantenimiento.objects.create(plan=plan, **regla_data)

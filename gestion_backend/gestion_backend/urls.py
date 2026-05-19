@@ -15,6 +15,8 @@ from g_de_flota.views import (
     logs_lista,
     permisos_lista, usuario_permisos,
     PlanMantenimientoViewSet, AlertaMantencionViewSet, simulador_vencimientos,
+    vehiculo_planes_lista_crear, vehiculo_plan_detalle,
+    predictivo_resumen, predictivo_generar_alertas,
     notificaciones_lista, notificaciones_no_leidas, notificaciones_leer, notificaciones_preferencias,
 )
 from g_de_flota.views_planes import (
@@ -89,7 +91,11 @@ urlpatterns = [
     path('api/empresa/mantenciones/<int:pk>/',     mantenciones_detalle,      name='mantenciones-detalle'),
 
     path('api/', include(router.urls)),
-    path('api/empresa/simulador-vencimientos/',    simulador_vencimientos,    name='simulador-vencimientos'),
+    path('api/empresa/simulador-vencimientos/',    simulador_vencimientos,        name='simulador-vencimientos'),
+    path('api/empresa/vehiculo-planes/',           vehiculo_planes_lista_crear,   name='vehiculo-planes-lista'),
+    path('api/empresa/vehiculo-planes/<int:pk>/',  vehiculo_plan_detalle,         name='vehiculo-planes-detalle'),
+    path('api/empresa/predictivo/resumen/',        predictivo_resumen,            name='predictivo-resumen'),
+    path('api/empresa/predictivo/generar-alertas/', predictivo_generar_alertas,   name='predictivo-generar-alertas'),
 
     path('api/logs/',                        logs_lista,            name='logs-lista'),
 

@@ -65,9 +65,11 @@ function exportarCSV() {
     e.mantenciones_anio, e.costo_mantenciones_anio, e.docs_vencidos,
   ])
   const csv = [cabecera, ...filas]
-    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';'))
     .join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const contenido = 'sep=;\n' + csv
+  const bom  = new Uint8Array([0xEF, 0xBB, 0xBF])
+  const blob = new Blob([bom, new TextEncoder().encode(contenido)], { type: 'text/csv;charset=utf-8;' })
   const a    = document.createElement('a')
   a.href     = URL.createObjectURL(blob)
   a.download = `reporte_empresas_${anioSel.value}.csv`

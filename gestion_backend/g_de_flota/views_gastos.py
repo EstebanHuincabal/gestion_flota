@@ -1,9 +1,12 @@
 import csv
+import io
 import os
 from datetime import date as date_cls
 from decimal import Decimal
 
-from django.db.models import Sum
+import openpyxl
+from openpyxl.styles import Alignment, Font, PatternFill
+from django.db.models import Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -148,17 +151,20 @@ class GastosListView(APIView):
 
         # Por conductor
         por_conductor = []
-        for row in (
+        cond_totales = (
             GastoOperativo.objects.filter(empresa=empresa)
             .filter(**({'fecha__month': int(mes), 'fecha__year': int(anio)} if mes and anio else ({'fecha__year': int(anio)} if anio else {})))
             .exclude(conductor__isnull=True)
-            .values('conductor_id', 'conductor__nombre')
+            .values('conductor_id')
             .annotate(s=Sum('monto'))
             .order_by('-s')
-        ):
+        )
+        cond_ids = [r['conductor_id'] for r in cond_totales]
+        cond_nombres = {u.id: u.nombre for u in Usuario.objects.filter(id__in=cond_ids)}
+        for row in cond_totales:
             por_conductor.append({
                 'conductor_id': row['conductor_id'],
-                'nombre':       row['conductor__nombre'] or '—',
+                'nombre':       cond_nombres.get(row['conductor_id'], '—'),
                 'total':        int(row['s']),
             })
 
@@ -175,10 +181,97 @@ class GastosListView(APIView):
                 'variacion_pct':  round((float(total) - float(tot_ant)) / float(tot_ant) * 100, 1) if tot_ant > 0 else None,
             }
 
+        # ── Incluir mantenciones realizadas en el período ──────────────
+        mant_qs = Mantencion.objects.filter(
+            vehiculo__flota__empresa=empresa,
+            estado='realizada',
+            costo__gt=0,
+        ).select_related('vehiculo')
+        if mes and anio:
+            mant_qs = mant_qs.filter(fecha_realizada__month=int(mes), fecha_realizada__year=int(anio))
+        elif anio:
+            mant_qs = mant_qs.filter(fecha_realizada__year=int(anio))
+        if vid:
+            mant_qs = mant_qs.filter(vehiculo_id=vid)
+        if cat and cat != 'mantencion':
+            mant_qs = mant_qs.none()
+
+        mant_gastos = [
+            {
+                'id':             f'mant_{m.id}',
+                'categoria':      'mantencion',
+                'descripcion':    m.tipo_mantencion or 'Mantención',
+                'monto':          int(m.costo),
+                'fecha':          (m.fecha_realizada or m.fecha_programada).isoformat() if (m.fecha_realizada or m.fecha_programada) else '',
+                'vehiculo_id':    m.vehiculo_id,
+                'vehiculo':       str(m.vehiculo),
+                'conductor_id':   None,
+                'conductor':      None,
+                'comprobante':    None,
+                'registrado_por': None,
+                'created_at':     (m.fecha_realizada or m.fecha_programada).isoformat() if (m.fecha_realizada or m.fecha_programada) else '',
+                'readonly':       True,
+            }
+            for m in mant_qs
+        ]
+
+        # Sumar al total y por_categoria
+        mant_total = sum(g['monto'] for g in mant_gastos)
+        if mant_total:
+            por_cat['mantencion'] = por_cat.get('mantencion', 0) + mant_total
+            total = int(total) + mant_total
+
+        # Sumar a por_vehiculo
+        mant_por_veh = {}
+        for g in mant_gastos:
+            vid_m = g['vehiculo_id']
+            if vid_m not in mant_por_veh:
+                mant_por_veh[vid_m] = {'vehiculo_id': vid_m, 'patente': g['vehiculo'], 'total': 0}
+            mant_por_veh[vid_m]['total'] += g['monto']
+        for vid_m, datos in mant_por_veh.items():
+            existe = next((v for v in por_vehiculo if v['vehiculo_id'] == vid_m), None)
+            if existe:
+                existe['total'] += datos['total']
+            else:
+                por_vehiculo.append(datos)
+        por_vehiculo.sort(key=lambda x: x['total'], reverse=True)
+
+        # Sumar mantenciones a tendencia_6meses (consulta independiente del período seleccionado)
+        _MESES_CORTO = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+        from datetime import date as _d2
+        _hoy2 = _d2.today()
+        _q_tend = Q()
+        for _i in range(5, -1, -1):
+            _mt = _hoy2.month - _i
+            _at = _hoy2.year
+            if _mt <= 0:
+                _mt += 12
+                _at -= 1
+            _q_tend |= Q(fecha_realizada__month=_mt, fecha_realizada__year=_at)
+        _mant_tend_map = {}
+        for _m in Mantencion.objects.filter(
+            vehiculo__flota__empresa=empresa,
+            estado='realizada', costo__gt=0, fecha_realizada__isnull=False,
+        ).filter(_q_tend):
+            _k = (_m.fecha_realizada.month, _m.fecha_realizada.year % 100)
+            _mant_tend_map[_k] = _mant_tend_map.get(_k, 0) + int(_m.costo)
+        for punto in tendencia_6meses:
+            partes = punto['label'].split()
+            if len(partes) == 2:
+                try:
+                    m_idx = _MESES_CORTO.index(partes[0]) + 1
+                    _k = (m_idx, int(partes[1]))
+                    if _k in _mant_tend_map:
+                        punto['total'] += _mant_tend_map[_k]
+                except Exception:
+                    pass
+
+        lista_gastos = [_gasto_dict(g) for g in qs] + mant_gastos
+
         return Response({
-            'gastos': [_gasto_dict(g) for g in qs],
+            'gastos': lista_gastos,
             'resumen': {
-                'total':                 int(total),
+                'total':                 total,
                 'por_categoria':         por_cat,
                 'por_vehiculo':          por_vehiculo,
                 'por_conductor':         por_conductor,
@@ -373,21 +466,31 @@ class GastosExportarView(APIView):
         elif anio:
             qs = qs.filter(fecha__year=int(anio))
 
-        if fmt != 'csv':
-            return Response({'error': 'Formato no soportado. Use formato=csv'}, status=400)
+        if fmt not in ('csv', 'xlsx'):
+            return Response({'error': 'Formato no soportado. Use formato=csv o formato=xlsx'}, status=400)
 
         periodo = f"{anio}_{mes}" if mes else str(anio or 'todos')
-        response = HttpResponse(content_type='text/csv; charset=utf-8')
-        response['Content-Disposition'] = f'attachment; filename="gastos_{periodo}.csv"'
-        response.write('﻿')  # BOM para Excel
+        cat_map = dict(GastoOperativo.CATEGORIAS)
 
-        writer = csv.writer(response)
-        writer.writerow(['Fecha', 'Categoría', 'Descripción', 'Vehículo', 'Conductor', 'Monto'])
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Gastos'
+
+        headers = ['Fecha', 'Categoría', 'Descripción', 'Vehículo', 'Conductor', 'Monto']
+        header_font  = Font(bold=True, color='FFFFFF', size=11)
+        header_fill  = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid')
+        header_align = Alignment(horizontal='center', vertical='center')
+        ws.append(headers)
+        ws.row_dimensions[1].height = 22
+        for cell in ws[1]:
+            cell.font      = header_font
+            cell.fill      = header_fill
+            cell.alignment = header_align
 
         totales = {}
         for g in qs:
-            cat_label = dict(GastoOperativo.CATEGORIAS).get(g.categoria, g.categoria)
-            writer.writerow([
+            cat_label = cat_map.get(g.categoria, g.categoria)
+            ws.append([
                 g.fecha.strftime('%d/%m/%Y'),
                 cat_label,
                 g.descripcion,
@@ -397,12 +500,30 @@ class GastosExportarView(APIView):
             ])
             totales[cat_label] = totales.get(cat_label, 0) + int(g.monto)
 
-        writer.writerow([])
-        writer.writerow(['TOTALES POR CATEGORÍA'])
+        ws.append([])
+        ws.append(['TOTALES POR CATEGORÍA', '', '', '', '', ''])
+        bold = Font(bold=True)
+        ws[ws.max_row][0].font = bold
         for cat, total in totales.items():
-            writer.writerow(['', cat, '', '', '', total])
-        writer.writerow(['TOTAL GENERAL', '', '', '', '', sum(totales.values())])
+            ws.append(['', cat, '', '', '', total])
+        ws.append(['TOTAL GENERAL', '', '', '', '', sum(totales.values())])
+        ws[ws.max_row][0].font = bold
 
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or '')) for cell in col), default=0)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 45)
+
+        ws.freeze_panes = 'A2'
+        ws.auto_filter.ref = f'A1:F1'
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename="gastos_{periodo}.xlsx"'
         return response
 
 

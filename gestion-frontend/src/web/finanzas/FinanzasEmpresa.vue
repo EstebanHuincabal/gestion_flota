@@ -153,6 +153,8 @@ async function cargar() {
     loading.value = false
     ultimaActualizacion.value = new Date()
     actualizarLabel()
+    await nextTick()
+    crearTendenciaChart()
   }
 }
 
@@ -334,7 +336,7 @@ async function exportar() {
     const blob = await res.blob()
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `gastos_${anioSel.value}_${mesSel.value}.csv`
+    link.download = `gastos_${anioSel.value}_${mesSel.value}.xlsx`
     link.click()
   } else {
     toast.error('Error al exportar.')
@@ -420,7 +422,7 @@ function crearTendenciaChart() {
   })
 }
 
-watch(resumen, async () => { await nextTick(); crearTendenciaChart() }, { deep: true })
+watch(tabActivo, async (nuevo) => { if (nuevo === 'resumen') { await nextTick(); crearTendenciaChart() } })
 
 // ── Variación mes anterior ────────────────────────────────────
 const variacion = computed(() => resumen.value?.variacion_mes_anterior || null)
@@ -677,12 +679,13 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
                 </td>
                 <td>
                   <div class="acciones-row">
-                    <button v-if="puedeEditar" class="btn-icon" @click="abrirEditar(g)" title="Editar">
+                    <button v-if="puedeEditar && !g.readonly" class="btn-icon" @click="abrirEditar(g)" title="Editar">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
                     </button>
-                    <button v-if="puedeEliminar" class="btn-icon btn-danger-icon" @click="confirmId = g.id" title="Eliminar">
+                    <button v-if="puedeEliminar && !g.readonly" class="btn-icon btn-danger-icon" @click="confirmId = g.id" title="Eliminar">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     </button>
+                    <span v-if="g.readonly" class="badge-mant" title="Registrado desde Mantenciones">Mantención</span>
                   </div>
                 </td>
               </tr>
@@ -720,12 +723,13 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
                 </td>
                 <td>
                   <div class="acciones-row">
-                    <button v-if="puedeEditar" class="btn-icon" @click="abrirEditar(g)">
+                    <button v-if="puedeEditar && !g.readonly" class="btn-icon" @click="abrirEditar(g)">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
                     </button>
-                    <button v-if="puedeEliminar" class="btn-icon btn-danger-icon" @click="confirmId = g.id">
+                    <button v-if="puedeEliminar && !g.readonly" class="btn-icon btn-danger-icon" @click="confirmId = g.id">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     </button>
+                    <span v-if="g.readonly" class="badge-mant" title="Registrado desde Mantenciones">Mantención</span>
                   </div>
                 </td>
               </tr>
@@ -1027,7 +1031,8 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
 .btn-icon:hover { border-color: var(--color-accent, #4F46E5); color: var(--color-accent, #4F46E5); }
 .btn-danger-icon:hover { border-color: #DC2626 !important; color: #DC2626 !important; }
 .sin-comp { color: #9CA3AF; }
-.acciones-row { display: flex; gap: 0.4rem; }
+.acciones-row { display: flex; gap: 0.4rem; align-items: center; }
+.badge-mant { font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 999px; background: #EEF2FF; color: #4338CA; white-space: nowrap; }
 
 .btn-primary-sm { padding: 0.45rem 1rem; background: var(--color-accent, #4F46E5); color: #fff; border: none; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
 .btn-primary-sm:hover { opacity: 0.9; }

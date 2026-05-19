@@ -114,26 +114,26 @@ const routes = [
     meta: { requiresAuth: true, roles: ['USUARIO'] },
     children: [
       { path: 'dashboard',                            component: Dashboard },
-      { path: 'flota',                                component: ListaFlota       },
-      { path: 'flota/nueva',                          component: NuevaFlota       },
-      { path: 'flota/:id/editar',                     component: EditarFlota      },
-      { path: 'flota/:flotaId/nuevo-vehiculo',         component: FormVehiculo, props: { modo: 'nuevo' } },
-      { path: 'vehiculos/:id/editar',                  component: FormVehiculo, props: { modo: 'editar' } },
-      { path: 'conductores',              component: ListaConductores },
-      { path: 'conductores/nuevo',        component: NuevoConductor  },
-      { path: 'conductores/:id',          component: DetalleConductor },
-      { path: 'conductores/:id/editar',   component: EditarConductor },
-      { path: 'mantenciones',            component: MantencionesLista },
-      { path: 'mantenciones/calendario', component: MantencionesCalendario },
-      { path: 'mantenciones/nueva',      component: MantencionesForm },
-      { path: 'mantenciones/historial',  component: MantencionesHistorial },
-      { path: 'mantenciones/:id',        component: MantencionesDetalle },
-      { path: 'mantenciones/:id/editar', component: MantencionesForm },
-      { path: 'predictivo', component: MantencionPredictiva },
+      { path: 'flota',                                component: ListaFlota,       meta: { permiso: 'flotas.ver' } },
+      { path: 'flota/nueva',                          component: NuevaFlota,       meta: { permiso: 'flotas.ver' } },
+      { path: 'flota/:id/editar',                     component: EditarFlota,      meta: { permiso: 'flotas.ver' } },
+      { path: 'flota/:flotaId/nuevo-vehiculo',         component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'nuevo' } },
+      { path: 'vehiculos/:id/editar',                  component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'editar' } },
+      { path: 'conductores',              component: ListaConductores, meta: { permiso: 'conductores.ver' } },
+      { path: 'conductores/nuevo',        component: NuevoConductor,  meta: { permiso: 'conductores.ver' } },
+      { path: 'conductores/:id',          component: DetalleConductor, meta: { permiso: 'conductores.ver' } },
+      { path: 'conductores/:id/editar',   component: EditarConductor,  meta: { permiso: 'conductores.ver' } },
+      { path: 'mantenciones',            component: MantencionesLista,      meta: { permiso: 'mantenciones.ver' } },
+      { path: 'mantenciones/calendario', component: MantencionesCalendario, meta: { permiso: 'mantenciones.ver' } },
+      { path: 'mantenciones/nueva',      component: MantencionesForm,       meta: { permiso: 'mantenciones.ver' } },
+      { path: 'mantenciones/historial',  component: MantencionesHistorial,  meta: { permiso: 'mantenciones.ver' } },
+      { path: 'mantenciones/:id',        component: MantencionesDetalle,    meta: { permiso: 'mantenciones.ver' } },
+      { path: 'mantenciones/:id/editar', component: MantencionesForm,       meta: { permiso: 'mantenciones.ver' } },
+      { path: 'predictivo',              component: MantencionPredictiva,   meta: { permiso: 'mantenciones.ver' } },
       { path: 'notificaciones',              component: Notificaciones },
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
-      { path: 'documentos',      component: Documentos },
-      { path: 'finanzas',        component: FinanzasEmpresa },
+      { path: 'documentos',      component: Documentos,       meta: { permiso: 'documentos.ver' } },
+      { path: 'finanzas',        component: FinanzasEmpresa,  meta: { permiso: 'finanzas.ver' } },
       { path: 'reportes',        component: ReportesEmpresa },
       { path: 'configuracion',   component: ConfiguracionPage },
     ],
@@ -158,6 +158,14 @@ router.beforeEach((to, _from, next) => {
 
   if (to.meta.roles && usuario && !to.meta.roles.includes(usuario.rol)) {
     return next(homePorRol(usuario.rol))
+  }
+
+  // Guard de permisos de plan: solo aplica a rutas de empresa (USUARIO)
+  if (to.meta.permiso && usuario?.rol === 'USUARIO') {
+    const planPermisos = JSON.parse(sessionStorage.getItem('plan_permisos') || '[]')
+    if (!planPermisos.includes(to.meta.permiso)) {
+      return next('/empresa/dashboard')
+    }
   }
 
   next()

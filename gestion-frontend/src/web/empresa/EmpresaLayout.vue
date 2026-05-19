@@ -1,7 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
-import { tienePermiso } from '../../utils/permisos.js'
+import { apiFetch } from '../../utils/api.js'
 import NotificacionesBell from '../../components/NotificacionesBell.vue'
 import PlanUsageBanner from './PlanUsageBanner.vue'
 import LimitePlanModal from '../planes/LimitePlanModal.vue'
@@ -10,6 +10,41 @@ const router  = useRouter()
 const route   = useRoute()
 const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
 const collapsed = ref(false)
+
+// Permisos reactivos — inicializados desde sessionStorage para renderizado inmediato
+const planPermisos = ref(JSON.parse(sessionStorage.getItem('plan_permisos') || '[]'))
+
+function puedeVer(permiso) {
+  if (!permiso) return true
+  return planPermisos.value.includes(permiso)
+}
+
+async function refrescarPermisos() {
+  try {
+    const res = await apiFetch('/api/usuario/perfil/')
+    if (!res.ok) return
+    const data = await res.json()
+    const nuevos = JSON.stringify(data.plan_permisos || [])
+    const actuales = sessionStorage.getItem('plan_permisos') || '[]'
+    sessionStorage.setItem('plan_permisos', nuevos)
+    sessionStorage.setItem('plan_modulos',  JSON.stringify(data.plan_modulos || []))
+    sessionStorage.setItem('plan_nombre',   data.plan_nombre || '')
+    if (nuevos !== actuales) {
+      planPermisos.value = data.plan_permisos || []
+    }
+  } catch {}
+}
+
+let pollingInterval = null
+
+onMounted(() => {
+  refrescarPermisos()
+  pollingInterval = setInterval(refrescarPermisos, 15_000)
+})
+
+onUnmounted(() => {
+  clearInterval(pollingInterval)
+})
 
 const navItems = [
   {
@@ -82,7 +117,7 @@ const navItems = [
 ]
 
 const navItemsFiltrados = computed(() =>
-  navItems.filter(item => !item.permiso || tienePermiso(item.permiso))
+  navItems.filter(item => puedeVer(item.permiso))
 )
 
 const isActive = (path) => route.path.startsWith(path)

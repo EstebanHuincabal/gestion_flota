@@ -17,11 +17,22 @@ def usuario_perfil(request):
     user = request.user
 
     if request.method == 'GET':
+        plan_modulos  = []
+        plan_nombre   = ''
+        plan_permisos = []
+        if user.empresa_id and user.empresa and user.empresa.plan:
+            plan = user.empresa.plan
+            plan_modulos  = plan.modulos or []
+            plan_nombre   = plan.get_nombre_display()
+            plan_permisos = list(plan.permisos.values_list('codigo', flat=True))
         return Response({
-            'nombre':   user.nombre or '',
-            'email':    user.email,
-            'rol':      user.rol,
-            'empresa':  user.empresa.nombre if user.empresa else None,
+            'nombre':        user.nombre or '',
+            'email':         user.email,
+            'rol':           user.rol,
+            'empresa':       user.empresa.nombre if user.empresa else None,
+            'plan_modulos':  plan_modulos,
+            'plan_nombre':   plan_nombre,
+            'plan_permisos': plan_permisos,
         })
 
     nombre = (request.data.get('nombre') or '').strip()
