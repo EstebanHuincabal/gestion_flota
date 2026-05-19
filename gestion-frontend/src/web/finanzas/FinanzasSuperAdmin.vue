@@ -1,7 +1,10 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
+import { Chart, registerables } from 'chart.js'
+
+Chart.register(...registerables)
 
 const toast = useToast()
 
@@ -10,6 +13,8 @@ const datos          = ref(null)
 const historico      = ref([])
 const mesesPeriodo   = ref(12)
 const ordenMrr       = ref(false)
+const chartCanvas    = ref(null)
+let   chartInstance  = null
 
 // ── Tiempo real ────────────────────────────────────────────
 const ultimaActualizacion = ref(null)
@@ -48,6 +53,92 @@ async function cargar() {
   }
 }
 
+function crearChart() {
+  if (!chartCanvas.value || !historico.value.length) return
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null }
+
+  const labels = historico.value.map(h => `${labelMes(h.mes)} ${h.anio}`)
+  const mrrData = historico.value.map(h => h.mrr)
+  const nuevasData = historico.value.map(h => h.nuevas)
+
+  chartInstance = new Chart(chartCanvas.value, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'MRR',
+          data: mrrData,
+          borderColor: '#4F46E5',
+          backgroundColor: 'rgba(79, 70, 229, 0.08)',
+          borderWidth: 2.5,
+          pointBackgroundColor: '#4F46E5',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          tension: 0.35,
+          fill: true,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Nuevas suscripciones',
+          data: nuevasData,
+          borderColor: '#059669',
+          backgroundColor: 'rgba(5, 150, 105, 0.06)',
+          borderWidth: 2,
+          pointBackgroundColor: '#059669',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          tension: 0.35,
+          fill: true,
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { font: { size: 12 }, padding: 16, usePointStyle: true, pointStyleWidth: 10 },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              if (ctx.dataset.label === 'MRR') return ` MRR: ${clp(ctx.parsed.y)}`
+              return ` Nuevas: ${ctx.parsed.y}`
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: '#F3F4F6' },
+          ticks: { font: { size: 11 }, color: '#6B7280' },
+        },
+        y: {
+          position: 'left',
+          grid: { color: '#F3F4F6' },
+          ticks: { font: { size: 11 }, color: '#6B7280', callback: (v) => clp(v) },
+        },
+        y2: {
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { font: { size: 11 }, color: '#059669', stepSize: 1 },
+          title: { display: true, text: 'Nuevas', color: '#059669', font: { size: 11 } },
+        },
+      },
+    },
+  })
+}
+
+watch(historico, async () => { await nextTick(); crearChart() }, { deep: true })
+
 onMounted(() => {
   cargar()
   intervalPolling = setInterval(() => { if (!document.hidden) cargar() }, 120_000)
@@ -59,6 +150,7 @@ onUnmounted(() => {
   clearInterval(intervalPolling)
   clearInterval(intervalLabel)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (chartInstance) chartInstance.destroy()
 })
 
 function clp(val) {
@@ -93,15 +185,6 @@ const empresasOrdenadas = computed(() => {
     ordenMrr.value ? a.mrr - b.mrr : b.mrr - a.mrr
   )
 })
-
-const mrrMax = computed(() => {
-  if (!historico.value.length) return 1
-  return Math.max(...historico.value.map(h => h.mrr), 1)
-})
-
-function alturaBarra(mrr) {
-  return Math.max(4, Math.round(mrr / mrrMax.value * 100))
-}
 
 const NOMBRE_MES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
 function labelMes(mes) { return NOMBRE_MES[mes - 1] || '' }
@@ -248,21 +331,11 @@ function labelMes(mes) { return NOMBRE_MES[mes - 1] || '' }
       <div class="card mb-4">
         <div class="card-head">
           <h3 class="card-title">Evolución MRR — últimos {{ mesesPeriodo }} meses</h3>
-          <span class="mrr-max-label">Máx: {{ clp(mrrMax) }}/mes</span>
         </div>
         <div class="card-body">
           <div v-if="!historico.length" class="empty-msg">Sin historial disponible.</div>
-          <div v-else class="mrr-chart">
-            <div class="mrr-bars">
-              <div v-for="(h, i) in historico" :key="i" class="mrr-barra-col">
-                <div class="mrr-barra-wrap">
-                  <div class="mrr-tooltip">{{ clp(h.mrr) }}</div>
-                  <div class="mrr-barra" :style="{ height: alturaBarra(h.mrr) + '%' }"></div>
-                </div>
-                <span class="mrr-mes-label">{{ labelMes(h.mes) }}</span>
-                <span class="mrr-anio-label">{{ h.anio }}</span>
-              </div>
-            </div>
+          <div v-else class="chart-container">
+            <canvas ref="chartCanvas"></canvas>
           </div>
         </div>
       </div>
@@ -371,29 +444,8 @@ function labelMes(mes) { return NOMBRE_MES[mes - 1] || '' }
 .mov-mrr { font-size: 0.75rem; opacity: 0.8; }
 
 /* Gráfico MRR */
-.mrr-chart { overflow-x: auto; padding-bottom: 0.5rem; }
-.mrr-bars { display: flex; gap: 0.4rem; align-items: flex-end; min-width: 0; }
-.mrr-barra-col { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; flex: 1; min-width: 32px; }
-.mrr-barra-wrap { position: relative; width: 100%; height: 120px; display: flex; align-items: flex-end; }
-.mrr-barra { width: 100%; background: var(--color-accent, #4F46E5); border-radius: 4px 4px 0 0; opacity: 0.8; min-height: 4px; transition: height 0.4s; }
-.mrr-mes-label { font-size: 0.7rem; color: #6B7280; }
-.mrr-anio-label { font-size: 0.65rem; color: #9CA3AF; }
-.mrr-tooltip {
-  display: none;
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #111827;
-  color: #fff;
-  font-size: 0.7rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 5px;
-  white-space: nowrap;
-  margin-bottom: 4px;
-  z-index: 10;
-}
-.mrr-barra-wrap:hover .mrr-tooltip { display: block; }
+.chart-container { position: relative; height: 260px; }
+.mrr-max-label { font-size: 0.8rem; color: #9CA3AF; }
 
 /* Tabla empresas */
 .tabla { width: 100%; border-collapse: collapse; font-size: 0.875rem; }

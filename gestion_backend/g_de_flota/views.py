@@ -2,7 +2,7 @@ import json
 import hashlib
 from datetime import timedelta
 from django.utils import timezone
-from django.db.models import Count, Max, Subquery, OuterRef, IntegerField, Q
+from django.db.models import Count, Max, Subquery, OuterRef, IntegerField, Q, Sum
 from django.db.models.functions import TruncDay, TruncWeek, TruncMonth, Coalesce
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -14,10 +14,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.core.paginator import Paginator
 
+from decimal import Decimal
+
 from .models import (
     Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
     Mantencion, DocumentoVehiculo, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
-    TipoNotificacion, CambioPlan
+    TipoNotificacion, CambioPlan, GastoOperativo, PresupuestoMensual,
 )
 from .views_planes import verificar_limite_plan, verificar_modulo_plan
 from .audit import registrar_log
@@ -179,6 +181,46 @@ def dashboard_global_view(request):
     top_empresas = Empresa.objects.annotate(num_vehiculos=Count('flotas__vehiculos')).order_by('-num_vehiculos')[:5]
     top_empresas_data = [{"nombre": e.nombre, "vehiculos": e.num_vehiculos} for e in top_empresas]
 
+    # ── Nuevos datos globales ────────────────────────────────────
+
+    # Distribución de empresas por plan
+    distribucion_planes = []
+    for plan in PlanSuscripcion.objects.filter(activo=True).order_by('orden'):
+        n = Empresa.objects.filter(estado='activa', plan=plan).count()
+        distribucion_planes.append({'plan': plan.nombre, 'empresas': n})
+
+    # Empresas sin actividad en los últimos 30 días (sin mantenciones)
+    hace_30 = now - timedelta(days=30)
+    sin_actividad = []
+    for e in Empresa.objects.filter(estado='activa').order_by('nombre'):
+        tiene_act = Mantencion.objects.filter(
+            vehiculo__flota__empresa=e, fecha_programada__gte=hace_30,
+        ).exists()
+        if not tiene_act:
+            sin_actividad.append({'id': e.id, 'nombre': e.nombre})
+        if len(sin_actividad) >= 8:
+            break
+
+    # MRR actual vs mes anterior (aproximación: empresas existentes antes del mes)
+    def _calc_mrr(empresas_qs):
+        total = Decimal(0)
+        for e in empresas_qs.filter(plan__isnull=False).select_related('plan'):
+            p = e.plan
+            if p.precio_mensual:
+                total += p.precio_mensual
+            elif p.precio_anual:
+                total += p.precio_anual / 12
+        return int(total)
+
+    inicio_mes  = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    mrr_actual  = _calc_mrr(Empresa.objects.filter(estado='activa'))
+    mrr_ant_qs  = Empresa.objects.filter(estado='activa', created_at__lt=inicio_mes)
+    mrr_anterior = _calc_mrr(mrr_ant_qs)
+    mrr_variacion = (
+        round((mrr_actual - mrr_anterior) / mrr_anterior * 100, 1)
+        if mrr_anterior > 0 else None
+    )
+
     return Response({
         "kpis": {
             "empresas_activas":    empresas_activas,
@@ -188,6 +230,8 @@ def dashboard_global_view(request):
             "total_vehiculos":     total_vehiculos,
             "empresas_nuevas_mes": empresas_nuevas_mes,
             "usuarios_activos_hoy": usuarios_activos_hoy,
+            "mrr_actual":          mrr_actual,
+            "mrr_variacion":       mrr_variacion,
         },
         "charts": {
             "crecimiento": {"labels": crecimiento_labels, "data": crecimiento_values},
@@ -195,8 +239,10 @@ def dashboard_global_view(request):
                 "labels": list(distribucion_flota.keys()),
                 "data":   list(distribucion_flota.values()),
             },
-            "top_empresas": top_empresas_data,
+            "top_empresas":        top_empresas_data,
+            "distribucion_planes": distribucion_planes,
         },
+        "sin_actividad": sin_actividad,
     })
 
 
@@ -313,6 +359,65 @@ def empresa_dashboard_view(request):
             mant_labels.append(f"{MESES_ES[int(m) - 1]} {y[2:]}")
             mant_values.append(meses_data[k])
 
+    # ── Nuevos widgets ──────────────────────────────────────────
+
+    # Próximas mantenciones en los próximos 7 días
+    proximas_qs = Mantencion.objects.filter(
+        vehiculo__flota__empresa=empresa,
+        estado__in=['pendiente', 'en_proceso'],
+        fecha_programada__gte=hoy,
+        fecha_programada__lte=hoy + timedelta(days=7),
+    ).select_related('vehiculo').order_by('fecha_programada')[:5]
+
+    proximas_7_dias = [
+        {
+            'id':       m.id,
+            'vehiculo': f"{m.vehiculo.marca} {m.vehiculo.modelo} · {m.vehiculo.patente}",
+            'tipo':     m.tipo_mantencion,
+            'fecha':    m.fecha_programada.isoformat(),
+            'estado':   m.estado,
+        }
+        for m in proximas_qs
+    ]
+
+    # Gasto real del mes vs presupuesto
+    gasto_mes = GastoOperativo.objects.filter(
+        empresa=empresa, fecha__year=hoy.year, fecha__month=hoy.month,
+    ).aggregate(t=Sum('monto'))['t'] or 0
+
+    try:
+        presup = PresupuestoMensual.objects.get(empresa=empresa, mes=hoy.month, anio=hoy.year)
+        pct_gasto = round(float(gasto_mes) / float(presup.monto) * 100) if presup.monto > 0 else None
+        gasto_vs_presupuesto = {
+            'gasto':       int(gasto_mes),
+            'presupuesto': int(presup.monto),
+            'pct':         pct_gasto,
+        }
+    except PresupuestoMensual.DoesNotExist:
+        gasto_vs_presupuesto = {'gasto': int(gasto_mes), 'presupuesto': None, 'pct': None}
+
+    # Top 3 vehículos más costosos del mes (gastos operativos)
+    top_veh_qs = (
+        GastoOperativo.objects.filter(
+            empresa=empresa,
+            fecha__year=hoy.year,
+            fecha__month=hoy.month,
+            vehiculo__isnull=False,
+        )
+        .values('vehiculo_id', 'vehiculo__patente', 'vehiculo__marca', 'vehiculo__modelo')
+        .annotate(total=Sum('monto'))
+        .order_by('-total')[:3]
+    )
+    top_vehiculos_costo = [
+        {
+            'vehiculo_id': v['vehiculo_id'],
+            'patente':     v['vehiculo__patente'],
+            'label':       f"{v['vehiculo__marca']} {v['vehiculo__modelo']}",
+            'total':       int(v['total']),
+        }
+        for v in top_veh_qs
+    ]
+
     return Response({
         "kpis": {
             "total_flotas":           total_flotas,
@@ -324,6 +429,11 @@ def empresa_dashboard_view(request):
         "charts": {
             "vehiculos_por_flota": {"labels": bar_labels, "data": bar_values},
             "mantenciones":        {"labels": mant_labels, "data": mant_values},
+        },
+        "widgets": {
+            "proximas_7_dias":      proximas_7_dias,
+            "gasto_vs_presupuesto": gasto_vs_presupuesto,
+            "top_vehiculos_costo":  top_vehiculos_costo,
         },
     })
 
@@ -1486,8 +1596,9 @@ class PlanMantenimientoViewSet(viewsets.ModelViewSet):
                 self.permission_denied(request, message="Sin permisos.")
 
     def perform_create(self, serializer):
-        serializer.save()
-        registrar_log('ACTIVIDAD', 'crear_plan_mantenimiento', self.request, 
+        empresa = get_empresa(self.request)
+        serializer.save(empresa=empresa)
+        registrar_log('ACTIVIDAD', 'crear_plan_mantenimiento', self.request,
                       detalle={"plan_id": serializer.instance.id})
 
     def perform_update(self, serializer):

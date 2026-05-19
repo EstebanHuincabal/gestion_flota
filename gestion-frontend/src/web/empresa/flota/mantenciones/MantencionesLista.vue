@@ -243,8 +243,7 @@ onMounted(async () => {
       <router-link :to="ruta('/mantenciones')"            class="subnav-tab" active-class="subnav-tab-active" exact>Programados</router-link>
       <router-link :to="ruta('/mantenciones/calendario')" class="subnav-tab" active-class="subnav-tab-active">Calendario</router-link>
       <router-link :to="ruta('/mantenciones/historial')"  class="subnav-tab" active-class="subnav-tab-active">Historial</router-link>
-      <router-link :to="ruta('/mantenciones/predictivo')" class="subnav-tab" active-class="subnav-tab-active">Predictivo</router-link>
-      <router-link :to="ruta('/mantenciones/nueva')"      class="subnav-btn">
+<router-link :to="ruta('/mantenciones/nueva')"      class="subnav-btn">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Programar
       </router-link>

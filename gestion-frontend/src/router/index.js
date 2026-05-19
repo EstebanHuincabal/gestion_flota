@@ -41,6 +41,13 @@ import EmpresaLayout from '../web/empresa/EmpresaLayout.vue'
 import FinanzasEmpresa    from '../web/finanzas/FinanzasEmpresa.vue'
 import FinanzasSuperAdmin from '../web/finanzas/FinanzasSuperAdmin.vue'
 
+// Reportes
+import ReportesEmpresa    from '../web/reportes/ReportesEmpresa.vue'
+import ReportesSuperAdmin from '../web/reportes/ReportesSuperAdmin.vue'
+
+// Documentos
+import Documentos from '../web/documentos/Documentos.vue'
+
 const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
@@ -94,9 +101,9 @@ const routes = [
       { path: 'predictivo', component: MantencionPredictiva },
       { path: 'notificaciones',             component: Notificaciones },
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
-      { path: 'documentos',   component: Pendiente('Documentos')    },
+      { path: 'documentos',   component: Documentos },
       { path: 'finanzas',     component: FinanzasSuperAdmin },
-      { path: 'reportes',     component: Pendiente('Reportes')      },
+      { path: 'reportes',     component: ReportesSuperAdmin },
     ],
   },
 
@@ -125,9 +132,9 @@ const routes = [
       { path: 'predictivo', component: MantencionPredictiva },
       { path: 'notificaciones',              component: Notificaciones },
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
-      { path: 'documentos',      component: Pendiente('Documentos')    },
+      { path: 'documentos',      component: Documentos },
       { path: 'finanzas',        component: FinanzasEmpresa },
-      { path: 'reportes',        component: Pendiente('Reportes')      },
+      { path: 'reportes',        component: ReportesEmpresa },
       { path: 'configuracion',   component: ConfiguracionPage },
     ],
   },

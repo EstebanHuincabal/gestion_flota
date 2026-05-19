@@ -1,283 +1,410 @@
 ## LO QUE DEBES IMPLEMENTAR
 
-Módulo de finanzas con DOS vistas completamente separadas según el rol:
-- SUPERADMIN → dashboard de ingresos de la plataforma SaaS
-- USUARIO → gestión de gastos operativos de su flota
+Módulo de gestión de documentos con dos funciones centrales:
+- Repositorio: almacenar, consultar y descargar archivos adjuntos
+- Alertas: detectar y notificar documentos próximos a vencer o ya vencidos
+
+Documentos a gestionar:
+- Vehículos: permiso de circulación, revisión técnica, seguro obligatorio (SOAP)
+- Conductores: licencia de conducir, antecedentes comerciales
 
 ---
 
-## MODELOS NUEVOS (agregar en models.py)
+## MODELO NUEVO (agregar en models.py)
 
-### GastoOperativo
 ```python
-class GastoOperativo(models.Model):
-    CATEGORIAS = [
-        ('combustible', 'Combustible'),
-        ('mantencion',  'Mantención'),
-        ('multa',       'Multa'),
-        ('peaje',       'Peaje'),
-        ('seguro',      'Seguro'),
-        ('otro',        'Otro'),
+class Documento(models.Model):
+    TIPOS_VEHICULO = [
+        ('permiso_circulacion', 'Permiso de circulación'),
+        ('revision_tecnica',    'Revisión técnica'),
+        ('seguro_soap',         'Seguro SOAP'),
     ]
-    empresa        = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='gastos')
-    vehiculo       = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True)
-    conductor      = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='gastos_conductor')
-    categoria      = models.CharField(max_length=20, choices=CATEGORIAS)
-    descripcion    = models.CharField(max_length=300)
-    monto          = models.DecimalField(max_digits=10, decimal_places=0)
-    fecha          = models.DateField()
-    comprobante    = models.FileField(upload_to='comprobantes/', null=True, blank=True)
-    registrado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name='gastos_registrados')
-    created_at     = models.DateTimeField(auto_now_add=True)
-    updated_at     = models.DateTimeField(auto_now=True)
+    TIPOS_CONDUCTOR = [
+        ('licencia',      'Licencia de conducir'),
+        ('antecedentes',  'Antecedentes comerciales'),
+    ]
+    TODOS_TIPOS = TIPOS_VEHICULO + TIPOS_CONDUCTOR
+
+    ENTIDADES = [
+        ('vehiculo',   'Vehículo'),
+        ('conductor',  'Conductor'),
+    ]
+
+    empresa       = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='documentos')
+    entidad       = models.CharField(max_length=20, choices=ENTIDADES)
+    tipo          = models.CharField(max_length=30, choices=TODOS_TIPOS)
+
+    # Solo uno de estos dos tiene valor según la entidad
+    vehiculo      = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
+    conductor     = models.ForeignKey(Usuario,  on_delete=models.CASCADE, null=True, blank=True, related_name='documentos_conductor')
+
+    fecha_emision   = models.DateField(null=True, blank=True)
+    fecha_vencimiento = models.DateField(null=True, blank=True)
+
+    archivo         = models.FileField(upload_to='documentos/%Y/%m/', null=True, blank=True)
+    nombre_archivo  = models.CharField(max_length=200, blank=True, default='')
+
+    # Quién subió el documento
+    subido_por      = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name='documentos_subidos')
+    notas           = models.CharField(max_length=500, blank=True, default='')
+
+    # Versionado: si es renovación, apunta al documento anterior
+    version_anterior = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='versiones_nuevas')
+
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-fecha', '-created_at']
-        verbose_name = 'Gasto operativo'
+        ordering = ['-created_at']
+        verbose_name = 'Documento'
+
+    def dias_para_vencer(self):
+        if not self.fecha_vencimiento:
+            return None
+        from django.utils import timezone
+        delta = self.fecha_vencimiento - timezone.now().date()
+        return delta.days
+
+    def estado(self):
+        dias = self.dias_para_vencer()
+        if dias is None:
+            return 'sin_vencimiento'
+        if dias < 0:
+            return 'vencido'
+        if dias <= 30:
+            return 'por_vencer'
+        return 'vigente'
 ```
 
-### PresupuestoMensual
-```python
-class PresupuestoMensual(models.Model):
-    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='presupuestos')
-    anio    = models.PositiveSmallIntegerField()
-    mes     = models.PositiveSmallIntegerField()
-    monto   = models.DecimalField(max_digits=12, decimal_places=0)
-
-    class Meta:
-        unique_together = ('empresa', 'anio', 'mes')
-        verbose_name = 'Presupuesto mensual'
-```
+Restricción a validar en la vista: si entidad='vehiculo', vehiculo no puede ser null. Si entidad='conductor', conductor no puede ser null. Nunca ambos con valor al mismo tiempo.
 
 ---
 
-## ENDPOINTS — todo en views.py salvo indicación
+## ENDPOINTS (agregar en views.py)
 
-### Gastos operativos (USUARIO)
-GET  /api/empresa/gastos/
-Parámetros opcionales: mes, anio, categoria, vehiculo_id, conductor_id
-Retorna lista de gastos + resumen:
+### GET /api/empresa/documentos/
+Parámetros opcionales: entidad (vehiculo|conductor), tipo, estado (vigente|por_vencer|vencido), vehiculo_id, conductor_id, buscar (texto libre sobre tipo y nombre_archivo)
+
+Retorna:
 ```json
 {
-  "gastos": [...],
+  "documentos": [
+    {
+      "id": 1,
+      "entidad": "vehiculo",
+      "tipo": "revision_tecnica",
+      "tipo_display": "Revisión técnica",
+      "vehiculo_id": 3,
+      "vehiculo_patente": "PPU-4421",
+      "conductor_id": null,
+      "conductor_nombre": null,
+      "fecha_emision": "2024-04-02",
+      "fecha_vencimiento": "2025-04-02",
+      "dias_para_vencer": -30,
+      "estado": "vencido",
+      "tiene_archivo": true,
+      "nombre_archivo": "revision_ppu4421_2024.pdf",
+      "subido_por_nombre": "Admin Empresa",
+      "notas": "",
+      "created_at": "..."
+    }
+  ],
   "resumen": {
-    "total": 4820000,
-    "por_categoria": {
-      "combustible": 2240000,
-      "mantencion": 1680000,
-      "multa": 580000,
-      "peaje": 200000,
-      "seguro": 120000
-    },
-    "por_vehiculo": [
-      { "vehiculo_id": 1, "patente": "PPU-4421", "total": 890000 }
+    "total": 84,
+    "vigentes": 71,
+    "por_vencer": 9,
+    "vencidos": 4,
+    "alertas": [
+      {
+        "id": 1,
+        "tipo_display": "Revisión técnica",
+        "entidad_nombre": "PPU-4421",
+        "fecha_vencimiento": "2025-04-02",
+        "dias_para_vencer": -30,
+        "estado": "vencido"
+      }
     ],
-    "costo_por_km": 480,
-    "presupuesto": { "monto": 5750000, "utilizado_pct": 84 }
+    "por_vehiculo": [
+      {
+        "vehiculo_id": 3,
+        "patente": "PPU-4421",
+        "total": 3,
+        "esperados": 3,
+        "estado_peor": "vencido"
+      }
+    ],
+    "por_conductor": [
+      {
+        "conductor_id": 5,
+        "nombre": "Juan Muñoz",
+        "total": 2,
+        "esperados": 2,
+        "estado_peor": "por_vencer"
+      }
+    ]
   }
 }
 ```
 
-El costo_por_km se calcula dividiendo el total del mes por el total de km registrados en mantenciones del mismo período. Si no hay km registrados retorna null.
-POST /api/empresa/gastos/
-Body: { vehiculo_id, conductor_id (opcional), categoria, descripcion, monto, fecha }
-Soportar subida de comprobante como multipart/form-data.
-Registrar en audit con registrar_log().
-GET  /api/empresa/gastos/:id/
-PUT  /api/empresa/gastos/:id/
-DELETE /api/empresa/gastos/:id/
-Solo el registrado_por o un USUARIO admin de la empresa puede editar/eliminar.
-GET  /api/empresa/gastos/exportar/
-Parámetros: mes, anio, formato (csv | pdf)
-Exportar todos los gastos del período con totales por categoría al final.
-Para CSV usar el módulo csv de Python.
-Para PDF usar reportlab (ya instalado en el proyecto si existe, sino indicar pip install reportlab).
+El campo "alertas" incluye solo documentos con estado vencido o por_vencer, ordenados: primero vencidos, luego por días_para_vencer ascendente.
 
-### Presupuesto (USUARIO)
-GET  /api/empresa/presupuesto/?mes=5&anio=2025
-POST /api/empresa/presupuesto/
-PUT  /api/empresa/presupuesto/:id/
+El campo "esperados" en por_vehiculo es 3 (permiso + revisión + seguro). En por_conductor es 2 (licencia + antecedentes). Si total < esperados, el vehículo/conductor tiene documentos faltantes.
 
-### Dashboard SaaS (SUPERADMIN — agregar en views_planes.py)
-GET /api/admin/finanzas/
-Parámetros opcionales: periodo (últimos 12 meses por defecto)
-Retorna:
-```json
-{
-  "mrr": 3820000,
-  "arr": 45840000,
-  "churn_rate": 3.2,
-  "ltv_promedio": 2840000,
-  "empresas_activas": 35,
-  "empresas_trial": 8,
-  "ingresos_por_plan": [
-    { "plan": "pro",        "empresas": 18, "mrr": 2682000, "pct": 70 },
-    { "plan": "basico",     "empresas": 14, "mrr": 686000,  "pct": 18 },
-    { "plan": "enterprise", "empresas": 3,  "mrr": 452000,  "pct": 12 }
-  ],
-  "movimientos_mes": {
-    "nuevas_suscripciones": { "cantidad": 6, "mrr_ganado": 486000 },
-    "upgrades":             { "cantidad": 3, "mrr_expansion": 300000 },
-    "cancelaciones":        { "cantidad": 2, "mrr_perdido": 98000 },
-    "pagos_fallidos":       { "cantidad": 4 }
-  },
-  "empresas_suscritas": [
-    {
-      "empresa_id": 1,
-      "nombre": "...",
-      "plan": "pro",
-      "ciclo": "anual",
-      "mrr": 124167,
-      "proximo_cobro": "2026-01-15",
-      "estado_suscripcion": "activa",
-      "stripe_customer_id": "cus_..."
-    }
-  ]
-}
-```
+El campo "estado_peor" sigue esta jerarquía: vencido > por_vencer > vigente > sin_vencimiento.
 
-Cálculos:
-- MRR: suma de precio_mensual de todas las suscripciones activas. Para ciclo anual: precio_anual / 12.
-- ARR: MRR × 12
-- Churn rate: (cancelaciones del mes / empresas activas inicio del mes) × 100
-- LTV: precio promedio mensual / churn_rate_mensual (como decimal)
-- Los movimientos_mes filtran por fecha dentro del mes actual
-GET /api/admin/finanzas/historico/
-Parámetros: meses (int, default 12)
-Retorna array de { mes, anio, mrr, nuevas, cancelaciones } para graficar evolución del MRR.
+### POST /api/empresa/documentos/
+Acepta multipart/form-data (puede venir con o sin archivo adjunto).
+Body: entidad, tipo, vehiculo_id o conductor_id, fecha_emision, fecha_vencimiento, archivo (opcional), notas (opcional), version_anterior_id (opcional, para renovaciones).
+Validar que el tipo sea coherente con la entidad (tipos de vehículo solo para vehículos, etc.).
+Registrar con registrar_log() acción 'documento_subido'.
+Notificar al admin de la empresa con notificar() si el documento está cargado por un conductor (subido_por.rol == 'CONDUCTOR').
+
+### GET /api/empresa/documentos/:id/
+Retorna el documento completo. No retorna la URL del archivo directamente — genera una URL firmada temporal.
+
+### PUT /api/empresa/documentos/:id/
+Permite editar: fecha_emision, fecha_vencimiento, notas, archivo (reemplazar).
+No permite cambiar entidad, tipo, vehiculo, ni conductor.
+Registrar con registrar_log() acción 'documento_editado'.
+
+### DELETE /api/empresa/documentos/:id/
+Eliminar el registro Y el archivo del filesystem (usar default_storage.delete()).
+Solo puede eliminar el subido_por o un USUARIO admin de la empresa.
+Registrar con registrar_log() acción 'documento_eliminado'.
+
+### GET /api/empresa/documentos/:id/descargar/
+Sirve el archivo como respuesta HTTP con Content-Disposition: attachment.
+Verificar que el usuario tenga acceso a la empresa del documento.
+Usar FileResponse con el archivo abierto en modo binario.
+
+### POST /api/empresa/documentos/:id/renovar/
+Crea un nuevo documento como renovación del actual.
+Body: igual al POST normal más version_anterior_id (se rellena automáticamente con :id).
+El documento anterior queda con su estado (vencido/por_vencer) — no se elimina.
+Retorna el nuevo documento creado.
 
 ---
 
-## URLS a agregar en urls.py
+## TAREA PERIÓDICA — verificar_vencimientos()
+
+Agregar función en views.py (o en un archivo tasks.py si el proyecto ya usa Celery o similar, verificar en contexto.md):
 
 ```python
-path('api/empresa/gastos/',                    GastosListView.as_view()),
-path('api/empresa/gastos/exportar/',           GastosExportarView.as_view()),
-path('api/empresa/gastos/<int:gasto_id>/',     GastoDetailView.as_view()),
-path('api/empresa/presupuesto/',               PresupuestoView.as_view()),
-path('api/empresa/presupuesto/<int:pk>/',      PresupuestoDetailView.as_view()),
-path('api/admin/finanzas/',                    FinanzasSaasView.as_view()),
-path('api/admin/finanzas/historico/',          FinanzasHistoricoView.as_view()),
+def verificar_vencimientos():
+    """
+    Debe ejecutarse diariamente.
+    Envía notificaciones por documentos próximos a vencer o ya vencidos.
+    No envía la misma notificación dos veces en el mismo día.
+    """
+    from django.utils import timezone
+    hoy = timezone.now().date()
+
+    UMBRALES_DIAS = [30, 15, 7, 1]  # notificar cuando faltan estos días
+
+    documentos = Documento.objects.filter(
+        fecha_vencimiento__isnull=False,
+        vehiculo__flota__empresa__estado='activa'  # solo empresas activas
+    ).select_related('empresa', 'vehiculo', 'conductor')
+
+    for doc in documentos:
+        dias = doc.dias_para_vencer()
+        if dias is None:
+            continue
+
+        if dias < 0:
+            # Vencido: notificar solo si no se notificó hoy
+            ya_notificado = Notificacion.objects.filter(
+                tipo='DOCUMENTO_VENCIDO',
+                extra__documento_id=doc.id,
+                created_at__date=hoy
+            ).exists()
+            if not ya_notificado:
+                notificar_admins_empresa(
+                    empresa=doc.empresa,
+                    tipo='DOCUMENTO_VENCIDO',
+                    titulo=f'Documento vencido: {doc.get_tipo_display()}',
+                    mensaje=(
+                        f'El documento "{doc.get_tipo_display()}" de '
+                        f'{"el vehículo " + doc.vehiculo.patente if doc.vehiculo else "el conductor " + descifrar(doc.conductor.nombre_cifrado)} '
+                        f'venció hace {abs(dias)} días.'
+                    ),
+                    extra={'documento_id': doc.id, 'dias': dias}
+                )
+
+        elif dias in UMBRALES_DIAS:
+            ya_notificado = Notificacion.objects.filter(
+                tipo='DOCUMENTO_POR_VENCER',
+                extra__documento_id=doc.id,
+                extra__dias_umbral=dias,
+            ).exists()
+            if not ya_notificado:
+                notificar_admins_empresa(
+                    empresa=doc.empresa,
+                    tipo='DOCUMENTO_POR_VENCER',
+                    titulo=f'Documento por vencer: {doc.get_tipo_display()}',
+                    mensaje=(
+                        f'El documento "{doc.get_tipo_display()}" de '
+                        f'{"el vehículo " + doc.vehiculo.patente if doc.vehiculo else "el conductor " + descifrar(doc.conductor.nombre_cifrado)} '
+                        f'vence en {dias} días ({doc.fecha_vencimiento.strftime("%d/%m/%Y")}).'
+                    ),
+                    extra={'documento_id': doc.id, 'dias': dias, 'dias_umbral': dias}
+                )
+```
+
+Si el proyecto ya tiene un mecanismo de tareas periódicas (manage.py command, cron, etc.), integrarlo ahí. Si no, crear un management command:
+`gestion_backend/g_de_flota/management/commands/verificar_documentos.py`
+con `python manage.py verificar_documentos` que llame a verificar_vencimientos().
+
+---
+
+## URLs a agregar en urls.py
+
+```python
+path('api/empresa/documentos/',                         DocumentosListView.as_view()),
+path('api/empresa/documentos/<int:doc_id>/',            DocumentoDetailView.as_view()),
+path('api/empresa/documentos/<int:doc_id>/descargar/',  DocumentoDescargarView.as_view()),
+path('api/empresa/documentos/<int:doc_id>/renovar/',    DocumentoRenovarView.as_view()),
 ```
 
 ---
 
 ## FRONTEND — ARCHIVOS A CREAR
 
-### src/web/finanzas/FinanzasEmpresa.vue
-Vista completa para el rol USUARIO.
+### src/web/documentos/Documentos.vue
+Vista completa del módulo.
 
-Tabs: Resumen | Combustible | Mantención | Multas y peajes | Por vehículo | Presupuesto
+**Header:**
+- Título "Gestión de documentos" + nombre de empresa
+- Botón "Subir documento" abre el modal de carga
 
-**Tab Resumen:**
-- 4 KPI cards: gasto total del mes, costo por km, vehículo más costoso, presupuesto utilizado (con barra de progreso, naranja si >80%, rojo si >100%)
-- Card "Distribución de gastos": lista de categorías con barra de progreso horizontal y monto + porcentaje. Íconos de Tabler por categoría.
-- Card "Top 5 vehículos por gasto": tabla con patente, tipo, monto, barra visual de proporción. Click en fila navega al tab "Por vehículo" filtrando ese vehículo.
-- Card "Últimos registros": tabla con fecha, vehículo, categoría (badge de color), descripción, conductor, monto, botón comprobante. Botón "Registrar gasto" abre el modal.
+**KPI cards (fila de 4):**
+Total documentos | Vigentes (verde) | Por vencer en 30 días (naranja) | Vencidos (rojo)
 
-**Tab Combustible, Mantención, Multas y peajes:**
-Misma estructura: filtros de período + vehículo, tabla de registros filtrada por categoría, totales al pie.
+**Fila de dos columnas:**
 
-**Tab Por vehículo:**
-- Selector de vehículo
-- Breakdown de gastos del vehículo seleccionado por categoría
-- Histórico de 6 meses (barras simples con div, sin librería de gráficos)
-- Indicador de costo por km si hay datos
+Columna izquierda — "Alertas activas":
+- Lista de documentos con estado vencido o por_vencer
+- Cada fila: ícono según entidad (ti-car para vehículo, ti-id-badge para conductor), nombre del documento y entidad asociada, fecha de vencimiento, chip de días (rojo si vencido, naranja si por_vencer)
+- Fondo de fila rojo suave si vencido, naranja suave si por_vencer
+- Click en fila abre el detalle del documento
 
-**Tab Presupuesto:**
-- Input para definir el presupuesto del mes
-- Barra de progreso de ejecución presupuestaria
-- Comparativa: presupuesto vs gasto real mes a mes (últimos 6 meses, barras lado a lado con div, sin librería)
+Columna derecha — dos tablas apiladas:
+- "Estado por vehículo": patente, total/esperados de documentos, badge de estado peor
+- "Estado por conductor": nombre, total/esperados, badge de estado peor
+- Click en fila filtra la tabla principal por ese vehículo/conductor
 
-**Modal registrar/editar gasto:**
-- Campos: vehículo (select con patentes), categoría (select), descripción, monto (input number formateado CLP), fecha, conductor (select opcional), comprobante (input file, acepta imagen y PDF)
-- Validaciones: monto > 0, fecha no futura, categoría requerida, vehículo requerido
-- Al guardar: POST multipart/form-data si hay comprobante, POST JSON si no
-- Usa ConfirmModal para eliminar
+**Tabla principal "Todos los documentos":**
+Columnas: Tipo (badge azul=vehículo, púrpura=conductor), Documento (nombre display), Asociado a (patente o nombre conductor), Emisión, Vencimiento (resaltado según estado), Estado (badge), Archivo (botón descargar si tiene archivo)
 
-**Filtros globales:**
-- Selector de mes/año (default mes actual)
-- Al cambiar recarga todos los datos del tab activo
+Filtros sobre la tabla:
+- Select tipo: Todos / Vehículos / Conductores
+- Select estado: Todos / Vigente / Por vencer / Vencido
+- Input búsqueda por texto
 
-### src/web/finanzas/FinanzasSuperAdmin.vue
-Vista completa para el rol SUPERADMIN.
+**Modal subir/editar documento:**
+Campos:
+1. Entidad (radio o select: Vehículo / Conductor) — al cambiar resetea el siguiente campo
+2. Vehículo o Conductor (select dinámico según entidad)
+3. Tipo de documento (select filtrado según entidad seleccionada)
+4. Fecha de emisión (date input)
+5. Fecha de vencimiento (date input)
+6. Archivo adjunto (input type=file, acepta PDF e imágenes, máximo 10MB)
+7. Notas (textarea opcional)
 
-**KPI cards (fila superior):**
-MRR | ARR | Churn rate | LTV promedio
-Cada card muestra variación vs mes anterior con flecha y color (verde si mejoró, rojo si empeoró).
+Validaciones en frontend:
+- Fecha vencimiento > fecha emisión
+- Archivo obligatorio solo si es primera vez (en edición es opcional)
+- Tipo coherente con entidad
 
-**Fila media (dos columnas):**
-- Card "Ingresos por plan": barras horizontales con monto, cantidad de empresas y porcentaje por plan (Básico / Pro / Enterprise)
-- Card "Movimientos del mes": 4 items con fondo semántico — nuevas suscripciones (verde), upgrades (azul), cancelaciones (rojo), pagos fallidos (naranja). Cada uno muestra cantidad y variación en MRR.
+Al subir: usar FormData si hay archivo, JSON si no.
+Mostrar preview del archivo si es imagen. Si es PDF mostrar ícono de PDF con nombre.
 
-**Evolución MRR (últimos 12 meses):**
-Gráfico de barras construido con divs (sin librería). Cada barra es un div con height proporcional al MRR máximo del período. Mostrar mes/año debajo de cada barra. Tooltip simple al hover mostrando MRR exacto.
+**Modal renovar documento:**
+Pre-rellena tipo, entidad, vehículo/conductor del documento original.
+Campos editables: nueva fecha de emisión, nueva fecha de vencimiento, nuevo archivo (obligatorio), notas.
+Banner informativo: "Esta renovación no elimina el documento anterior. Ambos quedarán en el historial."
 
-**Tabla de empresas:**
-Columnas: empresa, plan (badge), ciclo, MRR, próximo cobro, estado (badge), link externo a Stripe.
-Estados con badge de color: activa (verde), trial (azul), gracia (naranja), suspendida (rojo), cancelada (gris).
-Ordenable por MRR (click en cabecera).
-Botón "Ver en Stripe" abre stripe_customer_id en nueva pestaña: https://dashboard.stripe.com/customers/{id}
+**Modal detalle documento:**
+Muestra todos los campos del documento.
+Botón descargar archivo (llama a /api/empresa/documentos/:id/descargar/).
+Botón renovar (abre modal de renovación).
+Botón eliminar (con ConfirmModal).
+Si tiene version_anterior, link "Ver documento anterior".
 
-**Selector de período:**
-Dropdown: Últimos 3 meses / 6 meses / 12 meses. Al cambiar recarga el histórico.
+**Comportamiento de carga:**
+- Al montar: GET /api/empresa/documentos/ sin filtros
+- Al cambiar filtros: GET con parámetros correspondientes
+- Loading state con spinner mientras carga
+- Fail-silent en los resúmenes (si falla la API no romper la vista)
 
-### src/web/finanzas/index.js (o agregar directo al router)
+### src/web/documentos/DocumentosBadge.vue
+Componente pequeño reutilizable para mostrar en otras vistas (ej: ficha de vehículo, ficha de conductor):
+- Recibe prop: entidad ('vehiculo'|'conductor') + id
+- Llama a /api/empresa/documentos/?entidad=X&vehiculo_id=Y (o conductor_id)
+- Muestra: chip verde "Docs al día", naranja "X por vencer", rojo "X vencidos / Faltan docs"
+- Click abre un popover con la lista de documentos de esa entidad
+
+---
+
+## INTEGRACIÓN CON VISTAS EXISTENTES
+
+En la vista de detalle de vehículo (si existe), agregar al final:
+```vue
+<DocumentosBadge entidad="vehiculo" :id="vehiculo.id" />
+```
+
+En la vista de detalle de conductor (si existe), agregar:
+```vue
+<DocumentosBadge entidad="conductor" :id="conductor.id" />
+```
+
+Buscar esas vistas en el contexto.md y agregar el import y el componente en el lugar apropiado.
+
+---
+
+## NAVEGACIÓN
+
+Agregar en el sidebar del USUARIO (buscar el archivo de navegación en contexto.md):
+Ítem: Documentos
+Ícono: ti-files
+Ruta: /empresa/documentos
+
 Agregar en router/index.js:
 ```javascript
 {
-  path: '/empresa/finanzas',
-  component: () => import('@/web/finanzas/FinanzasEmpresa.vue'),
+  path: '/empresa/documentos',
+  component: () => import('@/web/documentos/Documentos.vue'),
   meta: { requiresAuth: true, roles: ['USUARIO'] }
-},
-{
-  path: '/admin/finanzas',
-  component: () => import('@/web/finanzas/FinanzasSuperAdmin.vue'),
-  meta: { requiresAuth: true, roles: ['SUPERADMIN'] }
 }
 ```
 
 ---
 
-## NAVEGACIÓN — agregar en los sidebars existentes
+## CONVENCIONES Y RESTRICCIONES
 
-En el sidebar del USUARIO (EmpresaLayout.vue o donde esté el nav de empresa):
-Ítem: Finanzas
-Ícono: ti-report-money
-Ruta: /empresa/finanzas
-
-En el sidebar del SUPERADMIN (Base.vue o donde esté el nav admin):
-Ítem: Finanzas
-Ícono: ti-chart-bar
-Ruta: /admin/finanzas
-
----
-
-## COMPORTAMIENTOS Y VALIDACIONES
-
-- Solo USUARIO puede registrar gastos de su propia empresa. No puede ver ni registrar gastos de otras empresas.
-- SUPERADMIN no puede registrar gastos de empresas (solo ve el dashboard SaaS).
-- Los montos siempre en CLP enteros (sin decimales). Formato de display: $4.820.000 con punto como separador de miles.
-- Fechas en formato dd/mm/yyyy en la UI, ISO en la API.
-- El comprobante se guarda como archivo. En el listado mostrar ícono de clip si existe, check verde si fue revisado.
-- Al eliminar un gasto con comprobante, eliminar también el archivo del filesystem.
-- Si la empresa no tiene presupuesto definido para el mes, el KPI de "presupuesto utilizado" muestra "Sin presupuesto" con botón "Definir".
-- registrar_log() en: crear gasto, editar gasto, eliminar gasto, crear/editar presupuesto.
-- Manejo de errores: si un endpoint falla, mostrar showToast con el mensaje del backend. No dejar pantallas en blanco.
-- Loading state en todos los fetch: mostrar spinner o skeleton mientras carga.
-- El gráfico de evolución MRR en FinanzasSuperAdmin no usa ninguna librería externa — solo divs con height calculado en JS.
+- Solo USUARIO admin de la empresa puede subir, editar, eliminar y descargar documentos de su empresa. No puede acceder a documentos de otras empresas.
+- Un conductor (cuando tenga app) solo puede subir documentos propios (licencia y antecedentes). No puede ver ni tocar documentos de vehículos ni de otros conductores. Preparar el backend para esto aunque la app no exista aún: verificar subido_por.rol == 'CONDUCTOR' y que el conductor sea el mismo usuario autenticado.
+- SUPERADMIN puede ver documentos de cualquier empresa (agregar parámetro empresa_id opcional al GET).
+- Los archivos se sirven desde el backend, nunca exponer rutas directas del filesystem.
+- Fechas en formato dd/mm/yyyy en la UI, ISO 8601 en la API.
+- Montar el management command verificar_documentos como tarea diaria. Documentar en MIGRACION.md cómo configurarlo con cron: `0 8 * * * python manage.py verificar_documentos`
+- registrar_log() en todas las acciones: subir, editar, eliminar, descargar, renovar.
+- Todos los textos en español es-CL.
+- Nunca usar fetch directo, siempre apiFetch.
+- Composition API con <script setup>, nunca Options API.
+- try/except en todas las vistas Django con respuestas JSON consistentes.
+- Entregar cada archivo COMPLETO sin omitir código con "// resto igual".
 
 ---
 
 ## ARCHIVOS A ENTREGAR
 
-1. models_patch.py — clases GastoOperativo y PresupuestoMensual completas
-2. views.py — solo las vistas nuevas de gastos y presupuesto (indicar exactamente dónde insertar)
-3. views_planes.py — solo las vistas nuevas FinanzasSaasView y FinanzasHistoricoView (indicar dónde insertar)
+1. models_patch.py — clase Documento completa
+2. views_documentos_patch.py — todas las vistas nuevas (indicar que van en views.py y dónde insertar)
+3. tasks_patch.py — función verificar_vencimientos() y management command (indicar ubicación exacta)
 4. urls_patch.py — solo las rutas nuevas
-5. FinanzasEmpresa.vue — completo
-6. FinanzasSuperAdmin.vue — completo
+5. Documentos.vue — completo
+6. DocumentosBadge.vue — completo
 7. router_patch.js — solo las rutas a agregar
-8. nav_patch.md — instrucciones exactas de qué línea agregar en qué archivo de navegación
-
-Entrega cada archivo completo sin omitir código con comentarios como "// resto igual" o "# código existente".
+8. nav_patch.md — instrucciones de qué línea agregar en el sidebar y dónde
+9. MIGRACION.md — orden exacto: models → migrate → vistas → urls → frontend → cron

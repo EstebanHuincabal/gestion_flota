@@ -58,23 +58,28 @@ const kpisGlobal = ref({
   total_usuarios: 0,   total_conductores: 0,
   total_vehiculos: 0,  empresas_nuevas_mes: 0,
   usuarios_activos_hoy: 0,
+  mrr_actual: 0, mrr_variacion: null,
 })
-const topEmpresas = ref([])
+const topEmpresas   = ref([])
+const sinActividad  = ref([])
 
 // USUARIO: KPIs de la empresa
 const kpisEmpresa = ref({
   total_flotas: 0, total_vehiculos: 0, total_conductores: 0,
   mantenciones_pendientes: 0, docs_por_vencer: 0,
 })
+const widgetsEmpresa = ref({ proximas_7_dias: [], gasto_vs_presupuesto: null, top_vehiculos_costo: [] })
 
 // Canvas refs — cada rol usa los suyos
 const crecimientoCanvas  = ref(null)
 const distribucionCanvas = ref(null)
+const planesCanvas       = ref(null)
 const vehiculosCanvas    = ref(null)
 const mantencionesCanvas = ref(null)
 
 let crecimientoChart  = null
 let distribucionChart = null
+let planesChart       = null
 let vehiculosChart    = null
 let mantencionesChart = null
 
@@ -104,12 +109,14 @@ const cargar = async () => {
       const data = await res.json()
       kpisGlobal.value  = data.kpis
       topEmpresas.value = data.charts.top_empresas
+      sinActividad.value = data.sin_actividad || []
       pendiente = () => renderGraficosGlobal(data.charts)
     } else {
       const res = await apiFetchEmpresa(`/api/empresa/dashboard/?periodo=${periodoActivo.value}`)
       if (!res.ok) throw new Error('Error al cargar el dashboard')
       const data = await res.json()
-      kpisEmpresa.value = data.kpis
+      kpisEmpresa.value    = data.kpis
+      widgetsEmpresa.value = data.widgets || widgetsEmpresa.value
       pendiente = () => renderGraficosEmpresa(data.charts)
     }
   } catch (e) {
@@ -152,6 +159,7 @@ const cambiarPeriodo = (p) => {
 const renderGraficosGlobal = (charts) => {
   if (crecimientoChart)  crecimientoChart.destroy()
   if (distribucionChart) distribucionChart.destroy()
+  if (planesChart)       planesChart.destroy()
 
   if (crecimientoCanvas.value) {
     const ac = accentActual()
@@ -200,6 +208,26 @@ const renderGraficosGlobal = (charts) => {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12, boxWidth: 10 } } },
         cutout: '68%',
+      }
+    })
+  }
+
+  if (planesCanvas.value && charts.distribucion_planes?.length) {
+    const COLORES_PLANES = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444']
+    planesChart = new Chart(planesCanvas.value, {
+      type: 'doughnut',
+      data: {
+        labels: charts.distribucion_planes.map(p => p.plan),
+        datasets: [{
+          data: charts.distribucion_planes.map(p => p.empresas),
+          backgroundColor: COLORES_PLANES,
+          borderWidth: 0, hoverOffset: 6,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 10 } } },
+        cutout: '65%',
       }
     })
   }
@@ -355,6 +383,24 @@ onMounted(cargar)
         </div>
 
         <div class="kpi-card">
+          <div class="kpi-icon bg-indigo">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 13v-1m-2.599-1c.52.598 1.49 1 2.599 1 1.657 0 3-.895 3-2m-6 0H6"/>
+            </svg>
+          </div>
+          <div class="kpi-data">
+            <span class="kpi-value">${{ kpisGlobal.mrr_actual?.toLocaleString('es-CL') }}</span>
+            <span class="kpi-label">MRR</span>
+            <span v-if="kpisGlobal.mrr_variacion !== null"
+              class="kpi-sub"
+              :style="{ color: kpisGlobal.mrr_variacion >= 0 ? '#059669' : '#DC2626' }">
+              {{ kpisGlobal.mrr_variacion >= 0 ? '+' : '' }}{{ kpisGlobal.mrr_variacion }}% vs mes ant.
+            </span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
           <div class="kpi-icon bg-amber">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
@@ -490,6 +536,43 @@ onMounted(cargar)
         </div>
       </div>
 
+      <!-- Fila extra global: distribución planes + sin actividad -->
+      <div class="bottom-row" style="margin-top:1.25rem">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Distribución de planes</h2>
+              <p class="card-subtitle">Empresas activas por plan</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas ref="planesCanvas"/>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Sin actividad (30 días)</h2>
+              <p class="card-subtitle">Empresas sin mantenciones recientes</p>
+            </div>
+          </div>
+          <div v-if="!sinActividad.length" class="empty" style="padding:1.5rem;text-align:center">Todas las empresas tienen actividad reciente</div>
+          <table v-else class="top-tabla">
+            <tbody>
+              <tr v-for="e in sinActividad" :key="e.id" style="cursor:pointer" @click="router.push(`/empresas/${e.id}`)">
+                <td>
+                  <div style="display:flex;align-items:center;gap:0.5rem">
+                    <span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;flex-shrink:0;display:inline-block"/>
+                    {{ e.nombre }}
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </template>
 
     <!-- ══════════════ USUARIO ══════════════ -->
@@ -621,6 +704,90 @@ onMounted(cargar)
           </button>
         </div>
         <p v-else class="accesos-vacio">Tu plan actual no tiene módulos habilitados.</p>
+      </div>
+
+      <!-- Nuevos widgets de empresa -->
+      <div class="widgets-row">
+
+        <!-- Gasto vs Presupuesto -->
+        <div class="card widget-card">
+          <div class="card-header">
+            <h2 class="card-title">Gasto del mes</h2>
+            <button class="btn-link" @click="router.push(ruta('/finanzas'))">Ver finanzas →</button>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem">
+            <div v-if="widgetsEmpresa.gasto_vs_presupuesto" class="gasto-presupuesto">
+              <div class="gasto-cifra">
+                ${{ widgetsEmpresa.gasto_vs_presupuesto.gasto?.toLocaleString('es-CL') }}
+                <span v-if="widgetsEmpresa.gasto_vs_presupuesto.presupuesto" class="gasto-de">
+                  / ${{ widgetsEmpresa.gasto_vs_presupuesto.presupuesto.toLocaleString('es-CL') }}
+                </span>
+              </div>
+              <div v-if="widgetsEmpresa.gasto_vs_presupuesto.presupuesto" class="presup-barra-wrap">
+                <div class="presup-barra">
+                  <div class="presup-barra-fill"
+                    :style="{
+                      width: Math.min(widgetsEmpresa.gasto_vs_presupuesto.pct, 100) + '%',
+                      background: widgetsEmpresa.gasto_vs_presupuesto.pct >= 90 ? '#EF4444'
+                                : widgetsEmpresa.gasto_vs_presupuesto.pct >= 70 ? '#F59E0B'
+                                : '#4F46E5'
+                    }"/>
+                </div>
+                <span class="presup-pct"
+                  :style="{ color: widgetsEmpresa.gasto_vs_presupuesto.pct >= 90 ? '#EF4444' : widgetsEmpresa.gasto_vs_presupuesto.pct >= 70 ? '#D97706' : '#374151' }">
+                  {{ widgetsEmpresa.gasto_vs_presupuesto.pct }}%
+                </span>
+              </div>
+              <div v-else class="presup-sin">Sin presupuesto definido este mes</div>
+            </div>
+            <div v-else class="empty-widget">Sin datos de gastos</div>
+          </div>
+        </div>
+
+        <!-- Próximas mantenciones 7 días -->
+        <div class="card widget-card">
+          <div class="card-header">
+            <h2 class="card-title">Próximos 7 días</h2>
+            <button class="btn-link" @click="router.push(ruta('/mantenciones'))">Ver todas →</button>
+          </div>
+          <div v-if="!widgetsEmpresa.proximas_7_dias?.length" class="empty" style="padding:1rem 1.25rem;font-size:0.8125rem;color:#9CA3AF">
+            Sin mantenciones programadas en los próximos 7 días
+          </div>
+          <ul v-else class="proximas-list">
+            <li v-for="m in widgetsEmpresa.proximas_7_dias" :key="m.id" class="proxima-item">
+              <div class="proxima-fecha">{{ m.fecha?.slice(8,10) }}/{{ m.fecha?.slice(5,7) }}</div>
+              <div class="proxima-info">
+                <div class="proxima-tipo">{{ m.tipo }}</div>
+                <div class="proxima-vehiculo">{{ m.vehiculo }}</div>
+              </div>
+              <span class="proxima-estado" :class="m.estado === 'en_proceso' ? 'estado-proceso' : 'estado-pendiente'">
+                {{ m.estado === 'en_proceso' ? 'En proceso' : 'Pendiente' }}
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Top vehículos por costo -->
+        <div class="card widget-card">
+          <div class="card-header">
+            <h2 class="card-title">Top costo este mes</h2>
+            <button class="btn-link" @click="router.push(ruta('/reportes'))">Ver reporte →</button>
+          </div>
+          <div v-if="!widgetsEmpresa.top_vehiculos_costo?.length" class="empty" style="padding:1rem 1.25rem;font-size:0.8125rem;color:#9CA3AF">
+            Sin datos de gastos este mes
+          </div>
+          <ul v-else class="top-veh-list">
+            <li v-for="(v, i) in widgetsEmpresa.top_vehiculos_costo" :key="v.vehiculo_id" class="top-veh-item">
+              <span class="top-veh-rank">{{ i + 1 }}</span>
+              <div class="top-veh-info">
+                <div class="top-veh-patente">{{ v.patente }}</div>
+                <div class="top-veh-label">{{ v.label }}</div>
+              </div>
+              <span class="top-veh-monto">${{ v.total.toLocaleString('es-CL') }}</span>
+            </li>
+          </ul>
+        </div>
+
       </div>
 
     </template>
@@ -771,6 +938,41 @@ onMounted(cargar)
 .accesos-2x2  { grid-template-columns: 1fr 1fr; }
 .accesos-auto { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 .accesos-vacio { font-size: 0.875rem; color: #9CA3AF; padding: 1rem 0; margin: 0; }
+
+/* ── Widgets nuevos ────────────────────────── */
+.widgets-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; margin-top: 1.5rem; }
+@media (max-width: 900px) { .widgets-row { grid-template-columns: 1fr; } }
+.widget-card { min-height: 180px; }
+
+.gasto-presupuesto { display: flex; flex-direction: column; gap: 0.6rem; }
+.gasto-cifra { font-size: 1.5rem; font-weight: 800; color: #111827; }
+.gasto-de { font-size: 0.9rem; font-weight: 500; color: #9CA3AF; }
+.presup-barra-wrap { display: flex; align-items: center; gap: 0.75rem; }
+.presup-barra { flex: 1; height: 8px; background: #F3F4F6; border-radius: 999px; overflow: hidden; }
+.presup-barra-fill { height: 100%; border-radius: 999px; transition: width 0.6s ease; }
+.presup-pct { font-size: 0.8125rem; font-weight: 700; min-width: 36px; text-align: right; }
+.presup-sin { font-size: 0.8rem; color: #9CA3AF; }
+.empty-widget { font-size: 0.8125rem; color: #9CA3AF; }
+
+.proximas-list { list-style: none; margin: 0; padding: 0; }
+.proxima-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1.25rem; border-bottom: 1px solid #F9FAFB; }
+.proxima-item:last-child { border-bottom: none; }
+.proxima-fecha { font-size: 0.75rem; font-weight: 700; color: #4F46E5; min-width: 32px; text-align: center; background: #EEF2FF; border-radius: 6px; padding: 0.25rem 0.35rem; }
+.proxima-info { flex: 1; min-width: 0; }
+.proxima-tipo { font-size: 0.8125rem; font-weight: 600; color: #111827; truncate: true; }
+.proxima-vehiculo { font-size: 0.75rem; color: #9CA3AF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proxima-estado { font-size: 0.7rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 999px; white-space: nowrap; }
+.estado-proceso { background: #EFF6FF; color: #2563EB; }
+.estado-pendiente { background: #FFF7ED; color: #C2410C; }
+
+.top-veh-list { list-style: none; margin: 0; padding: 0; }
+.top-veh-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 1.25rem; border-bottom: 1px solid #F9FAFB; }
+.top-veh-item:last-child { border-bottom: none; }
+.top-veh-rank { width: 22px; height: 22px; border-radius: 50%; background: #EEF2FF; color: #4F46E5; font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.top-veh-info { flex: 1; min-width: 0; }
+.top-veh-patente { font-size: 0.8125rem; font-weight: 700; color: #111827; }
+.top-veh-label { font-size: 0.75rem; color: #9CA3AF; }
+.top-veh-monto { font-size: 0.8125rem; font-weight: 700; color: #374151; white-space: nowrap; }
 
 .acceso-card {
   display: flex; flex-direction: column; align-items: center; gap: 0.6rem;

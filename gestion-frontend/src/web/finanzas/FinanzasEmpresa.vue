@@ -1,9 +1,11 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
 import { tienePermiso } from '../../utils/permisos.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
+import { Chart, registerables } from 'chart.js'
+Chart.register(...registerables)
 
 const toast = useToast()
 
@@ -174,6 +176,7 @@ onUnmounted(() => {
   clearInterval(intervalPolling)
   clearInterval(intervalLabel)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (tendenciaChart) tendenciaChart.destroy()
 })
 
 // ── Formateo ────────────────────────────────────────────────
@@ -371,6 +374,75 @@ function alturaBarraPresup(monto, datos) {
   const max = Math.max(...datos.map(d => d.monto || 0), 1)
   return Math.round(monto / max * 100)
 }
+
+// ── Tendencia 6 meses ────────────────────────────────────────
+const tendenciaCanvas = ref(null)
+let tendenciaChart = null
+
+function clpTick(v) { return v >= 1_000_000 ? '$' + (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? '$' + Math.round(v / 1_000) + 'k' : '$' + v }
+
+function crearTendenciaChart() {
+  const tendencia = resumen.value?.tendencia_6meses
+  if (!tendenciaCanvas.value || !tendencia?.length) return
+  if (tendenciaChart) { tendenciaChart.destroy(); tendenciaChart = null }
+
+  tendenciaChart = new Chart(tendenciaCanvas.value, {
+    type: 'line',
+    data: {
+      labels: tendencia.map(t => t.label),
+      datasets: [{
+        label: 'Gastos',
+        data: tendencia.map(t => t.total),
+        borderColor: '#4F46E5',
+        backgroundColor: 'rgba(79,70,229,0.07)',
+        borderWidth: 2.5,
+        pointBackgroundColor: '#4F46E5',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        tension: 0.35,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${clp(ctx.parsed.y)}` } },
+      },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { font: { size: 11 }, color: '#9CA3AF' } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { font: { size: 11 }, color: '#9CA3AF', callback: clpTick } },
+      },
+    },
+  })
+}
+
+watch(resumen, async () => { await nextTick(); crearTendenciaChart() }, { deep: true })
+
+// ── Variación mes anterior ────────────────────────────────────
+const variacion = computed(() => resumen.value?.variacion_mes_anterior || null)
+
+function varBadgeStyle(pct) {
+  if (pct == null) return {}
+  return pct > 0
+    ? { background: '#FEF2F2', color: '#DC2626' }
+    : { background: '#ECFDF5', color: '#059669' }
+}
+
+// ── Alerta presupuesto ────────────────────────────────────────
+const alertaPresup = computed(() => {
+  if (!presupuestoActual.value) return null
+  const pct = presupuestoActual.value.utilizado_pct
+  if (pct >= 100) return { nivel: 'danger', pct, texto: `Has superado el presupuesto mensual (${pct}% ejecutado).` }
+  if (pct >= 80)  return { nivel: 'warn',   pct, texto: `Llevas el ${pct}% del presupuesto mensual consumido.` }
+  return null
+})
+
+// ── Gasto por conductor ───────────────────────────────────────
+const porConductor = computed(() => resumen.value?.por_conductor || [])
 </script>
 
 <template>
@@ -426,7 +498,12 @@ function alturaBarraPresup(monto, datos) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
           <div>
-            <div class="kpi-value">{{ clp(resumen.total) }}</div>
+            <div class="kpi-value-row">
+              <span class="kpi-value">{{ clp(resumen.total) }}</span>
+              <span v-if="variacion?.variacion_pct != null" class="var-badge" :style="varBadgeStyle(variacion.variacion_pct)">
+                {{ variacion.variacion_pct > 0 ? '+' : '' }}{{ variacion.variacion_pct }}%
+              </span>
+            </div>
             <div class="kpi-label">Gasto total del mes</div>
           </div>
         </div>
@@ -469,6 +546,16 @@ function alturaBarraPresup(monto, datos) {
             <button v-else class="btn-definir" @click="tabActivo = 'presupuesto'">Definir →</button>
           </div>
         </div>
+      </div>
+
+      <!-- Alerta presupuesto -->
+      <div v-if="alertaPresup" :class="['alerta-presup', alertaPresup.nivel]">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <span>{{ alertaPresup.texto }}</span>
+        <button v-if="puedePresupuesto" class="alerta-btn" @click="tabActivo = 'presupuesto'">Ver presupuesto →</button>
       </div>
 
       <!-- Tabs -->
@@ -529,6 +616,38 @@ function alturaBarraPresup(monto, datos) {
               </tbody>
             </table>
           </div>
+        </div>
+
+        <!-- Tendencia 6 meses -->
+        <div class="card mt-4" v-if="resumen?.tendencia_6meses?.length">
+          <div class="card-head"><h3 class="card-title">Tendencia de gastos — últimos 6 meses</h3></div>
+          <div class="card-body">
+            <div class="chart-tendencia">
+              <canvas ref="tendenciaCanvas"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gasto por conductor -->
+        <div v-if="porConductor.length" class="card mt-4">
+          <div class="card-head"><h3 class="card-title">Gasto por conductor</h3></div>
+          <table class="tabla">
+            <thead>
+              <tr><th>#</th><th>Conductor</th><th>Total</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(c, i) in porConductor" :key="c.conductor_id || i">
+                <td><span class="rank">{{ i + 1 }}</span></td>
+                <td class="font-medium">{{ c.nombre || 'Sin conductor' }}</td>
+                <td class="font-medium">{{ clp(c.total) }}</td>
+                <td>
+                  <div class="mini-bar-wrap">
+                    <div class="mini-bar" :style="{ width: Math.round(c.total / porConductor[0].total * 100) + '%' }"></div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <!-- Últimos registros -->
@@ -962,4 +1081,22 @@ function alturaBarraPresup(monto, datos) {
 
 .tab-content { animation: fade-in 0.15s ease; }
 @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* KPI variación */
+.kpi-value-row { display: flex; align-items: baseline; gap: 0.5rem; }
+.var-badge { font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 999px; }
+
+/* Alerta presupuesto */
+.alerta-presup { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1.25rem; border-radius: 10px; font-size: 0.875rem; margin-bottom: 1rem; }
+.alerta-presup svg { width: 18px; height: 18px; flex-shrink: 0; }
+.alerta-presup.warn { background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; }
+.alerta-presup.danger { background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; }
+.alerta-presup span { flex: 1; }
+.alerta-btn { font-size: 0.8rem; font-weight: 600; background: none; border: none; cursor: pointer; color: inherit; text-decoration: underline; white-space: nowrap; }
+
+/* Tendencia chart */
+.chart-tendencia { position: relative; height: 200px; }
+
+/* Conductor */
+.text-muted { color: #9CA3AF; }
 </style>

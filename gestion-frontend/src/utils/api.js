@@ -48,7 +48,7 @@ export async function apiFetch(url, options = {}) {
   const token = getAccessToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  if (options.body && typeof options.body === 'object') {
+  if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
     options.body = JSON.stringify(options.body)
   }

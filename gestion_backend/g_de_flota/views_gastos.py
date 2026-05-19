@@ -130,14 +130,62 @@ class GastosListView(APIView):
             except PresupuestoMensual.DoesNotExist:
                 presupuesto_data = None
 
+        # Tendencia últimos 6 meses
+        from datetime import date as _today_cls
+        hoy_t = _today_cls.today()
+        MESES_ES_T = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+        tendencia_6meses = []
+        for i in range(5, -1, -1):
+            m_t = hoy_t.month - i
+            a_t = hoy_t.year
+            if m_t <= 0:
+                m_t += 12
+                a_t -= 1
+            tot_t = GastoOperativo.objects.filter(
+                empresa=empresa, fecha__year=a_t, fecha__month=m_t
+            ).aggregate(t=Sum('monto'))['t'] or 0
+            tendencia_6meses.append({'label': f"{MESES_ES_T[m_t-1]} {str(a_t)[2:]}", 'total': int(tot_t)})
+
+        # Por conductor
+        por_conductor = []
+        for row in (
+            GastoOperativo.objects.filter(empresa=empresa)
+            .filter(**({'fecha__month': int(mes), 'fecha__year': int(anio)} if mes and anio else ({'fecha__year': int(anio)} if anio else {})))
+            .exclude(conductor__isnull=True)
+            .values('conductor_id', 'conductor__nombre')
+            .annotate(s=Sum('monto'))
+            .order_by('-s')
+        ):
+            por_conductor.append({
+                'conductor_id': row['conductor_id'],
+                'nombre':       row['conductor__nombre'] or '—',
+                'total':        int(row['s']),
+            })
+
+        # Variación vs mes anterior
+        variacion_mes_anterior = None
+        if mes and anio:
+            m_ant = int(mes) - 1 if int(mes) > 1 else 12
+            a_ant = int(anio) if int(mes) > 1 else int(anio) - 1
+            tot_ant = GastoOperativo.objects.filter(
+                empresa=empresa, fecha__month=m_ant, fecha__year=a_ant
+            ).aggregate(t=Sum('monto'))['t'] or 0
+            variacion_mes_anterior = {
+                'total_anterior': int(tot_ant),
+                'variacion_pct':  round((float(total) - float(tot_ant)) / float(tot_ant) * 100, 1) if tot_ant > 0 else None,
+            }
+
         return Response({
             'gastos': [_gasto_dict(g) for g in qs],
             'resumen': {
-                'total':         int(total),
-                'por_categoria': por_cat,
-                'por_vehiculo':  por_vehiculo,
-                'costo_por_km':  costo_por_km,
-                'presupuesto':   presupuesto_data,
+                'total':                 int(total),
+                'por_categoria':         por_cat,
+                'por_vehiculo':          por_vehiculo,
+                'por_conductor':         por_conductor,
+                'costo_por_km':          costo_por_km,
+                'presupuesto':           presupuesto_data,
+                'tendencia_6meses':      tendencia_6meses,
+                'variacion_mes_anterior': variacion_mes_anterior,
             },
         })
 

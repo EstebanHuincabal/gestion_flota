@@ -30,6 +30,14 @@ from g_de_flota.views_gastos import (
     PresupuestoView, PresupuestoDetailView,
     FinanzasSaasView, FinanzasHistoricoView,
 )
+from g_de_flota.views_reportes import (
+    reporte_mantencion, reporte_flota, reporte_exportar, reporte_admin_empresas,
+    reporte_tco, reporte_conductores,
+)
+from g_de_flota.views_documentos import (
+    DocumentosListView, DocumentoDetailView,
+    DocumentoDescargarView, DocumentoRenovarView,
+)
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -107,4 +115,18 @@ urlpatterns = [
     # Finanzas — dashboard SaaS (SUPERADMIN)
     path('api/admin/finanzas/',              FinanzasSaasView.as_view(),      name='finanzas-saas'),
     path('api/admin/finanzas/historico/',    FinanzasHistoricoView.as_view(), name='finanzas-historico'),
+
+    # Documentos
+    path('api/empresa/documentos/',                          DocumentosListView.as_view(),    name='documentos-lista'),
+    path('api/empresa/documentos/<int:doc_id>/',             DocumentoDetailView.as_view(),   name='documentos-detalle'),
+    path('api/empresa/documentos/<int:doc_id>/descargar/',   DocumentoDescargarView.as_view(), name='documentos-descargar'),
+    path('api/empresa/documentos/<int:doc_id>/renovar/',     DocumentoRenovarView.as_view(),  name='documentos-renovar'),
+
+    # Reportes
+    path('api/empresa/reportes/mantencion/', reporte_mantencion,       name='reporte-mantencion'),
+    path('api/empresa/reportes/flota/',      reporte_flota,            name='reporte-flota'),
+    path('api/empresa/reportes/exportar/',   reporte_exportar,         name='reporte-exportar'),
+    path('api/empresa/reportes/tco/',        reporte_tco,              name='reporte-tco'),
+    path('api/empresa/reportes/conductores/', reporte_conductores,     name='reporte-conductores'),
+    path('api/admin/reportes/empresas/',     reporte_admin_empresas,   name='reporte-admin-empresas'),
 ]

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
@@ -11,8 +11,6 @@ const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
 const empresas  = ref([])
-const todosPermisos = ref([])
-const permisosSeleccionados = ref([])
 
 // Detectar si venimos del flujo "crear empresa"
 const desdeEmpresa    = computed(() => !!route.query.empresa_id)
@@ -30,29 +28,6 @@ const form = ref({
   empresa_id: null,
 })
 
-const permisosAgrupados = computed(() => {
-  const grupos = {}
-  for (const p of todosPermisos.value) {
-    if (!grupos[p.categoria]) grupos[p.categoria] = []
-    grupos[p.categoria].push(p)
-  }
-  return grupos
-})
-
-const toggleCategoria = (permisosCat) => {
-  const codigos = permisosCat.map(p => p.codigo)
-  const todosActivos = codigos.every(c => permisosSeleccionados.value.includes(c))
-  if (todosActivos) {
-    permisosSeleccionados.value = permisosSeleccionados.value.filter(c => !codigos.includes(c))
-  } else {
-    const nuevos = codigos.filter(c => !permisosSeleccionados.value.includes(c))
-    permisosSeleccionados.value = [...permisosSeleccionados.value, ...nuevos]
-  }
-}
-
-const categoriaCompleta = (permisosCat) =>
-  permisosCat.every(p => permisosSeleccionados.value.includes(p.codigo))
-
 const formatRut = (value) => {
   let cleaned = value.replace(/[^0-9kK]/g, '')
   if (cleaned.length < 2) return cleaned
@@ -69,8 +44,6 @@ const cargarEmpresas = async () => {
     const res = await apiFetch('/api/empresas/')
     if (res.ok) empresas.value = (await res.json()).filter(e => e.estado === 'activa')
   }
-  const resP = await apiFetch('/api/permisos/')
-  if (resP.ok) todosPermisos.value = await resP.json()
 }
 
 const volver = () => router.push(desdeEmpresa.value ? '/empresas' : '/usuarios')
@@ -81,7 +54,6 @@ const guardar = async () => {
   guardando.value = true
   try {
     const payload = { ...form.value }
-    if (form.value.rol === 'USUARIO') payload.permisos = permisosSeleccionados.value
     const res  = await apiFetch('/api/usuarios/crear/', { method: 'POST', body: payload })
     const data = await res.json()
     if (!res.ok) {
@@ -207,30 +179,6 @@ onMounted(cargarEmpresas)
           </select>
         </div>
 
-        <!-- Sección de permisos (solo para USUARIO) -->
-        <div v-if="form.rol === 'USUARIO' && todosPermisos.length" class="permisos-seccion">
-          <div class="permisos-header">
-            <span class="label">Permisos</span>
-            <button type="button" class="btn-todos" @click="permisosSeleccionados = todosPermisos.map(p => p.codigo)">Todos</button>
-            <button type="button" class="btn-todos btn-ninguno" @click="permisosSeleccionados = []">Ninguno</button>
-          </div>
-          <div class="permisos-grid">
-            <div v-for="(permisosCat, cat) in permisosAgrupados" :key="cat" class="permiso-categoria">
-              <label class="categoria-label">
-                <input type="checkbox" :checked="categoriaCompleta(permisosCat)"
-                  @change="toggleCategoria(permisosCat)" class="check-cat"/>
-                <span class="categoria-nombre">{{ cat }}</span>
-              </label>
-              <div class="permiso-items">
-                <label v-for="p in permisosCat" :key="p.codigo" class="permiso-item">
-                  <input type="checkbox" :value="p.codigo" v-model="permisosSeleccionados" class="check-item"/>
-                  <span>{{ p.nombre }}</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <p v-if="errores.non_field_errors" class="field-error">{{ errores.non_field_errors[0] }}</p>
 
         <div class="form-actions">
@@ -299,25 +247,4 @@ onMounted(cargarEmpresas)
 .spinner-inline { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.permisos-seccion { border: 1.5px solid #E5E7EB; border-radius: 12px; padding: 1rem 1.25rem; background: #FAFAFA; }
-.permisos-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
-.permisos-header .label { flex: 1; margin: 0; }
-.btn-todos {
-  font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.625rem;
-  border: 1.5px solid #7C3AED; border-radius: 6px; color: #7C3AED;
-  background: #fff; cursor: pointer; font-family: inherit; transition: background 0.15s;
-}
-.btn-todos:hover { background: #EDE9FE; }
-.btn-ninguno { border-color: #9CA3AF; color: #6B7280; }
-.btn-ninguno:hover { background: #F3F4F6; }
-
-.permisos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
-.permiso-categoria { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 0.75rem 1rem; }
-.categoria-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin-bottom: 0.5rem; }
-.categoria-nombre { font-size: 0.8rem; font-weight: 700; color: #374151; text-transform: capitalize; }
-.check-cat { accent-color: #7C3AED; width: 14px; height: 14px; cursor: pointer; }
-.permiso-items { display: flex; flex-direction: column; gap: 0.35rem; padding-left: 0.25rem; }
-.permiso-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
-.permiso-item span { font-size: 0.8125rem; color: #4B5563; }
-.check-item { accent-color: #7C3AED; width: 13px; height: 13px; cursor: pointer; }
 </style>

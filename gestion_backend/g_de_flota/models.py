@@ -689,3 +689,68 @@ class PresupuestoMensual(models.Model):
 
     def __str__(self):
         return f"{self.empresa.nombre} — {self.mes}/{self.anio}: ${self.monto}"
+
+
+class Documento(models.Model):
+    TIPOS_VEHICULO = [
+        ('permiso_circulacion', 'Permiso de circulación'),
+        ('revision_tecnica',    'Revisión técnica'),
+        ('seguro_soap',         'Seguro SOAP'),
+    ]
+    TIPOS_CONDUCTOR = [
+        ('licencia',     'Licencia de conducir'),
+        ('antecedentes', 'Antecedentes comerciales'),
+    ]
+    TODOS_TIPOS = TIPOS_VEHICULO + TIPOS_CONDUCTOR
+
+    ENTIDADES = [
+        ('vehiculo',  'Vehículo'),
+        ('conductor', 'Conductor'),
+    ]
+
+    empresa   = models.ForeignKey(Empresa,  on_delete=models.CASCADE, related_name='documentos')
+    entidad   = models.CharField(max_length=20, choices=ENTIDADES)
+    tipo      = models.CharField(max_length=30, choices=TODOS_TIPOS)
+
+    vehiculo  = models.ForeignKey(Vehiculo, on_delete=models.CASCADE,
+                                  null=True, blank=True, related_name='docs_v')
+    conductor = models.ForeignKey(Usuario,  on_delete=models.CASCADE,
+                                  null=True, blank=True, related_name='docs_c')
+
+    fecha_emision     = models.DateField(null=True, blank=True)
+    fecha_vencimiento = models.DateField(null=True, blank=True)
+
+    archivo        = models.FileField(upload_to='documentos/%Y/%m/', null=True, blank=True)
+    nombre_archivo = models.CharField(max_length=200, blank=True, default='')
+
+    subido_por       = models.ForeignKey(Usuario, on_delete=models.SET_NULL,
+                                         null=True, related_name='docs_subidos')
+    notas            = models.CharField(max_length=500, blank=True, default='')
+    version_anterior = models.ForeignKey('self', on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name='versiones_nuevas')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering     = ['-created_at']
+        verbose_name = 'Documento'
+
+    def dias_para_vencer(self):
+        if not self.fecha_vencimiento:
+            return None
+        delta = self.fecha_vencimiento - timezone.now().date()
+        return delta.days
+
+    def estado(self):
+        dias = self.dias_para_vencer()
+        if dias is None:
+            return 'sin_vencimiento'
+        if dias < 0:
+            return 'vencido'
+        if dias <= 30:
+            return 'por_vencer'
+        return 'vigente'
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} — {self.empresa.nombre}"
