@@ -155,6 +155,7 @@ async function cargar() {
     actualizarLabel()
     await nextTick()
     crearTendenciaChart()
+    crearDonutCat()
   }
 }
 
@@ -179,6 +180,7 @@ onUnmounted(() => {
   clearInterval(intervalLabel)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (tendenciaChart) tendenciaChart.destroy()
+  if (donutCatChart)  donutCatChart.destroy()
 })
 
 // ── Formateo ────────────────────────────────────────────────
@@ -381,6 +383,10 @@ function alturaBarraPresup(monto, datos) {
 const tendenciaCanvas = ref(null)
 let tendenciaChart = null
 
+// ── Doughnut categorías ──────────────────────────────────────
+const donutCatCanvas = ref(null)
+let donutCatChart = null
+
 function clpTick(v) { return v >= 1_000_000 ? '$' + (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? '$' + Math.round(v / 1_000) + 'k' : '$' + v }
 
 function crearTendenciaChart() {
@@ -422,7 +428,42 @@ function crearTendenciaChart() {
   })
 }
 
-watch(tabActivo, async (nuevo) => { if (nuevo === 'resumen') { await nextTick(); crearTendenciaChart() } })
+watch(tabActivo, async (nuevo) => {
+  if (nuevo === 'resumen') {
+    await nextTick()
+    crearTendenciaChart()
+    crearDonutCat()
+  }
+})
+
+function crearDonutCat() {
+  const pc = resumen.value?.por_categoria
+  if (!donutCatCanvas.value || !pc) return
+  if (donutCatChart) { donutCatChart.destroy(); donutCatChart = null }
+  const COLORES = ['#3B82F6', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#94A3B8']
+  const entradas = Object.entries(pc).filter(([, v]) => v > 0)
+  donutCatChart = new Chart(donutCatCanvas.value, {
+    type: 'doughnut',
+    data: {
+      labels: entradas.map(([k]) => labelCat(k)),
+      datasets: [{
+        data: entradas.map(([, v]) => v),
+        backgroundColor: COLORES.slice(0, entradas.length),
+        borderWidth: 0,
+        hoverOffset: 8,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 10 } },
+        tooltip: { callbacks: { label: (c) => ` ${labelCat(c.label)}: ${clp(c.parsed)}` } },
+      },
+    },
+  })
+}
+watch(resumen, async () => { await nextTick(); crearDonutCat() }, { deep: true })
 
 // ── Variación mes anterior ────────────────────────────────────
 const variacion = computed(() => resumen.value?.variacion_mes_anterior || null)
@@ -620,12 +661,22 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
           </div>
         </div>
 
-        <!-- Tendencia 6 meses -->
-        <div class="card mt-4" v-if="resumen?.tendencia_6meses?.length">
-          <div class="card-head"><h3 class="card-title">Tendencia de gastos — últimos 6 meses</h3></div>
-          <div class="card-body">
-            <div class="chart-tendencia">
-              <canvas ref="tendenciaCanvas"></canvas>
+        <!-- Tendencia + Doughnut en grid -->
+        <div class="grid-2 mt-4">
+          <div class="card" v-if="resumen?.tendencia_6meses?.length">
+            <div class="card-head"><h3 class="card-title">Tendencia de gastos — últimos 6 meses</h3></div>
+            <div class="card-body">
+              <div class="chart-tendencia">
+                <canvas ref="tendenciaCanvas"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="card" v-if="resumen?.por_categoria && resumen?.total">
+            <div class="card-head"><h3 class="card-title">Distribución por categoría</h3></div>
+            <div class="card-body">
+              <div style="height:220px">
+                <canvas ref="donutCatCanvas"></canvas>
+              </div>
             </div>
           </div>
         </div>

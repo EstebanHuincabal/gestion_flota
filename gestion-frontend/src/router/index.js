@@ -48,6 +48,9 @@ import ReportesSuperAdmin from '../web/reportes/ReportesSuperAdmin.vue'
 // Documentos
 import Documentos from '../web/documentos/Documentos.vue'
 
+// Rutas y trabajos
+import Rutas from '../web/rutas/Rutas.vue'
+
 const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
@@ -104,6 +107,7 @@ const routes = [
       { path: 'documentos',   component: Documentos },
       { path: 'finanzas',     component: FinanzasSuperAdmin },
       { path: 'reportes',     component: ReportesSuperAdmin },
+      { path: 'rutas',        component: Rutas },
     ],
   },
 
@@ -135,6 +139,7 @@ const routes = [
       { path: 'documentos',      component: Documentos,       meta: { permiso: 'documentos.ver' } },
       { path: 'finanzas',        component: FinanzasEmpresa,  meta: { permiso: 'finanzas.ver' } },
       { path: 'reportes',        component: ReportesEmpresa },
+      { path: 'rutas',           component: Rutas,            meta: { permiso: 'rutas.ver' } },
       { path: 'configuracion',   component: ConfiguracionPage },
     ],
   },

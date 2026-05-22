@@ -383,9 +383,6 @@ class GastoDetailView(APIView):
         if not gasto:
             return Response({'error': 'Gasto no encontrado.'}, status=404)
 
-        if request.user != gasto.registrado_por and request.user.rol != Rol.SUPERADMIN:
-            return Response({'error': 'Sin permisos para editar este gasto.'}, status=403)
-
         data = request.data
         for campo in ['categoria', 'descripcion']:
             if campo in data:
@@ -429,9 +426,6 @@ class GastoDetailView(APIView):
         gasto = self._get(gasto_id, empresa)
         if not gasto:
             return Response({'error': 'Gasto no encontrado.'}, status=404)
-
-        if request.user != gasto.registrado_por and request.user.rol != Rol.SUPERADMIN:
-            return Response({'error': 'Sin permisos para eliminar este gasto.'}, status=403)
 
         if gasto.comprobante:
             try:

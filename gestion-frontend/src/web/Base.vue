@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { clearEmpresaActiva } from '../utils/empresaActiva.js'
 import NotificacionesBell from '../components/NotificacionesBell.vue'
+import SessionWarningModal from '../components/SessionWarningModal.vue'
+import { useSessionTimer } from '../utils/useSessionTimer.js'
 
 const router = useRouter()
 const route  = useRoute()
@@ -58,6 +60,11 @@ const navAdmin = [
 ]
 
 const navOperaciones = [
+  {
+    label: 'Rutas',
+    path: '/rutas',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>`
+  },
   {
     label: 'Flota',
     path: '/flota',
@@ -124,6 +131,8 @@ const navCuenta = [
 ]
 
 const isActive = (path) => route.path.startsWith(path)
+
+const { mostrarModal, segundosRestantes, extenderSesion, logoutDesdeModal } = useSessionTimer()
 
 const cerrarSesion = () => {
   localStorage.removeItem('access_token')
@@ -288,6 +297,13 @@ const cerrarSesion = () => {
     </main>
 
   </div>
+
+  <SessionWarningModal
+    v-if="mostrarModal"
+    :segundos-restantes="segundosRestantes"
+    @extender="extenderSesion"
+    @cerrar="logoutDesdeModal"
+  />
 </template>
 
 <style scoped>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import Chart from 'chart.js/auto'
 import { apiFetch } from '../utils/api.js'
@@ -68,7 +68,8 @@ const kpisEmpresa = ref({
   total_flotas: 0, total_vehiculos: 0, total_conductores: 0,
   mantenciones_pendientes: 0, docs_por_vencer: 0,
 })
-const widgetsEmpresa = ref({ proximas_7_dias: [], gasto_vs_presupuesto: null, top_vehiculos_costo: [] })
+const widgetsEmpresa    = ref({ proximas_7_dias: [], gasto_vs_presupuesto: null, top_vehiculos_costo: [] })
+const hayConductoresKm  = ref(false)
 
 // Canvas refs — cada rol usa los suyos
 const crecimientoCanvas  = ref(null)
@@ -76,12 +77,26 @@ const distribucionCanvas = ref(null)
 const planesCanvas       = ref(null)
 const vehiculosCanvas    = ref(null)
 const mantencionesCanvas = ref(null)
+const flotaCanvas        = ref(null)
+// Nuevos — empresa
+const gastosCanvas      = ref(null)
+const rutasCanvas       = ref(null)
+const conductoresCanvas = ref(null)
+// Nuevos — superadmin
+const combustibleCanvas = ref(null)
+const topEmpresasCanvas = ref(null)
 
 let crecimientoChart  = null
 let distribucionChart = null
 let planesChart       = null
 let vehiculosChart    = null
 let mantencionesChart = null
+let flotaChart        = null
+let gastosChart       = null
+let rutasChart        = null
+let conductoresChart  = null
+let combustibleChart  = null
+let topEmpresasChart  = null
 
 const pctActivas = computed(() => {
   const total = kpisGlobal.value.empresas_activas + kpisGlobal.value.empresas_inactivas
@@ -160,6 +175,8 @@ const renderGraficosGlobal = (charts) => {
   if (crecimientoChart)  crecimientoChart.destroy()
   if (distribucionChart) distribucionChart.destroy()
   if (planesChart)       planesChart.destroy()
+  if (combustibleChart)  combustibleChart.destroy()
+  if (topEmpresasChart)  topEmpresasChart.destroy()
 
   if (crecimientoCanvas.value) {
     const ac = accentActual()
@@ -231,11 +248,63 @@ const renderGraficosGlobal = (charts) => {
       }
     })
   }
+
+  // Distribución combustible — toda la flota
+  if (combustibleCanvas.value && charts.distribucion_combustible?.length) {
+    const COLORES_COMB = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#64748B']
+    combustibleChart = new Chart(combustibleCanvas.value, {
+      type: 'doughnut',
+      data: {
+        labels: charts.distribucion_combustible.map(c => c.label),
+        datasets: [{
+          data: charts.distribucion_combustible.map(c => c.total),
+          backgroundColor: COLORES_COMB,
+          borderWidth: 0, hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 10 } } },
+        cutout: '65%',
+      },
+    })
+  }
+
+  // Top 10 empresas — bar horizontal
+  if (topEmpresasCanvas.value && charts.top_empresas_bar?.length) {
+    const ac = accentActual()
+    topEmpresasChart = new Chart(topEmpresasCanvas.value, {
+      type: 'bar',
+      data: {
+        labels: charts.top_empresas_bar.map(e => e.nombre),
+        datasets: [{
+          data: charts.top_empresas_bar.map(e => e.vehiculos),
+          backgroundColor: `color-mix(in oklch, ${ac} 65%, white)`,
+          hoverBackgroundColor: ac,
+          borderRadius: 5,
+          barThickness: 18,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 10 }, color: '#9CA3AF' }, grid: { color: '#F3F4F6' } },
+          y: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#374151' } },
+        },
+      },
+    })
+  }
 }
 
 const renderGraficosEmpresa = (charts) => {
   if (vehiculosChart)    vehiculosChart.destroy()
   if (mantencionesChart) mantencionesChart.destroy()
+  if (flotaChart)        flotaChart.destroy()
+  if (gastosChart)       gastosChart.destroy()
+  if (rutasChart)        rutasChart.destroy()
+  if (conductoresChart)  conductoresChart.destroy()
 
   if (vehiculosCanvas.value) {
     const ac = accentActual()
@@ -286,9 +355,126 @@ const renderGraficosEmpresa = (charts) => {
       }
     })
   }
+
+  if (flotaCanvas.value) {
+    const kpis    = kpisEmpresa.value
+    const vencidos  = kpis.docs_por_vencer || 0
+    const pend      = kpis.mantenciones_pendientes || 0
+    const sinAlerta = Math.max(0, (kpis.total_vehiculos || 0) - vencidos - pend)
+    flotaChart = new Chart(flotaCanvas.value, {
+      type: 'doughnut',
+      data: {
+        labels: ['Sin alertas', 'Docs por vencer', 'Mantenciones pendientes'],
+        datasets: [{
+          data: [sinAlerta, vencidos, pend],
+          backgroundColor: ['#059669', '#F59E0B', '#3B82F6'],
+          borderWidth: 0,
+          hoverOffset: 6,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        cutout: '68%',
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12, boxWidth: 10 } },
+        },
+      }
+    })
+  }
+
+  // Gastos por categoría — últimos 6 meses (stacked bar)
+  if (gastosCanvas.value && charts.gastos_6m) {
+    const COLORES_CAT = { combustible: '#3B82F6', mantencion: '#F59E0B', seguro: '#10B981', multa: '#EF4444', otro: '#94A3B8' }
+    const LABELS_CAT  = { combustible: 'Combustible', mantencion: 'Mantención', seguro: 'Seguro', multa: 'Multa', otro: 'Otro' }
+    gastosChart = new Chart(gastosCanvas.value, {
+      type: 'bar',
+      data: {
+        labels: charts.gastos_6m.labels,
+        datasets: Object.entries(charts.gastos_6m.datasets).map(([cat, data]) => ({
+          label: LABELS_CAT[cat],
+          data,
+          backgroundColor: COLORES_CAT[cat],
+          stack: 'gastos',
+          borderRadius: 0,
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 10 } } },
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, color: '#9CA3AF' } },
+          y: { stacked: true, beginAtZero: true, ticks: { font: { size: 10 }, color: '#9CA3AF' }, grid: { color: '#F3F4F6' } },
+        },
+      },
+    })
+  }
+
+  // Rutas finalizadas vs canceladas — últimos 6 meses
+  if (rutasCanvas.value && charts.rutas_6m) {
+    rutasChart = new Chart(rutasCanvas.value, {
+      type: 'bar',
+      data: {
+        labels: charts.rutas_6m.labels,
+        datasets: [
+          { label: 'Finalizadas', data: charts.rutas_6m.finalizadas, backgroundColor: '#059669', borderRadius: 4, barThickness: 20 },
+          { label: 'Canceladas',  data: charts.rutas_6m.canceladas,  backgroundColor: '#EF4444', borderRadius: 4, barThickness: 20 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 10 } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9CA3AF' } },
+          y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 10 }, color: '#9CA3AF' }, grid: { color: '#F3F4F6' } },
+        },
+      },
+    })
+  }
+
+  // Top 5 conductores por km
+  hayConductoresKm.value = (charts.top_conductores_km?.length || 0) > 0
+  if (conductoresCanvas.value && charts.top_conductores_km?.length) {
+    const ac = accentActual()
+    conductoresChart = new Chart(conductoresCanvas.value, {
+      type: 'bar',
+      data: {
+        labels: charts.top_conductores_km.map(c => c.nombre),
+        datasets: [{
+          data: charts.top_conductores_km.map(c => c.km),
+          backgroundColor: `color-mix(in oklch, ${ac} 70%, white)`,
+          hoverBackgroundColor: ac,
+          borderRadius: 6,
+          barThickness: 22,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { font: { size: 10 }, color: '#9CA3AF' }, grid: { color: '#F3F4F6' } },
+          y: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#374151' } },
+        },
+      },
+    })
+  }
 }
 
 onMounted(cargar)
+
+onUnmounted(() => {
+  if (flotaChart)        flotaChart.destroy()
+  if (vehiculosChart)    vehiculosChart.destroy()
+  if (mantencionesChart) mantencionesChart.destroy()
+  if (crecimientoChart)  crecimientoChart.destroy()
+  if (distribucionChart) distribucionChart.destroy()
+  if (planesChart)       planesChart.destroy()
+  if (gastosChart)       gastosChart.destroy()
+  if (rutasChart)        rutasChart.destroy()
+  if (conductoresChart)  conductoresChart.destroy()
+  if (combustibleChart)  combustibleChart.destroy()
+  if (topEmpresasChart)  topEmpresasChart.destroy()
+})
 </script>
 
 <template>
@@ -573,6 +759,34 @@ onMounted(cargar)
         </div>
       </div>
 
+      <!-- Fila: combustible + top empresas bar -->
+      <div class="charts-row charts-global" style="margin-top:1.25rem">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Top 10 empresas por flota</h2>
+              <p class="card-subtitle">Cantidad de vehículos por empresa</p>
+            </div>
+            <button class="btn-link" @click="router.push('/empresas')">Ver todas →</button>
+          </div>
+          <div class="chart-wrap" style="height:280px">
+            <canvas ref="topEmpresasCanvas"/>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Tipos de combustible</h2>
+              <p class="card-subtitle">Distribución de toda la flota</p>
+            </div>
+          </div>
+          <div class="chart-wrap" style="height:280px">
+            <canvas ref="combustibleCanvas"/>
+          </div>
+        </div>
+      </div>
+
     </template>
 
     <!-- ══════════════ USUARIO ══════════════ -->
@@ -698,6 +912,107 @@ onMounted(cargar)
           </div>
           <div class="chart-wrap" :class="{ 'chart-loading': cargandoGraficos }">
             <canvas ref="mantencionesCanvas"/>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fila: Dona estado flota + Predictivo -->
+      <div class="charts-row" style="margin-bottom:1.25rem">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Estado de la flota</h2>
+              <p class="card-subtitle">Vehículos con y sin alertas activas</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas ref="flotaCanvas"/>
+          </div>
+        </div>
+
+        <div class="card" style="display:flex;flex-direction:column">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Mantenimiento predictivo</h2>
+              <p class="card-subtitle">Cumplimiento de planes activos</p>
+            </div>
+          </div>
+          <div style="padding:1.5rem 1.5rem;flex:1;display:flex;flex-direction:column;justify-content:center">
+            <template v-if="widgetsEmpresa.predictivo && widgetsEmpresa.predictivo.total > 0">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem">
+                <span style="font-size:2rem;font-weight:800;color:#111827">{{ widgetsEmpresa.predictivo.pct }}%</span>
+                <span style="font-size:0.8125rem;color:#6B7280">al día</span>
+              </div>
+              <div style="height:10px;background:#F3F4F6;border-radius:999px;overflow:hidden;margin-bottom:1rem">
+                <div :style="{
+                  width: widgetsEmpresa.predictivo.pct + '%',
+                  height: '100%',
+                  background: widgetsEmpresa.predictivo.pct >= 80 ? '#059669' : widgetsEmpresa.predictivo.pct >= 50 ? '#F59E0B' : '#EF4444',
+                  borderRadius: '999px',
+                  transition: 'width 0.6s ease',
+                }"/>
+              </div>
+              <div style="display:flex;gap:1.25rem">
+                <div style="display:flex;align-items:center;gap:0.4rem">
+                  <span style="width:10px;height:10px;border-radius:50%;background:#059669;flex-shrink:0"/>
+                  <span style="font-size:0.8125rem;color:#374151">Al día: {{ widgetsEmpresa.predictivo.al_dia }}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.4rem">
+                  <span style="width:10px;height:10px;border-radius:50%;background:#EF4444;flex-shrink:0"/>
+                  <span style="font-size:0.8125rem;color:#374151">Vencidas: {{ widgetsEmpresa.predictivo.vencidas }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-else style="color:#9CA3AF;font-size:0.875rem;text-align:center;padding:1rem 0">
+              Sin planes de mantenimiento predictivo configurados
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Gastos por categoría + Rutas -->
+      <div class="charts-row" style="margin-bottom:1.25rem">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Gastos por categoría</h2>
+              <p class="card-subtitle">Últimos 6 meses — desglose por tipo</p>
+            </div>
+          </div>
+          <div class="chart-wrap" style="height:260px">
+            <canvas ref="gastosCanvas"/>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Rutas completadas vs canceladas</h2>
+              <p class="card-subtitle">Últimos 6 meses</p>
+            </div>
+            <button class="btn-link" @click="router.push(ruta('/rutas'))">Ver rutas →</button>
+          </div>
+          <div class="chart-wrap" style="height:260px">
+            <canvas ref="rutasCanvas"/>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top conductores -->
+      <div class="charts-row" style="grid-template-columns:1fr;margin-bottom:1.25rem">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Top conductores por km recorridos</h2>
+              <p class="card-subtitle">Rutas finalizadas — kilómetros acumulados</p>
+            </div>
+            <button class="btn-link" @click="router.push(ruta('/conductores'))">Ver conductores →</button>
+          </div>
+          <div class="chart-wrap" style="height:200px">
+            <canvas ref="conductoresCanvas"/>
+          </div>
+          <div v-if="!hayConductoresKm" class="empty" style="padding:1.5rem">
+            Sin rutas finalizadas con conductor asignado
           </div>
         </div>
       </div>

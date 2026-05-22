@@ -11,13 +11,16 @@ const toast = useToast()
 const tabActivo = ref('mantencion')
 
 // ── Estado
-const cargando        = ref(false)
-const exportando      = ref(false)
-const datosMantencion = ref(null)
-const datosFlota      = ref(null)
-const datosTco        = ref(null)
+const cargando         = ref(false)
+const exportando       = ref(false)
+const datosMantencion  = ref(null)
+const datosFlota       = ref(null)
+const datosTco         = ref(null)
 const datosConductores = ref(null)
-const vehiculos       = ref([])
+const datosDocumentos  = ref(null)
+const datosCombustible = ref(null)
+const datosPpto        = ref(null)
+const vehiculos        = ref([])
 
 // ── Filtros mantenciones
 const anioActual = new Date().getFullYear()
@@ -55,9 +58,17 @@ const ESTADO = {
   cancelada:  { bg: '#FEF2F2', text: '#DC2626', label: 'Cancelada'   },
 }
 
-// ── Chart
-const chartCanvas = ref(null)
-let chartInstance = null
+// ── Charts
+const chartCanvas      = ref(null)
+const chartTcoCanvas   = ref(null)
+const chartPptoCanvas  = ref(null)
+const chartCombBar     = ref(null)
+const chartCombLine    = ref(null)
+let chartInstance      = null
+let chartTcoInstance   = null
+let chartPptoInstance  = null
+let chartCombBarInst   = null
+let chartCombLineInst  = null
 
 function crearChart() {
   if (!chartCanvas.value || !datosMantencion.value?.resumen?.por_mes?.length) return
@@ -129,6 +140,115 @@ function crearChart() {
 }
 
 watch(datosMantencion, async () => { await nextTick(); crearChart() }, { deep: true })
+
+function crearChartTco() {
+  if (!chartTcoCanvas.value || !datosTco.value?.vehiculos?.length) return
+  if (chartTcoInstance) { chartTcoInstance.destroy(); chartTcoInstance = null }
+  const top10   = datosTco.value.vehiculos.slice(0, 10)
+  const labels  = top10.map(v => v.patente)
+  const gastos  = top10.map(v => v.gastos_total)
+  const mants   = top10.map(v => v.mantenciones_total)
+  chartTcoInstance = new Chart(chartTcoCanvas.value, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Gastos op.',    data: gastos, backgroundColor: '#6366F1', borderRadius: 4, stack: 'tco' },
+        { label: 'Mantenciones', data: mants,  backgroundColor: '#F59E0B', borderRadius: 4, stack: 'tco' },
+      ],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true, padding: 12 } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${clp(c.parsed.x)}` } },
+      },
+      scales: {
+        x: { stacked: true, ticks: { callback: (v) => clp(v), font: { size: 10 }, color: '#6B7280' }, grid: { color: '#F3F4F6' } },
+        y: { stacked: true, ticks: { font: { size: 11 }, color: '#374151' }, grid: { display: false } },
+      },
+    },
+  })
+}
+watch(datosTco, async () => { await nextTick(); crearChartTco() }, { deep: true })
+
+function crearChartPpto() {
+  if (!chartPptoCanvas.value || !datosPpto.value?.meses?.length) return
+  if (chartPptoInstance) { chartPptoInstance.destroy(); chartPptoInstance = null }
+  const meses   = datosPpto.value.meses
+  const labels  = meses.map(m => m.mes_label)
+  const ppto    = meses.map(m => m.presupuesto)
+  const gasto   = meses.map(m => m.gasto_real)
+  chartPptoInstance = new Chart(chartPptoCanvas.value, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Presupuesto', data: ppto,  backgroundColor: '#E5E7EB', borderRadius: 4, barPercentage: 0.6 },
+        { label: 'Gasto real',  data: gasto, backgroundColor: '#4F46E5', borderRadius: 4, barPercentage: 0.6 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true, padding: 12 } },
+        tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${clp(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#6B7280' } },
+        y: { ticks: { callback: (v) => clp(v), font: { size: 10 }, color: '#6B7280' }, grid: { color: '#F3F4F6' } },
+      },
+    },
+  })
+}
+watch(datosPpto, async () => { await nextTick(); crearChartPpto() }, { deep: true })
+
+function crearChartCombustible() {
+  if (!datosCombustible.value) return
+  if (chartCombBar.value && datosCombustible.value.por_vehiculo?.length) {
+    if (chartCombBarInst) { chartCombBarInst.destroy(); chartCombBarInst = null }
+    const top5 = datosCombustible.value.por_vehiculo.slice(0, 5)
+    chartCombBarInst = new Chart(chartCombBar.value, {
+      type: 'bar',
+      data: {
+        labels: top5.map(v => v.patente),
+        datasets: [{ label: 'Gasto combustible', data: top5.map(v => v.gasto_total), backgroundColor: '#F59E0B', borderRadius: 4, barThickness: 28 }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${clp(c.parsed.x)}` } } },
+        scales: {
+          x: { ticks: { callback: (v) => clp(v), font: { size: 10 }, color: '#6B7280' }, grid: { color: '#F3F4F6' } },
+          y: { ticks: { font: { size: 11 }, color: '#374151' }, grid: { display: false } },
+        },
+      },
+    })
+  }
+  if (chartCombLine.value && datosCombustible.value.por_mes?.length) {
+    if (chartCombLineInst) { chartCombLineInst.destroy(); chartCombLineInst = null }
+    const meses = datosCombustible.value.por_mes
+    chartCombLineInst = new Chart(chartCombLine.value, {
+      type: 'line',
+      data: {
+        labels: meses.map(m => `${m.mes_label} ${String(m.anio).slice(2)}`),
+        datasets: [{ label: 'Gasto combustible', data: meses.map(m => m.gasto), borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.07)', borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: '#F59E0B', tension: 0.35, fill: true }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${clp(c.parsed.y)}` } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#6B7280' } },
+          y: { ticks: { callback: (v) => clp(v), font: { size: 10 }, color: '#6B7280' }, grid: { color: '#F3F4F6' } },
+        },
+      },
+    })
+  }
+}
+watch(datosCombustible, async () => { await nextTick(); crearChartCombustible() }, { deep: true })
 
 // ── Carga de datos
 async function cargarVehiculos() {
@@ -237,6 +357,33 @@ async function cargarConductores() {
   finally { cargando.value = false }
 }
 
+async function cargarDocumentos() {
+  cargando.value = true
+  try {
+    const res = await apiFetch('/api/empresa/reportes/documentos/')
+    if (res.ok) datosDocumentos.value = await res.json()
+    else toast.error('Error al cargar el reporte de documentos.')
+  } catch { toast.error('Error de conexión.') }
+  finally { cargando.value = false }
+}
+
+async function cargarCombustible() {
+  cargando.value = true
+  try {
+    const res = await apiFetch('/api/empresa/reportes/combustible/')
+    if (res.ok) datosCombustible.value = await res.json()
+    else toast.error('Error al cargar el reporte de combustible.')
+  } catch { toast.error('Error de conexión.') }
+  finally { cargando.value = false }
+}
+
+async function cargarPpto() {
+  try {
+    const res = await apiFetch('/api/empresa/reportes/presupuesto/')
+    if (res.ok) datosPpto.value = await res.json()
+  } catch { /* silencioso — se muestra en contexto de mantenciones */ }
+}
+
 function exportarTco() {
   if (!datosTco.value?.vehiculos) return
   const rows = [
@@ -290,9 +437,11 @@ const tcoOrdenada = computed(() => {
 // ── Watchers
 watch([anioSel, mesSel, vehiculoSel], cargarMantencion)
 watch(tabActivo, async (tab) => {
-  if (tab === 'flota' && !datosFlota.value) await cargarFlota()
-  if (tab === 'tco')   await cargarTco()
-  if (tab === 'conductores') await cargarConductores()
+  if (tab === 'flota'       && !datosFlota.value)       await cargarFlota()
+  if (tab === 'tco')                                    await cargarTco()
+  if (tab === 'conductores' && !datosConductores.value) await cargarConductores()
+  if (tab === 'documentos'  && !datosDocumentos.value)  await cargarDocumentos()
+  if (tab === 'combustible' && !datosCombustible.value) await cargarCombustible()
 })
 watch([anioSel, mesSel], () => {
   if (tabActivo.value === 'tco') cargarTco()
@@ -300,11 +449,15 @@ watch([anioSel, mesSel], () => {
 
 // ── Lifecycle
 onMounted(async () => {
-  await Promise.all([cargarVehiculos(), cargarMantencion()])
+  await Promise.all([cargarVehiculos(), cargarMantencion(), cargarPpto()])
 })
 
 onUnmounted(() => {
-  if (chartInstance) chartInstance.destroy()
+  if (chartInstance)    chartInstance.destroy()
+  if (chartTcoInstance) chartTcoInstance.destroy()
+  if (chartPptoInstance) chartPptoInstance.destroy()
+  if (chartCombBarInst)  chartCombBarInst.destroy()
+  if (chartCombLineInst) chartCombLineInst.destroy()
 })
 
 // ── Max para barra de tipos
@@ -358,6 +511,22 @@ const maxCostoTipo = computed(() => {
             d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
         </svg>
         Conductores
+      </button>
+      <button :class="['tab-btn', tabActivo === 'documentos' && 'tab-active']"
+        @click="tabActivo = 'documentos'">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        Documentos
+      </button>
+      <button :class="['tab-btn', tabActivo === 'combustible' && 'tab-active']"
+        @click="tabActivo = 'combustible'">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+            d="M3 7h12v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7zm0 0V5a2 2 0 012-2h8a2 2 0 012 2v2M15 7h4l2 3v4h-6V7z"/>
+        </svg>
+        Combustible
       </button>
     </div>
 
@@ -500,6 +669,19 @@ const maxCostoTipo = computed(() => {
                   <span class="tipo-costo">{{ clp(t.costo) }}</span>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Presupuesto vs gasto real -->
+        <div v-if="datosPpto" class="card" style="margin-bottom:1rem">
+          <div class="card-head">
+            <h3 class="card-title">Presupuesto vs Gasto real — {{ datosPpto.anio }}</h3>
+            <span class="sub-count">por mes</span>
+          </div>
+          <div class="card-body">
+            <div class="chart-container">
+              <canvas ref="chartPptoCanvas"/>
             </div>
           </div>
         </div>
@@ -753,6 +935,19 @@ const maxCostoTipo = computed(() => {
           </div>
         </div>
 
+        <!-- Chart TCO comparativa -->
+        <div v-if="datosTco.vehiculos.length" class="card" style="margin-bottom:1rem">
+          <div class="card-head">
+            <h3 class="card-title">Comparativa TCO por vehículo</h3>
+            <span class="sub-count">top 10 · gastos + mantenciones</span>
+          </div>
+          <div class="card-body">
+            <div :style="{ height: Math.max(200, datosTco.vehiculos.slice(0,10).length * 38) + 'px', position: 'relative' }">
+              <canvas ref="chartTcoCanvas"/>
+            </div>
+          </div>
+        </div>
+
         <!-- Tabla TCO -->
         <div class="card">
           <div class="card-head">
@@ -937,6 +1132,227 @@ const maxCostoTipo = computed(() => {
 
       <div v-else-if="!cargando" class="loading-wrap">
         <span>Cargando datos de conductores...</span>
+      </div>
+    </template>
+
+    <!-- ── TAB DOCUMENTOS ── -->
+    <template v-else-if="tabActivo === 'documentos'">
+      <div v-if="cargando" class="loading-wrap">
+        <div class="spinner"/><span>Cargando documentos...</span>
+      </div>
+
+      <template v-else-if="datosDocumentos">
+        <!-- KPIs documentos -->
+        <div class="kpis" style="margin-top:1.25rem">
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background:#ECFDF5;color:#059669">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="kpi-value" style="color:#059669">{{ datosDocumentos.resumen.vigentes }}</div>
+              <div class="kpi-label">Vigentes</div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="kpi-value" :style="datosDocumentos.resumen.por_vencer > 0 ? 'color:#D97706' : ''">
+                {{ datosDocumentos.resumen.por_vencer }}
+              </div>
+              <div class="kpi-label">Por vencer (30 días)</div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background:#FEF2F2;color:#DC2626">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </div>
+            <div>
+              <div class="kpi-value" :style="datosDocumentos.resumen.vencidos > 0 ? 'color:#DC2626' : ''">
+                {{ datosDocumentos.resumen.vencidos }}
+              </div>
+              <div class="kpi-label">Vencidos</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-4">
+          <!-- Estado documental por vehículo -->
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Documentos por vehículo</h3>
+              <span class="sub-count">{{ datosDocumentos.por_vehiculo.length }} vehículos</span>
+            </div>
+            <div v-if="!datosDocumentos.por_vehiculo.length" class="card-body">
+              <p class="empty-msg">Sin documentos registrados.</p>
+            </div>
+            <div v-else class="tabla-wrap" style="max-height:380px;overflow-y:auto">
+              <table class="tabla">
+                <thead>
+                  <tr><th>Vehículo</th><th>Tipo</th><th>Vencimiento</th><th>Estado</th></tr>
+                </thead>
+                <tbody>
+                  <template v-for="veh in datosDocumentos.por_vehiculo" :key="veh.vehiculo">
+                    <tr v-for="(doc, di) in veh.documentos" :key="di">
+                      <td v-if="di === 0" :rowspan="veh.documentos.length" class="font-medium" style="vertical-align:top;white-space:normal;min-width:120px">
+                        {{ veh.vehiculo }}
+                      </td>
+                      <td>{{ doc.tipo_display }}</td>
+                      <td>{{ doc.fecha_vencimiento ? doc.fecha_vencimiento.slice(8,10) + '/' + doc.fecha_vencimiento.slice(5,7) + '/' + doc.fecha_vencimiento.slice(0,4) : '—' }}</td>
+                      <td>
+                        <span class="badge"
+                          :style="doc.estado === 'vigente' ? 'background:#ECFDF5;color:#059669' : doc.estado === 'por_vencer' ? 'background:#FFFBEB;color:#D97706' : 'background:#FEF2F2;color:#DC2626'">
+                          {{ doc.estado === 'vigente' ? 'Vigente' : doc.estado === 'por_vencer' ? 'Por vencer' : 'Vencido' }}
+                          <template v-if="doc.estado !== 'vigente'"> · {{ Math.abs(doc.dias) }}d</template>
+                        </span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Timeline próximos 60 días -->
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Próximos a vencer (60 días)</h3>
+              <span class="sub-count">{{ datosDocumentos.proximos_vencer.length }} documentos</span>
+            </div>
+            <div v-if="!datosDocumentos.proximos_vencer.length" class="card-body">
+              <p class="empty-msg">Sin vencimientos próximos.</p>
+            </div>
+            <div v-else style="max-height:380px;overflow-y:auto">
+              <div v-for="(doc, i) in datosDocumentos.proximos_vencer" :key="i"
+                style="display:flex;align-items:center;gap:0.75rem;padding:0.65rem 1.25rem;border-bottom:1px solid #F9FAFB">
+                <span :style="{
+                  minWidth: '48px', textAlign: 'center', fontWeight: 700, fontSize: '0.8rem',
+                  padding: '0.2rem 0.5rem', borderRadius: '6px',
+                  background: doc.dias < 0 ? '#FEF2F2' : doc.dias <= 15 ? '#FFFBEB' : '#ECFDF5',
+                  color: doc.dias < 0 ? '#DC2626' : doc.dias <= 15 ? '#D97706' : '#059669',
+                }">
+                  {{ doc.dias < 0 ? Math.abs(doc.dias) + 'd' : doc.dias + 'd' }}
+                </span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:0.8125rem;font-weight:600;color:#111827">{{ doc.tipo_display }}</div>
+                  <div style="font-size:0.75rem;color:#9CA3AF">{{ doc.vehiculo }}</div>
+                </div>
+                <span style="font-size:0.75rem;color:#6B7280">
+                  {{ doc.fecha_vencimiento ? doc.fecha_vencimiento.slice(8,10) + '/' + doc.fecha_vencimiento.slice(5,7) : '' }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <div v-else-if="!cargando" class="loading-wrap">
+        <span>Cargando documentos...</span>
+      </div>
+    </template>
+
+    <!-- ── TAB COMBUSTIBLE ── -->
+    <template v-else-if="tabActivo === 'combustible'">
+      <div v-if="cargando" class="loading-wrap">
+        <div class="spinner"/><span>Cargando datos...</span>
+      </div>
+
+      <template v-else-if="datosCombustible">
+        <!-- KPIs combustible -->
+        <div class="kpis" style="margin-top:1.25rem">
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="kpi-value">{{ clp(datosCombustible.gasto_total) }}</div>
+              <div class="kpi-label">Gasto total combustible</div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon" style="background:#EEF2FF;color:#4338CA">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="kpi-value">{{ clp(datosCombustible.gasto_promedio_mes) }}</div>
+              <div class="kpi-label">Promedio mensual</div>
+            </div>
+          </div>
+          <div v-if="datosCombustible.top_vehiculo" class="kpi-card" style="grid-column: span 2">
+            <div class="kpi-icon" style="background:#F0FDF4;color:#059669">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
+              </svg>
+            </div>
+            <div style="min-width:0">
+              <div class="kpi-value" style="font-size:1.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                {{ datosCombustible.top_vehiculo }}
+              </div>
+              <div class="kpi-label">Vehículo con más gasto</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-4">
+          <!-- Barras horizontales top 5 -->
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Top 5 vehículos por gasto</h3>
+              <span class="sub-count">gasto total en combustible</span>
+            </div>
+            <div class="card-body">
+              <div v-if="!datosCombustible.por_vehiculo.length" class="empty-msg">Sin datos de combustible.</div>
+              <div v-else style="position:relative;height:220px">
+                <canvas ref="chartCombBar"/>
+              </div>
+            </div>
+          </div>
+
+          <!-- Línea evolución mensual -->
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Evolución mensual</h3>
+              <span class="sub-count">gasto en combustible · últimos 12 meses</span>
+            </div>
+            <div class="card-body">
+              <div v-if="!datosCombustible.por_mes.length" class="empty-msg">Sin datos históricos.</div>
+              <div v-else style="position:relative;height:220px">
+                <canvas ref="chartCombLine"/>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Nota eficiencia -->
+        <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:10px;padding:0.875rem 1rem;font-size:0.8125rem;color:#0369A1;display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:1rem">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:16px;height:16px;flex-shrink:0;margin-top:0.1rem">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span>El cálculo de eficiencia (km/litro) no está disponible porque el sistema no registra el historial de kilómetros por período, solo el odómetro actual. Para calcular eficiencia, registra los km al momento de cada carga de combustible.</span>
+        </div>
+      </template>
+
+      <div v-else-if="!cargando" class="loading-wrap">
+        <span>Cargando datos de combustible...</span>
       </div>
     </template>
   </div>

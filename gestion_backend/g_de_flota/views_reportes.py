@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import date as date_cls
+from datetime import date as date_cls, timedelta
 
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -13,7 +13,7 @@ from rest_framework import status
 
 from .models import (
     Empresa, Vehiculo, Mantencion, Rol,
-    GastoOperativo, Documento, Usuario,
+    GastoOperativo, Documento, Usuario, PresupuestoMensual,
 )
 
 
@@ -283,7 +283,7 @@ def reporte_exportar(request):
         vehiculos = Vehiculo.objects.filter(
             flota__empresa=empresa, activo=True
         ).select_related('flota').prefetch_related(
-            'documentos', 'mantenciones', 'asignaciones__conductor'
+            'docs_v', 'mantenciones', 'asignaciones__conductor'
         )
 
         headers = [
@@ -295,7 +295,7 @@ def reporte_exportar(request):
         for v in vehiculos:
             asig          = v.asignaciones.filter(activo=True).first()
             conductor     = asig.conductor.nombre if asig and asig.conductor else ''
-            docs_vencidos = sum(1 for d in v.documentos.all() if d.estado == 'vencido')
+            docs_vencidos = sum(1 for d in v.docs_v.all() if d.estado() == 'vencido')
             ultima        = v.mantenciones.filter(estado='realizada').order_by('-fecha_realizada').first()
             costo_total   = int(v.mantenciones.filter(estado='realizada').aggregate(t=Sum('costo'))['t'] or 0)
             rows.append([
@@ -516,4 +516,183 @@ def reporte_conductores(request):
             'sin_docs':          sum(1 for r in resultados if r['docs_total'] == 0),
         },
         'conductores': resultados,
+    })
+
+
+# ─────────────────────────────────────────
+# Reporte presupuesto vs gasto real
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_presupuesto(request):
+    user = request.user
+    if user.rol == Rol.CONDUCTOR:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+
+    empresa = _get_empresa(user, request.query_params)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    anio = int(request.query_params.get('anio', date_cls.today().year))
+    MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+    resultado = []
+    for mes in range(1, 13):
+        ppto  = PresupuestoMensual.objects.filter(empresa=empresa, mes=mes, anio=anio).first()
+        gasto = GastoOperativo.objects.filter(
+            empresa=empresa, fecha__year=anio, fecha__month=mes,
+        ).aggregate(total=Sum('monto'))['total'] or 0
+        resultado.append({
+            'mes':         mes,
+            'mes_label':   MESES_ES[mes - 1],
+            'anio':        anio,
+            'presupuesto': int(ppto.monto) if ppto else 0,
+            'gasto_real':  int(gasto),
+        })
+
+    return Response({'anio': anio, 'meses': resultado})
+
+
+# ─────────────────────────────────────────
+# Reporte de documentos de flota
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_documentos(request):
+    user = request.user
+    if user.rol == Rol.CONDUCTOR:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+
+    empresa = _get_empresa(user, request.query_params)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    hoy       = date_cls.today()
+    limite_60 = hoy + timedelta(days=60)
+    tipos_label = dict(Documento.TODOS_TIPOS)
+
+    docs_qs = Documento.objects.filter(
+        entidad='vehiculo',
+        vehiculo__flota__empresa=empresa,
+        fecha_vencimiento__isnull=False,
+    ).select_related('vehiculo').order_by('fecha_vencimiento')
+
+    vigentes   = 0
+    por_vencer = 0
+    vencidos   = 0
+    por_vehiculo = {}
+    proximos   = []
+
+    for d in docs_qs:
+        est = d.estado()
+        if   est == 'vigente':    vigentes   += 1
+        elif est == 'por_vencer': por_vencer += 1
+        else:                      vencidos   += 1
+
+        vkey = d.vehiculo_id
+        if vkey not in por_vehiculo:
+            por_vehiculo[vkey] = {
+                'vehiculo':   _label_vehiculo(d.vehiculo),
+                'documentos': [],
+            }
+        dias = (d.fecha_vencimiento - hoy).days
+        por_vehiculo[vkey]['documentos'].append({
+            'tipo':              d.tipo,
+            'tipo_display':      tipos_label.get(d.tipo, d.tipo),
+            'fecha_vencimiento': d.fecha_vencimiento.isoformat(),
+            'estado':            est,
+            'dias':              dias,
+        })
+
+        if d.fecha_vencimiento <= limite_60:
+            proximos.append({
+                'vehiculo':          d.vehiculo.patente,
+                'tipo_display':      tipos_label.get(d.tipo, d.tipo),
+                'fecha_vencimiento': d.fecha_vencimiento.isoformat(),
+                'dias':              dias,
+                'estado':            est,
+            })
+
+    proximos.sort(key=lambda x: x['fecha_vencimiento'])
+
+    return Response({
+        'resumen':        {'vigentes': vigentes, 'por_vencer': por_vencer, 'vencidos': vencidos},
+        'por_vehiculo':   list(por_vehiculo.values()),
+        'proximos_vencer': proximos[:30],
+    })
+
+
+# ─────────────────────────────────────────
+# Reporte de combustible
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_combustible(request):
+    user = request.user
+    if user.rol == Rol.CONDUCTOR:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+
+    empresa = _get_empresa(user, request.query_params)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    anio = request.query_params.get('anio')
+    mes  = request.query_params.get('mes')
+
+    qs = GastoOperativo.objects.filter(empresa=empresa, categoria='combustible')
+    if anio: qs = qs.filter(fecha__year=int(anio))
+    if mes:  qs = qs.filter(fecha__month=int(mes))
+
+    gasto_total = int(qs.aggregate(t=Sum('monto'))['t'] or 0)
+
+    por_vehiculo_qs = (
+        qs.filter(vehiculo__isnull=False)
+        .values('vehiculo_id', 'vehiculo__patente', 'vehiculo__marca', 'vehiculo__modelo')
+        .annotate(gasto_total=Sum('monto'))
+        .order_by('-gasto_total')[:10]
+    )
+    por_vehiculo = [
+        {
+            'patente':     r['vehiculo__patente'],
+            'vehiculo':    f"{r['vehiculo__marca']} {r['vehiculo__modelo']} · {r['vehiculo__patente']}",
+            'gasto_total': int(r['gasto_total']),
+        }
+        for r in por_vehiculo_qs
+    ]
+
+    MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+    hoy = date_cls.today()
+    qs_mensual = GastoOperativo.objects.filter(empresa=empresa, categoria='combustible')
+    meses_dict = {}
+    for r in qs_mensual.values('fecha__year', 'fecha__month').annotate(gasto=Sum('monto')):
+        meses_dict[(r['fecha__year'], r['fecha__month'])] = int(r['gasto'])
+
+    por_mes = []
+    anio_inicio = hoy.year - 1
+    for y in (anio_inicio, hoy.year):
+        for m in range(1, 13):
+            if y == hoy.year and m > hoy.month:
+                break
+            por_mes.append({
+                'mes':       m,
+                'mes_label': MESES_ES[m - 1],
+                'anio':      y,
+                'gasto':     meses_dict.get((y, m), 0),
+            })
+    por_mes = por_mes[-12:]
+
+    gastos_con_datos = [p['gasto'] for p in por_mes if p['gasto'] > 0]
+    promedio_mes = round(sum(gastos_con_datos) / len(gastos_con_datos)) if gastos_con_datos else 0
+    top_vehiculo = por_vehiculo[0]['vehiculo'] if por_vehiculo else None
+
+    return Response({
+        'gasto_total':        gasto_total,
+        'gasto_promedio_mes': promedio_mes,
+        'top_vehiculo':       top_vehiculo,
+        'por_vehiculo':       por_vehiculo,
+        'por_mes':            por_mes,
     })

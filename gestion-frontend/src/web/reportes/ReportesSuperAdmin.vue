@@ -1,14 +1,18 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
+import { Chart, registerables } from 'chart.js'
+Chart.register(...registerables)
 
 const toast = useToast()
 
-const cargando = ref(false)
-const datos    = ref(null)
-const anioSel  = ref(new Date().getFullYear())
-const anios    = [anioSel.value, anioSel.value - 1, anioSel.value - 2]
+const cargando   = ref(false)
+const datos      = ref(null)
+const anioSel    = ref(new Date().getFullYear())
+const anios      = [anioSel.value, anioSel.value - 1, anioSel.value - 2]
+const planesCanvas = ref(null)
+let   planesChart  = null
 
 // Ordenación
 const ordenCampo = ref('costo_mantenciones_anio')
@@ -77,6 +81,32 @@ function exportarCSV() {
   URL.revokeObjectURL(a.href)
 }
 
+function crearChartPlanes() {
+  if (!planesCanvas.value || !datos.value?.empresas?.length) return
+  if (planesChart) { planesChart.destroy(); planesChart = null }
+  const conteo = {}
+  for (const e of datos.value.empresas) {
+    const p = e.plan_display || e.plan || 'Sin plan'
+    conteo[p] = (conteo[p] || 0) + 1
+  }
+  const labels = Object.keys(conteo)
+  const values = Object.values(conteo)
+  planesChart = new Chart(planesCanvas.value, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: ['#4F46E5', '#7C3AED', '#C2410C', '#059669'], borderWidth: 0, hoverOffset: 6 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 12 }, padding: 12, boxWidth: 10 } } },
+    },
+  })
+}
+
+watch(datos, async () => { await nextTick(); crearChartPlanes() }, { deep: true })
+
 // Carga
 async function cargar() {
   cargando.value = true
@@ -92,6 +122,7 @@ async function cargar() {
 }
 
 onMounted(cargar)
+onUnmounted(() => { if (planesChart) planesChart.destroy() })
 </script>
 
 <template>
@@ -171,6 +202,44 @@ onMounted(cargar)
           <div>
             <div class="kpi-value">{{ clp(datos.total_costo) }}</div>
             <div class="kpi-label">Costo total mantenciones</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dona distribución planes -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.25rem">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Distribución por plan</h3>
+            <span class="sub-count">empresas activas</span>
+          </div>
+          <div style="padding:1.25rem;height:230px">
+            <canvas ref="planesCanvas"/>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Resumen {{ datos.anio }}</h3>
+          </div>
+          <div style="padding:1.25rem;display:flex;flex-direction:column;gap:1rem">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:0.875rem;color:#6B7280">Vehículos totales</span>
+              <span style="font-size:1.25rem;font-weight:700;color:#111827">{{ datos.total_vehiculos }}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:0.875rem;color:#6B7280">Mantenciones del año</span>
+              <span style="font-size:1.25rem;font-weight:700;color:#111827">{{ datos.total_mantenciones }}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:0.875rem;color:#6B7280">Costo total mantenciones</span>
+              <span style="font-size:1.1rem;font-weight:700;color:#4F46E5">{{ clp(datos.total_costo) }}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:0.875rem;color:#6B7280">Costo promedio / empresa</span>
+              <span style="font-size:1rem;font-weight:600;color:#374151">
+                {{ datos.total_empresas ? clp(Math.round(datos.total_costo / datos.total_empresas)) : '$0' }}
+              </span>
+            </div>
           </div>
         </div>
       </div>

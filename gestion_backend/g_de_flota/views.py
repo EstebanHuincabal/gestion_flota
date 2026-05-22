@@ -19,7 +19,8 @@ from decimal import Decimal
 from .models import (
     Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
     Mantencion, Documento, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
-    TipoNotificacion, CambioPlan, GastoOperativo, PresupuestoMensual,
+    TipoNotificacion, CambioPlan, GastoOperativo, PresupuestoMensual, MantencionProgramada,
+    Ruta,
 )
 from .views_planes import verificar_limite_plan, verificar_modulo_plan
 from .audit import registrar_log
@@ -221,6 +222,25 @@ def dashboard_global_view(request):
         if mrr_anterior > 0 else None
     )
 
+    # Distribución combustible de toda la flota
+    COMBUSTIBLE_LABELS = {
+        'bencina': 'Bencina', 'diesel': 'Diésel',
+        'electrico': 'Eléctrico', 'hibrido': 'Híbrido', 'gas': 'Gas',
+    }
+    dist_comb_qs = (
+        Vehiculo.objects.values('tipo_combustible')
+        .annotate(total=Count('id'))
+        .order_by('-total')
+    )
+    distribucion_combustible = [
+        {'label': COMBUSTIBLE_LABELS.get(r['tipo_combustible'], r['tipo_combustible']), 'total': r['total']}
+        for r in dist_comb_qs if r['total'] > 0
+    ]
+
+    # Top 10 empresas por vehículos (para bar chart)
+    top_empresas_10 = Empresa.objects.annotate(num_vehiculos=Count('flotas__vehiculos')).order_by('-num_vehiculos')[:10]
+    top_empresas_bar = [{"nombre": e.nombre, "vehiculos": e.num_vehiculos} for e in top_empresas_10]
+
     return Response({
         "kpis": {
             "empresas_activas":    empresas_activas,
@@ -239,8 +259,10 @@ def dashboard_global_view(request):
                 "labels": list(distribucion_flota.keys()),
                 "data":   list(distribucion_flota.values()),
             },
-            "top_empresas":        top_empresas_data,
-            "distribucion_planes": distribucion_planes,
+            "top_empresas":           top_empresas_data,
+            "distribucion_planes":    distribucion_planes,
+            "distribucion_combustible": distribucion_combustible,
+            "top_empresas_bar":       top_empresas_bar,
         },
         "sin_actividad": sin_actividad,
     })
@@ -419,22 +441,111 @@ def empresa_dashboard_view(request):
         for v in top_veh_qs
     ]
 
+    # Mantenimiento predictivo — planes activos vs vencidos
+    planes_activos = MantencionProgramada.objects.filter(
+        vehiculo__flota__empresa=empresa, estado='activa'
+    )
+    pred_al_dia   = planes_activos.filter(fecha_siguiente__gt=hoy).count()
+    pred_vencidas = planes_activos.filter(fecha_siguiente__lte=hoy).count()
+    pred_total    = pred_al_dia + pred_vencidas
+    pred_pct      = round(pred_al_dia / pred_total * 100) if pred_total else 100
+
+    # ── Gráficos adicionales ────────────────────────────────────
+
+    # Gastos por categoría — últimos 6 meses (stacked bar)
+    CATEGORIAS_GASTO = ['combustible', 'mantencion', 'seguro', 'multa', 'otro']
+    gastos_labels = []
+    gastos_datasets = {cat: [] for cat in CATEGORIAS_GASTO}
+    for i in range(5, -1, -1):
+        if hoy.month - i <= 0:
+            mes_obj = hoy.replace(year=hoy.year - 1, month=hoy.month - i + 12, day=1)
+        else:
+            mes_obj = hoy.replace(month=hoy.month - i, day=1)
+        gastos_labels.append(f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}")
+        for cat in CATEGORIAS_GASTO:
+            total_cat = GastoOperativo.objects.filter(
+                empresa=empresa,
+                fecha__year=mes_obj.year,
+                fecha__month=mes_obj.month,
+                categoria=cat,
+            ).aggregate(t=Sum('monto'))['t'] or 0
+            gastos_datasets[cat].append(int(total_cat))
+
+    # Rutas completadas vs canceladas — últimos 6 meses
+    rutas_labels = []
+    rutas_finalizadas = []
+    rutas_canceladas = []
+    for i in range(5, -1, -1):
+        if hoy.month - i <= 0:
+            mes_obj = hoy.replace(year=hoy.year - 1, month=hoy.month - i + 12, day=1)
+        else:
+            mes_obj = hoy.replace(month=hoy.month - i, day=1)
+        rutas_labels.append(f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}")
+        fin = Ruta.objects.filter(
+            empresa=empresa,
+            estado='finalizado',
+            fecha_fin__year=mes_obj.year,
+            fecha_fin__month=mes_obj.month,
+        ).count()
+        can = Ruta.objects.filter(
+            empresa=empresa,
+            estado='cancelado',
+            fecha_fin__year=mes_obj.year,
+            fecha_fin__month=mes_obj.month,
+        ).count()
+        rutas_finalizadas.append(fin)
+        rutas_canceladas.append(can)
+
+    # Top 5 conductores por km recorridos (rutas finalizadas)
+    top_conductores_qs = (
+        Ruta.objects.filter(empresa=empresa, estado='finalizado', conductor__isnull=False)
+        .values('conductor_id')
+        .annotate(total_km=Sum('distancia_km'))
+        .order_by('-total_km')[:5]
+    )
+    conductores_ids = [r['conductor_id'] for r in top_conductores_qs]
+    conductores_map = {u.id: u for u in Usuario.objects.filter(id__in=conductores_ids)}
+    top_conductores_km = [
+        {
+            'nombre': conductores_map[r['conductor_id']].nombre or f"Conductor {r['conductor_id']}",
+            'km':     float(r['total_km'] or 0),
+        }
+        for r in top_conductores_qs
+        if r['conductor_id'] in conductores_map
+    ]
+
     return Response({
         "kpis": {
-            "total_flotas":           total_flotas,
-            "total_vehiculos":        total_vehiculos,
-            "total_conductores":      total_conductores,
+            "total_flotas":            total_flotas,
+            "total_vehiculos":         total_vehiculos,
+            "total_conductores":       total_conductores,
             "mantenciones_pendientes": mantenciones_pendientes,
-            "docs_por_vencer":        docs_por_vencer,
+            "docs_por_vencer":         docs_por_vencer,
         },
         "charts": {
             "vehiculos_por_flota": {"labels": bar_labels, "data": bar_values},
             "mantenciones":        {"labels": mant_labels, "data": mant_values},
+            "gastos_6m": {
+                "labels":   gastos_labels,
+                "datasets": {cat: gastos_datasets[cat] for cat in CATEGORIAS_GASTO},
+            },
+            "rutas_6m": {
+                "labels":      rutas_labels,
+                "finalizadas": rutas_finalizadas,
+                "canceladas":  rutas_canceladas,
+            },
+            "top_conductores_km": top_conductores_km,
         },
         "widgets": {
             "proximas_7_dias":      proximas_7_dias,
             "gasto_vs_presupuesto": gasto_vs_presupuesto,
             "top_vehiculos_costo":  top_vehiculos_costo,
+            "predictivo": {
+                "al_dia":   pred_al_dia,
+                "vencidas": pred_vencidas,
+                "total":    pred_total,
+                "pct":      pred_pct,
+            },
         },
     })
 
@@ -1132,7 +1243,9 @@ def vehiculos_lista_crear(request):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         vehiculos = Vehiculo.objects.filter(
             flota__empresa=empresa
-        ).select_related('flota').order_by('patente')
+        ).select_related('flota').prefetch_related(
+            'asignaciones__conductor'
+        ).order_by('patente')
         return Response(VehiculoSerializer(vehiculos, many=True, context={'empresa': empresa}).data)
 
     if not tiene_permiso(request.user, 'vehiculos.crear'):

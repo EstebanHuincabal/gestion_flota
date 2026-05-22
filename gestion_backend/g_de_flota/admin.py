@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from .models import (
     Usuario, Empresa,
     Flota, Vehiculo, Asignacion,
-    Ubicacion, Evento, Mantencion,
+    Mantencion,
     LogAuditoria, PlanSuscripcion, Permiso,
     PlanMantenimiento, ReglaMantenimiento, VehiculoPlan,
     MantencionProgramada, AlertaMantencion,
@@ -82,19 +82,6 @@ class MantencionAdmin(admin.ModelAdmin):
     list_filter = ('estado', 'vehiculo__flota__empresa')
     search_fields = ('vehiculo__patente', 'tipo_mantencion')
 
-
-@admin.register(Ubicacion)
-class UbicacionAdmin(admin.ModelAdmin):
-    list_display = ('vehiculo', 'latitud', 'longitud', 'velocidad', 'timestamp')
-    list_filter = ('vehiculo__flota__empresa',)
-    search_fields = ('vehiculo__patente',)
-
-
-@admin.register(Evento)
-class EventoAdmin(admin.ModelAdmin):
-    list_display = ('tipo', 'vehiculo', 'fecha')
-    list_filter = ('tipo', 'vehiculo__flota__empresa')
-    search_fields = ('vehiculo__patente', 'descripcion')
 
 
 @admin.register(LogAuditoria)

@@ -13,8 +13,10 @@ const datos          = ref(null)
 const historico      = ref([])
 const mesesPeriodo   = ref(12)
 const ordenMrr       = ref(false)
-const chartCanvas    = ref(null)
-let   chartInstance  = null
+const chartCanvas      = ref(null)
+const chartPlanesCanvas = ref(null)
+let   chartInstance    = null
+let   chartPlanesInst  = null
 
 // ── Tiempo real ────────────────────────────────────────────
 const ultimaActualizacion = ref(null)
@@ -53,18 +55,42 @@ async function cargar() {
   }
 }
 
+function calcularProyeccion(datos, puntos = 3) {
+  const n    = datos.length
+  if (n < 2) return Array(n).fill(null).concat(Array(puntos).fill(0))
+  const sumX  = datos.reduce((s, _, i) => s + i, 0)
+  const sumY  = datos.reduce((s, v) => s + v, 0)
+  const sumXY = datos.reduce((s, v, i) => s + i * v, 0)
+  const sumX2 = datos.reduce((s, _, i) => s + i * i, 0)
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX)
+  const inter = (sumY - slope * sumX) / n
+  const base  = Array(n).fill(null)
+  const last  = datos[n - 1]
+  base.push(...Array.from({ length: puntos }, (_, i) => Math.max(0, Math.round(last + slope * (i + 1)))))
+  return base
+}
+
 function crearChart() {
   if (!chartCanvas.value || !historico.value.length) return
   if (chartInstance) { chartInstance.destroy(); chartInstance = null }
 
-  const labels = historico.value.map(h => `${labelMes(h.mes)} ${h.anio}`)
-  const mrrData = historico.value.map(h => h.mrr)
+  const labels    = historico.value.map(h => `${labelMes(h.mes)} ${h.anio}`)
+  const mrrData   = historico.value.map(h => h.mrr)
   const nuevasData = historico.value.map(h => h.nuevas)
+  const proyData  = calcularProyeccion(mrrData, 3)
+  const MESES_ES  = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+  const ultimoH   = historico.value[historico.value.length - 1]
+  const labelsExt = [...labels]
+  for (let i = 1; i <= 3; i++) {
+    const m = ((ultimoH.mes - 1 + i) % 12) + 1
+    const a = ultimoH.anio + Math.floor((ultimoH.mes - 1 + i) / 12)
+    labelsExt.push(`${MESES_ES[m - 1]} ${a} (est.)`)
+  }
 
   chartInstance = new Chart(chartCanvas.value, {
     type: 'line',
     data: {
-      labels,
+      labels: labelsExt,
       datasets: [
         {
           label: 'MRR',
@@ -95,6 +121,22 @@ function crearChart() {
           tension: 0.35,
           fill: true,
           yAxisID: 'y2',
+        },
+        {
+          label: 'Proyección MRR',
+          data: proyData,
+          borderColor: 'rgba(79, 70, 229, 0.45)',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          borderDash: [6, 4],
+          pointBackgroundColor: 'rgba(79, 70, 229, 0.5)',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 1.5,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          tension: 0.35,
+          fill: false,
+          yAxisID: 'y',
         },
       ],
     },
@@ -139,6 +181,66 @@ function crearChart() {
 
 watch(historico, async () => { await nextTick(); crearChart() }, { deep: true })
 
+function crearChartPlanes() {
+  if (!chartPlanesCanvas.value || !datos.value?.ingresos_por_plan?.length) return
+  if (chartPlanesInst) { chartPlanesInst.destroy(); chartPlanesInst = null }
+  const COLORES_PLAN = { basico: '#4F46E5', pro: '#7C3AED', enterprise: '#C2410C' }
+  const items = datos.value.ingresos_por_plan
+  chartPlanesInst = new Chart(chartPlanesCanvas.value, {
+    type: 'bar',
+    data: {
+      labels: items.map(p => p.plan.charAt(0).toUpperCase() + p.plan.slice(1)),
+      datasets: [
+        {
+          label: 'MRR',
+          data: items.map(p => p.mrr),
+          backgroundColor: items.map(p => COLORES_PLAN[p.plan] || '#4F46E5'),
+          borderRadius: 8,
+          barThickness: 48,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Empresas',
+          data: items.map(p => p.empresas),
+          backgroundColor: items.map(p => (COLORES_PLAN[p.plan] || '#4F46E5') + '33'),
+          borderRadius: 8,
+          barThickness: 48,
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 12 }, padding: 14, usePointStyle: true } },
+        tooltip: {
+          callbacks: {
+            label: (c) => c.dataset.label === 'MRR'
+              ? ` MRR: ${clp(c.parsed.y)}`
+              : ` Empresas: ${c.parsed.y}`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 13, weight: '600' }, color: '#374151' } },
+        y: {
+          position: 'left', beginAtZero: true,
+          ticks: { callback: (v) => clp(v), font: { size: 11 }, color: '#6B7280' },
+          grid: { color: '#F3F4F6' },
+        },
+        y2: {
+          position: 'right', beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          ticks: { stepSize: 1, font: { size: 11 }, color: '#9CA3AF' },
+          title: { display: true, text: 'Empresas', color: '#9CA3AF', font: { size: 11 } },
+        },
+      },
+    },
+  })
+}
+watch(datos, async () => { await nextTick(); crearChartPlanes() }, { deep: true })
+
 onMounted(() => {
   cargar()
   intervalPolling = setInterval(() => { if (!document.hidden) cargar() }, 120_000)
@@ -150,7 +252,8 @@ onUnmounted(() => {
   clearInterval(intervalPolling)
   clearInterval(intervalLabel)
   document.removeEventListener('visibilitychange', onVisibilityChange)
-  if (chartInstance) chartInstance.destroy()
+  if (chartInstance)    chartInstance.destroy()
+  if (chartPlanesInst)  chartPlanesInst.destroy()
 })
 
 function clp(val) {
@@ -337,6 +440,17 @@ function labelMes(mes) { return NOMBRE_MES[mes - 1] || '' }
           <div v-else class="chart-container">
             <canvas ref="chartCanvas"></canvas>
           </div>
+        </div>
+      </div>
+
+      <!-- ── MRR y empresas por plan ── -->
+      <div class="card mb-4">
+        <div class="card-head">
+          <h3 class="card-title">MRR y empresas por plan</h3>
+        </div>
+        <div class="card-body">
+          <div v-if="!datos.ingresos_por_plan?.length" class="empty-msg">Sin datos de planes.</div>
+          <div v-else style="height:220px"><canvas ref="chartPlanesCanvas"/></div>
         </div>
       </div>
 

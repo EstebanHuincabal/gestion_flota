@@ -719,16 +719,25 @@ class FlotaSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class VehiculoSerializer(serializers.ModelSerializer):
-    flota_nombre = serializers.SerializerMethodField()
+    flota_nombre       = serializers.SerializerMethodField()
+    conductor_asignado = serializers.SerializerMethodField()
 
     class Meta:
         model  = Vehiculo
         fields = ['id', 'flota', 'flota_nombre', 'patente', 'marca', 'modelo',
-                  'anio', 'tipo_combustible', 'km_actuales', 'activo']
+                  'anio', 'tipo_combustible', 'km_actuales', 'consumo_l_100km',
+                  'conductor_asignado', 'activo']
         read_only_fields = ['id']
 
     def get_flota_nombre(self, obj):
         return obj.flota.nombre
+
+    def get_conductor_asignado(self, obj):
+        asig = obj.asignaciones.filter(activo=True).select_related('conductor').first()
+        if asig and asig.conductor_id:
+            c = asig.conductor
+            return {'id': c.id, 'nombre': c.nombre or c.email}
+        return None
 
     def validate_patente(self, value):
         value = value.replace(' ', '').replace('-', '').upper().strip()

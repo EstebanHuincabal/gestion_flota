@@ -35,10 +35,16 @@ from g_de_flota.views_gastos import (
 from g_de_flota.views_reportes import (
     reporte_mantencion, reporte_flota, reporte_exportar, reporte_admin_empresas,
     reporte_tco, reporte_conductores,
+    reporte_presupuesto, reporte_documentos, reporte_combustible,
 )
 from g_de_flota.views_documentos import (
     DocumentosListView, DocumentoDetailView,
     DocumentoDescargarView, DocumentoRenovarView,
+)
+from g_de_flota.views_rutas import (
+    RutasListView, RutaDetailView,
+    RutaIniciarView, RutaFinalizarView, RutaCancelarView,
+    RouteCalcularView, PeajesListView, RutaConfigView,
 )
 
 router = DefaultRouter()
@@ -129,10 +135,23 @@ urlpatterns = [
     path('api/empresa/documentos/<int:doc_id>/renovar/',     DocumentoRenovarView.as_view(),  name='documentos-renovar'),
 
     # Reportes
-    path('api/empresa/reportes/mantencion/', reporte_mantencion,       name='reporte-mantencion'),
-    path('api/empresa/reportes/flota/',      reporte_flota,            name='reporte-flota'),
-    path('api/empresa/reportes/exportar/',   reporte_exportar,         name='reporte-exportar'),
-    path('api/empresa/reportes/tco/',        reporte_tco,              name='reporte-tco'),
-    path('api/empresa/reportes/conductores/', reporte_conductores,     name='reporte-conductores'),
-    path('api/admin/reportes/empresas/',     reporte_admin_empresas,   name='reporte-admin-empresas'),
+    path('api/empresa/reportes/mantencion/',   reporte_mantencion,    name='reporte-mantencion'),
+    path('api/empresa/reportes/flota/',        reporte_flota,         name='reporte-flota'),
+    path('api/empresa/reportes/exportar/',     reporte_exportar,      name='reporte-exportar'),
+    path('api/empresa/reportes/tco/',          reporte_tco,           name='reporte-tco'),
+    path('api/empresa/reportes/conductores/',  reporte_conductores,   name='reporte-conductores'),
+    path('api/empresa/reportes/presupuesto/',  reporte_presupuesto,   name='reporte-presupuesto'),
+    path('api/empresa/reportes/documentos/',   reporte_documentos,    name='reporte-documentos'),
+    path('api/empresa/reportes/combustible/',  reporte_combustible,   name='reporte-combustible'),
+    path('api/admin/reportes/empresas/',       reporte_admin_empresas, name='reporte-admin-empresas'),
+
+    # Rutas y trabajos — rutas específicas ANTES de las rutas con :id
+    path('api/empresa/rutas/calcular/',                RouteCalcularView.as_view(),  name='rutas-calcular'),
+    path('api/empresa/rutas/peajes/',                  PeajesListView.as_view(),     name='rutas-peajes'),
+    path('api/empresa/rutas/configuracion/',           RutaConfigView.as_view(),     name='rutas-config'),
+    path('api/empresa/rutas/',                         RutasListView.as_view(),      name='rutas-lista'),
+    path('api/empresa/rutas/<int:ruta_id>/',           RutaDetailView.as_view(),     name='rutas-detalle'),
+    path('api/empresa/rutas/<int:ruta_id>/iniciar/',   RutaIniciarView.as_view(),    name='rutas-iniciar'),
+    path('api/empresa/rutas/<int:ruta_id>/finalizar/', RutaFinalizarView.as_view(),  name='rutas-finalizar'),
+    path('api/empresa/rutas/<int:ruta_id>/cancelar/',  RutaCancelarView.as_view(),   name='rutas-cancelar'),
 ]
