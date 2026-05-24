@@ -1,0 +1,12 @@
+{
+  "appId": "com.gestionflota.conductor",
+  "appName": "Flota Conductor",
+  "webDir": "dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#4F46E5",
+      "showSpinner": false
+    }
+  }
+}

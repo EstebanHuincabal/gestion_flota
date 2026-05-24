@@ -85,14 +85,25 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [
+    # Sistema web
     "http://localhost:7183",
     "http://127.0.0.1:7183",
+    # App conductores — Vite dev server
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    # App conductores — Capacitor WebView (Android usa http://localhost internamente)
+    "http://localhost",
+    # App conductores — Capacitor WebView iOS (usa este esquema en producción)
+    "capacitor://localhost",
 ]
 CORS_ALLOW_ALL_ORIGINS = DEBUG  # en dev permite todos los orígenes para WS
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:7183",
     "http://127.0.0.1:7183",
+    "http://localhost:5174",
+    "http://localhost",
+    "capacitor://localhost",
 ]
 
 AUTH_USER_MODEL = 'g_de_flota.Usuario'

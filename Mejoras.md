@@ -1,181 +1,298 @@
-Vas a corregir y mejorar el módulo de peajes existente. No reescribir lo que funciona — solo aplicar los cambios específicos indicados.
+Vas a implementar la pantalla de Login para la app móvil de conductores construida con Vue 3 + Capacitor.
 
 ---
 
-## CAMBIO 1 — Modelo Peaje (models.py)
+## CONTEXTO DE LA APP
 
-Reemplazar las CATEGORIAS existentes por:
-```python
-CATEGORIAS = [
-    ('moto',        'Moto / Motoneta'),
-    ('liviano',     'Auto / Camioneta / SUV'),
-    ('liviano_rem', 'Auto/Camioneta con remolque'),
-    ('pesado_2',    'Bus / Camión 2 ejes'),
-    ('pesado_3',    'Camión 3+ ejes'),
+- Stack: Vue 3 Composition API + Vite + TailwindCSS 4 + Capacitor
+- Estado global: Pinia
+- Navegación: Vue Router
+- La app es SOLO para conductores (rol='CONDUCTOR')
+- El backend es Django con autenticación JWT (mismo backend del sistema web)
+- Puerto backend desarrollo: http://localhost:8000
+- Los datos sensibles (nombre, RUT) vienen cifrados con Fernet — el backend los descifra y retorna en texto plano en la respuesta del login
+
+---
+
+## FLUJO DE LOGIN
+
+1. Conductor ingresa RUT y contraseña
+2. POST /api/login/ con { rut, password }
+3. Backend retorna:
+```json
+{
+  "access": "jwt_token",
+  "refresh": "refresh_token",
+  "usuario": {
+    "id": 1,
+    "nombre": "Juan Muñoz",
+    "email": "juan@email.com",
+    "rol": "CONDUCTOR",
+    "primer_login": true,
+    "empresa": { "id": 1, "nombre": "Transportes del Norte" },
+    "vehiculo_asignado": { "id": 3, "patente": "PPU-4421", "marca": "Mercedes", "modelo": "Actros" }
+  }
+}
+```
+4. Si primer_login === true → navegar a /onboarding
+5. Si primer_login === false → navegar a /rutas (pantalla principal)
+6. Si el rol no es 'CONDUCTOR' → mostrar error "Esta app es solo para conductores"
+
+---
+
+## ALMACENAMIENTO DE TOKENS
+
+Usar @capacitor/preferences (NO localStorage ni sessionStorage — no son confiables en Capacitor):
+
+```javascript
+import { Preferences } from '@capacitor/preferences'
+
+// Guardar
+await Preferences.set({ key: 'access_token', value: token })
+await Preferences.set({ key: 'refresh_token', value: refreshToken })
+await Preferences.set({ key: 'usuario', value: JSON.stringify(usuario) })
+
+// Leer
+const { value } = await Preferences.get({ key: 'access_token' })
+
+// Eliminar (logout)
+await Preferences.remove({ key: 'access_token' })
+```
+
+---
+
+## ARCHIVOS A CREAR
+
+### 1. src/services/api.js
+Servicio centralizado de HTTP. Todas las llamadas al backend pasan por aquí.
+
+```javascript
+import { Preferences } from '@capacitor/preferences'
+
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+export async function apiFetch(url, options = {}) {
+  const { value: token } = await Preferences.get({ key: 'access_token' })
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  }
+
+  const res = await fetch(`${BASE_URL}${url}`, { ...options, headers })
+
+  if (res.status === 401) {
+    // Intentar refresh automático
+    const refreshed = await intentarRefresh()
+    if (refreshed) {
+      // Reintentar la llamada original con el nuevo token
+      const { value: newToken } = await Preferences.get({ key: 'access_token' })
+      const retryRes = await fetch(`${BASE_URL}${url}`, {
+        ...options,
+        headers: { ...headers, Authorization: `Bearer ${newToken}` },
+      })
+      if (!retryRes.ok) throw new Error('Sesión expirada')
+      return retryRes.json()
+    }
+    // Refresh falló — limpiar sesión
+    await limpiarSesion()
+    throw new Error('SESION_EXPIRADA')
+  }
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}))
+    throw new Error(error.error || error.detail || 'Error del servidor')
+  }
+
+  return res.json()
+}
+
+async function intentarRefresh() {
+  try {
+    const { value: refresh } = await Preferences.get({ key: 'refresh_token' })
+    if (!refresh) return false
+    const res = await fetch(`${BASE_URL}/api/token/refresh/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh }),
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    await Preferences.set({ key: 'access_token', value: data.access })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function limpiarSesion() {
+  await Preferences.remove({ key: 'access_token' })
+  await Preferences.remove({ key: 'refresh_token' })
+  await Preferences.remove({ key: 'usuario' })
+}
+```
+
+### 2. src/stores/auth.js
+Store Pinia de autenticación.
+
+Estado:
+- usuario: null | objeto usuario
+- cargando: false
+- error: null
+
+Acciones:
+- login(rut, password): llama POST /api/login/, guarda tokens y usuario en Preferences, retorna { success, primerLogin }
+- logout(): limpia Preferences y resetea estado
+- cargarSesion(): al iniciar la app, lee Preferences y restaura el estado si hay sesión guardada
+- get estaAutenticado(): boolean
+- get esConductor(): boolean
+
+### 3. src/views/Login.vue
+Pantalla de login completa.
+
+DISEÑO:
+- Fondo con color de acento suave (usando variable CSS --color-acento, default #534AB7)
+- Logo o ícono de la app centrado arriba (ti-truck grande)
+- Nombre de la app: "Conductor" en texto blanco grande
+- Card blanca redondeada (border-radius 20px) en la parte inferior
+  que ocupa 60% de la pantalla
+- Dentro del card:
+  - Título "Iniciar sesión"
+  - Input RUT con formato automático (12.345.678-9 mientras escribe)
+  - Input contraseña con toggle mostrar/ocultar (ícono ti-eye / ti-eye-off)
+  - Mensaje de error en rojo si falla
+  - Botón "Ingresar" grande con color de acento
+  - Loading spinner dentro del botón mientras carga
+
+FORMATO DE RUT:
+```javascript
+function formatearRut(valor) {
+  // Eliminar todo excepto números y K
+  let rut = valor.replace(/[^0-9kK]/g, '').toUpperCase()
+  if (rut.length < 2) return rut
+  // Separar dígito verificador
+  const dv = rut.slice(-1)
+  let cuerpo = rut.slice(0, -1)
+  // Agregar puntos cada 3 dígitos
+  cuerpo = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${cuerpo}-${dv}`
+}
+```
+
+VALIDACIONES FRONTEND:
+- RUT no puede estar vacío
+- Contraseña mínimo 4 caracteres
+- Mostrar errores bajo cada campo
+
+COMPORTAMIENTO:
+- Al montar: verificar si ya hay sesión guardada con cargarSesion()
+  Si hay sesión válida → redirigir directo sin mostrar el login
+- Al hacer submit: llamar store.login(rut, password)
+  Si éxito y primerLogin → router.push('/onboarding')
+  Si éxito y no primerLogin → router.push('/rutas')
+  Si error → mostrar mensaje bajo el formulario
+- Teclado numérico para el campo RUT (inputmode="numeric")
+- Al presionar "Siguiente" en el teclado del RUT → focus al campo contraseña
+- Al presionar "Enter/Listo" en contraseña → submit del formulario
+- Botón deshabilitado mientras carga
+
+### 4. src/router/index.js
+Configuración completa del router con guards de navegación.
+
+Rutas:
+```javascript
+const routes = [
+  { path: '/',           redirect: '/login' },
+  { path: '/login',      component: () => import('@/views/Login.vue'),      meta: { publica: true } },
+  { path: '/onboarding', component: () => import('@/views/Onboarding/SubirDocumentos.vue'), meta: { requiereAuth: true } },
+  { path: '/rutas',      component: () => import('@/views/Rutas/ListaRutas.vue'),           meta: { requiereAuth: true } },
+  { path: '/rutas/:id',  component: () => import('@/views/Rutas/DetalleRuta.vue'),          meta: { requiereAuth: true } },
+  { path: '/solicitudes',component: () => import('@/views/Solicitudes/ListaSolicitudes.vue'),meta: { requiereAuth: true } },
+  { path: '/ajustes',    component: () => import('@/views/Ajustes/Ajustes.vue'),            meta: { requiereAuth: true } },
 ]
 ```
 
-Agregar dos campos nuevos al modelo Peaje después de longitud:
-```python
-km_ruta     = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True,
-              help_text='Kilómetro en la ruta donde está el peaje')
-radio_metros = models.PositiveIntegerField(default=800,
-              help_text='Radio de detección personalizado en metros')
+Guard de navegación:
+- Si la ruta requiere auth y no hay sesión → redirigir a /login
+- Si la ruta es /login y ya hay sesión → redirigir a /rutas
+- El guard lee la sesión desde el store de auth (cargarSesion si no está cargado)
+
+### 5. src/App.vue
+Componente raíz limpio.
+- Cargar el tema guardado en Preferences al montar (color acento + modo oscuro/claro)
+- Aplicar tema al :root con CSS variables
+- Solo mostrar <router-view />
+
+### 6. .env
+VITE_API_URL=http://localhost:8000
+
+### 7. src/assets/main.css
+```css
+@import "tailwindcss";
+
+:root {
+  --color-acento: #534AB7;
+  --color-acento-suave: #EEEDFE;
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+input, button { outline: none; }
+
+body {
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
 ```
 
-## CAMBIO 2 — Modelo Vehiculo (models.py)
+---
 
-Agregar campo después de tipo_combustible:
-```python
-categoria_peaje = models.CharField(
-    max_length=20,
-    choices=[
-        ('moto',        'Moto / Motoneta'),
-        ('liviano',     'Auto / Camioneta / SUV'),
-        ('liviano_rem', 'Auto/Camioneta con remolque'),
-        ('pesado_2',    'Bus / Camión 2 ejes'),
-        ('pesado_3',    'Camión 3+ ejes'),
-    ],
-    default='liviano',
-    help_text='Categoría de peaje del vehículo'
-)
-```
+## VISTAS VACÍAS A CREAR (solo el archivo, sin lógica aún)
 
-## CAMBIO 3 — Motor de detección (ruta_calculator.py)
+Crear estos archivos con un template mínimo para que el router no rompa:
+- src/views/Onboarding/SubirDocumentos.vue
+- src/views/Rutas/ListaRutas.vue
+- src/views/Rutas/DetalleRuta.vue
+- src/views/Solicitudes/ListaSolicitudes.vue
+- src/views/Ajustes/Ajustes.vue
 
-Reemplazar detectar_peajes_en_ruta() por versión mejorada con radio variable:
-
-```python
-def detectar_peajes_en_ruta(polyline, categoria_vehiculo='liviano', radio_default_km=0.8):
-    """
-    Detecta peajes usando radio variable por peaje (radio_metros del modelo).
-    Cada peaje tiene su propio radio de detección — los de autopistas urbanas
-    necesitan radio menor (200m) para no detectar peajes de carriles paralelos,
-    los rurales pueden tener radio mayor (1000m).
-    """
-    peajes_activos = Peaje.objects.filter(activo=True, categoria=categoria_vehiculo)
-    detectados = []
-    ids_vistos  = set()
-
-    for peaje in peajes_activos:
-        if peaje.id in ids_vistos:
-            continue
-        radio_km = (peaje.radio_metros / 1000) if peaje.radio_metros else radio_default_km
-        for punto in polyline:
-            dist = haversine_km(punto[0], punto[1], peaje.latitud, peaje.longitud)
-            if dist <= radio_km:
-                detectados.append(peaje)
-                ids_vistos.add(peaje.id)
-                break
-
-    return detectados
-```
-
-Modificar calcular_costos() para usar categoria_peaje del vehículo:
-- Recibir categoria_vehiculo como parámetro en lugar de asumir 'liviano'
-- En la vista POST /rutas/ y POST /rutas/calcular/, pasar vehiculo.categoria_peaje
-
-## CAMBIO 4 — seed_peajes.py (reemplazar completo)
-
-Usar update_or_create. Para cada entrada crear UNA fila por categoría con la tarifa REAL de esa categoría — no multiplicadores, tarifas exactas.
-
-Peajes y tarifas 2026 reales por categoría (moto, liviano, liviano_rem, pesado_2, pesado_3):
-
-Ruta 68 — aplica a Zapata (-33.4456,-70.9789), Lo Prado (-33.4012,-71.1234), Casablanca (-33.3234,-71.4123):
-normal: moto=800, liviano=2700, liviano_rem=3400, pesado_2=4800, pesado_3=8600
-punta:  moto=1200, liviano=4000, liviano_rem=5000, pesado_2=7200, pesado_3=12900
-radio_metros: 600 (carretera de montaña, radio más ajustado)
-
-Ruta 5 Norte troncales — aplica a Las Vegas (-32.8234,-71.0123), Pichidangui (-32.1456,-71.5234):
-normal: moto=1200, liviano=4050, liviano_rem=5100, pesado_2=7300, pesado_3=12950
-punta: None (tarifa plana)
-radio_metros: 1000
-
-Ruta 5 Norte — Lampa (-33.2847,-70.9142):
-normal: moto=750, liviano=2917, liviano_rem=3700, pesado_2=5250, pesado_3=9330
-radio_metros: 800
-
-Ruta 5 Norte Los Vilos–Serena — Socos (-30.7234,-71.4567), Serena (-29.9456,-71.2345):
-normal: moto=1200, liviano=4050, liviano_rem=5100, pesado_2=7300, pesado_3=12950
-radio_metros: 1000
-
-Ruta 5 Sur troncal Stgo–Talca — Río Maipo (-33.6789,-70.8901), Angostura (-33.8901,-70.8456), Talca (-35.4234,-71.6234):
-normal: moto=950, liviano=3800, liviano_rem=4800, pesado_2=6840, pesado_3=12160
-radio_metros: 1000
-
-Ruta 5 Sur lateral — mismo lat/lng que troncales pero con _lat field:
-Río Maipo lateral (-33.6820,-70.8950): moto=230, liviano=900, liviano_rem=1140, pesado_2=1620, pesado_3=2880
-radio_metros: 400 (lateral, radio chico para no confundir con troncal)
-
-Ruta 5 Sur Talca–Chillán — Chillán (-36.6234,-72.1012):
-normal: moto=900, liviano=3100, liviano_rem=3900, pesado_2=5580, pesado_3=9920
-radio_metros: 1000
-
-Ruta 5 Sur Chillán–Collipulli — Collipulli (-37.9456,-72.4345):
-normal: moto=1000, liviano=3200, liviano_rem=4030, pesado_2=5760, pesado_3=10240
-radio_metros: 1000
-
-Ruta 5 Sur Temuco–Osorno — Temuco (-38.7345,-72.5901), Osorno (-40.5678,-73.1234):
-normal: moto=950, liviano=3500, liviano_rem=4400, pesado_2=6300, pesado_3=11200
-radio_metros: 1000
-
-Ruta 57 Santiago–Los Andes — Chacabuco (-33.0234,-70.6789), Los Andes (-32.8345,-70.5901):
-normal: moto=680, liviano=2700, liviano_rem=3400, pesado_2=4860, pesado_3=8640
-radio_metros: 700
-
-Ruta 78 — Melipilla A (-33.6890,-71.2134):
-normal: moto=830, liviano=3300, liviano_rem=4160, pesado_2=5940, pesado_3=10560
-radio_metros: 500
-
-Ruta 78 — Melipilla B (-33.7234,-71.4012):
-normal: moto=1490, liviano=5940, liviano_rem=7480, pesado_2=10690, pesado_3=19010
-radio_metros: 500
-
-Ruta 60 CH — Quillota (-32.8789,-71.2345):
-normal: moto=1250, liviano=5000, liviano_rem=6300, pesado_2=9000, pesado_3=16000
-punta:  moto=1750, liviano=7000, liviano_rem=8820, pesado_2=12600, pesado_3=22400
-radio_metros: 700
-
-## CAMBIO 5 — Formulario de vehículo (frontend)
-
-En la vista de crear/editar vehículo, agregar campo select:
+Cada uno con:
 ```vue
-<div>
-  <label class="label">Categoría de peaje</label>
-  <select v-model="form.categoria_peaje" class="input">
-    <option value="moto">Moto / Motoneta</option>
-    <option value="liviano">Auto / Camioneta / SUV</option>
-    <option value="liviano_rem">Auto/Camioneta con remolque</option>
-    <option value="pesado_2">Bus / Camión 2 ejes</option>
-    <option value="pesado_3">Camión 3+ ejes</option>
-  </select>
-  <p class="text-xs text-gray-400 mt-1">
-    Define la tarifa de peaje que paga este vehículo
-  </p>
-</div>
+<template>
+  <div class="p-4">
+    <p>{{ nombre de la vista }}</p>
+  </div>
+</template>
+
+<script setup>
+</script>
 ```
 
-## CAMBIO 6 — Vista de crear ruta (Rutas.vue)
+---
 
-En el paso 3 del modal (calculadora), mostrar la categoría de peaje del vehículo seleccionado:
-Vehículo: PPU-4421 — Mercedes Actros · Diésel · Categoría: Bus/Camión 2 ejes
-Así el usuario sabe qué tarifa se está aplicando antes de confirmar.
+## CONVENCIONES
 
-## CAMBIO 7 — Migración
+- Composition API con <script setup> siempre
+- Nunca usar localStorage ni sessionStorage — siempre @capacitor/preferences
+- Nunca usar fetch directo — siempre apiFetch de services/api.js
+- Todos los textos en español
+- El RUT se envía al backend normalizado (sin puntos, con guión): "12345678-9"
+- Manejar siempre el caso de red caída con mensaje amigable: "Sin conexión. Verifica tu red."
+- El botón de submit nunca debe quedar en estado de carga si hay error — resetear cargando a false en el catch
 
-```bash
-python manage.py makemigrations --name mejorar_peajes_categorias
-python manage.py migrate
-python manage.py seed_peajes  # reemplaza datos anteriores
-```
+---
 
 ## ARCHIVOS A ENTREGAR
 
-1. models_patch.py — solo los cambios en Peaje y Vehiculo
-2. ruta_calculator_patch.py — solo detectar_peajes_en_ruta() y calcular_costos() modificados
-3. seed_peajes.py — completo, reemplaza el anterior
-4. vehiculo_form_patch.vue — solo el campo categoria_peaje a agregar en el form de vehículo
-5. rutas_paso3_patch.vue — solo la línea de categoría a mostrar en el paso 3
-6. MIGRACION.md — makemigrations → migrate → seed_peajes
+1. src/services/api.js — completo
+2. src/stores/auth.js — completo
+3. src/views/Login.vue — completo
+4. src/router/index.js — completo
+5. src/App.vue — completo
+6. src/assets/main.css — completo
+7. .env — completo
+8. Las 5 vistas vacías
 
-Sin "# resto igual".
+Cada archivo completo. Sin "// resto igual".

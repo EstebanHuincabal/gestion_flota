@@ -738,10 +738,12 @@ def login_view(request):
         "access":  str(refresh.access_token),
         "refresh": str(refresh),
         "user": {
+            "id":            user.id,
             "nombre":        user.nombre or user.email,
             "rut":           rut,
             "email":         user.email,
             "rol":           user.rol,
+            "primer_login":  user.primer_login,
             "empresa":       user.empresa.nombre if user.empresa else None,
             "empresa_id":    user.empresa_id,
             "plan_modulos":  plan_modulos,
