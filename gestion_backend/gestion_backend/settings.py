@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR.parent / '.env')   # .env centralizado en la raíz del monorepo
 
 SECRET_KEY = os.environ['SECRET_KEY']
 ENCRYPTION_KEY = os.environ['ENCRYPTION_KEY']

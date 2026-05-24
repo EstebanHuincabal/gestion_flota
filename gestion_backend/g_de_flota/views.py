@@ -733,22 +733,37 @@ def login_view(request):
         plan_nombre   = plan.get_nombre_display()
         plan_permisos = list(plan.permisos.values_list('codigo', flat=True))
 
+    # Vehículo asignado (para la app de conductores)
+    vehiculo_asignado = None
+    if user.rol == 'CONDUCTOR':
+        from .models import Asignacion
+        asignacion = Asignacion.objects.filter(conductor=user, activo=True).select_related('vehiculo').first()
+        if asignacion:
+            v = asignacion.vehiculo
+            vehiculo_asignado = {
+                'id':      v.id,
+                'patente': v.patente,
+                'marca':   v.marca,
+                'modelo':  v.modelo,
+            }
+
     return JsonResponse({
         "message": "Login exitoso",
         "access":  str(refresh.access_token),
         "refresh": str(refresh),
         "user": {
-            "id":            user.id,
-            "nombre":        user.nombre or user.email,
-            "rut":           rut,
-            "email":         user.email,
-            "rol":           user.rol,
-            "primer_login":  user.primer_login,
-            "empresa":       user.empresa.nombre if user.empresa else None,
-            "empresa_id":    user.empresa_id,
-            "plan_modulos":  plan_modulos,
-            "plan_nombre":   plan_nombre,
-            "plan_permisos": plan_permisos,
+            "id":                user.id,
+            "nombre":            user.nombre or user.email,
+            "rut":               rut,
+            "email":             user.email,
+            "rol":               user.rol,
+            "primer_login":      user.primer_login,
+            "empresa":           user.empresa.nombre if user.empresa else None,
+            "empresa_id":        user.empresa_id,
+            "vehiculo_asignado": vehiculo_asignado,
+            "plan_modulos":      plan_modulos,
+            "plan_nombre":       plan_nombre,
+            "plan_permisos":     plan_permisos,
         },
     })
 

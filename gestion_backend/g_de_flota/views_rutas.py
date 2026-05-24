@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, date as _date
 
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -11,13 +11,29 @@ from .models import (
     PeajeRuta, Rol, Ruta, Usuario, Vehiculo,
 )
 from .ruta_calculator import (
-    calcular_costos, calcular_ruta_osrm, detectar_peajes_en_ruta,
+    calcular_costos, calcular_ruta_osrm, calcular_ruta_fallback,
+    detectar_peajes_en_ruta,
 )
 
 
 # ─────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────
+
+def _iso(val):
+    """Convierte date/datetime a isoformat, o devuelve el string tal cual.
+
+    Después de asignar un string a un DateField/DateTimeField y llamar
+    a .save(), el objeto en memoria puede conservar el string original en
+    lugar del tipo Python —Django solo realiza la conversión al leer desde
+    la base de datos.  Este helper maneja ambos casos de forma segura.
+    """
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
 
 def _tiene_permiso(user, codigo: str) -> bool:
     if user.rol == Rol.SUPERADMIN:
@@ -57,9 +73,9 @@ def _ruta_dict(ruta, detalle=False):
         'conductor':              ruta.conductor.nombre if ruta.conductor else None,
         'vehiculo_id':            ruta.vehiculo_id,
         'vehiculo':               str(ruta.vehiculo) if ruta.vehiculo else None,
-        'fecha_programada':       ruta.fecha_programada.isoformat() if ruta.fecha_programada else None,
-        'fecha_inicio':           ruta.fecha_inicio.isoformat() if ruta.fecha_inicio else None,
-        'fecha_fin':              ruta.fecha_fin.isoformat() if ruta.fecha_fin else None,
+        'fecha_programada':       _iso(ruta.fecha_programada),
+        'fecha_inicio':           _iso(ruta.fecha_inicio),
+        'fecha_fin':              _iso(ruta.fecha_fin),
         'km_inicio':              ruta.km_inicio,
         'km_fin':                 ruta.km_fin,
         'km_reales':              ruta.km_reales,
@@ -74,7 +90,7 @@ def _ruta_dict(ruta, detalle=False):
         'origen':                 origen_nombre,
         'destino':                destino_nombre,
         'notas':                  ruta.notas,
-        'created_at':             ruta.created_at.isoformat(),
+        'created_at':             _iso(ruta.created_at),
     }
 
     if detalle:
@@ -89,7 +105,7 @@ def _ruta_dict(ruta, detalle=False):
                 'latitud':       p.latitud,
                 'longitud':      p.longitud,
                 'notas':         p.notas,
-                'hora_estimada': p.hora_estimada.isoformat() if p.hora_estimada else None,
+                'hora_estimada': _iso(p.hora_estimada),
             }
             for p in paradas_qs
         ]
@@ -131,12 +147,20 @@ def _procesar_paradas_y_calcular(ruta, paradas_data, es_punta, empresa):
     aviso_osrm = None
     if len(puntos) >= 2:
         osrm = calcular_ruta_osrm(puntos)
+        es_fallback = False
         if not osrm:
-            aviso_osrm = 'No se pudo calcular la ruta con OSRM. Los datos de distancia no están disponibles.'
-        else:
+            osrm = calcular_ruta_fallback(puntos)
+            es_fallback = True
+
+        if osrm:
             ruta.distancia_km = osrm['distancia_km']
             ruta.duracion_min = osrm['duracion_min']
             ruta.polyline = osrm['polyline']
+            if es_fallback:
+                aviso_osrm = (
+                    'OSRM no disponible. La distancia es una estimación en línea recta '
+                    '(×1.3 de sinuosidad). Los costos son aproximados.'
+                )
 
             config   = ConfiguracionRuta.get_for_empresa(empresa)
             cat      = ruta.vehiculo.categoria_peaje if ruta.vehiculo else 'liviano'
@@ -159,6 +183,61 @@ def _procesar_paradas_y_calcular(ruta, paradas_data, es_punta, empresa):
 
     ruta.save()
     return aviso_osrm
+
+
+# ─────────────────────────────────────────
+# Validaciones de negocio
+# ─────────────────────────────────────────
+
+def _validar_conflictos(fecha_str, conductor_id, vehiculo_id, excluir_ruta_id=None):
+    """
+    Valida:
+      • Fecha no anterior a hoy
+      • Conductor sin ruta pendiente/activa ese día
+      • Vehículo sin ruta pendiente/activa ese día
+
+    Retorna dict de errores (vacío = sin conflictos).
+    Rutas canceladas/finalizadas NO cuentan como conflicto.
+    Si no hay fecha_programada, no se aplica ninguna validación de conflicto.
+    """
+    errores = {}
+
+    if not fecha_str:
+        return errores
+
+    try:
+        fecha = _date.fromisoformat(str(fecha_str))
+    except ValueError:
+        return {'fecha_programada': 'Fecha inválida.'}
+
+    if fecha < _date.today():
+        errores['fecha_programada'] = 'La fecha no puede ser anterior a hoy.'
+        return errores   # sin fecha válida no tiene sentido continuar
+
+    qs = Ruta.objects.filter(
+        fecha_programada=fecha,
+        estado__in=['pendiente', 'activo'],
+    )
+    if excluir_ruta_id:
+        qs = qs.exclude(pk=excluir_ruta_id)
+
+    if conductor_id:
+        conflicto = qs.filter(conductor_id=conductor_id).first()
+        if conflicto:
+            errores['conductor_id'] = (
+                f'El conductor ya tiene la ruta "{conflicto.nombre}" '
+                f'asignada para esa fecha.'
+            )
+
+    if vehiculo_id:
+        conflicto = qs.filter(vehiculo_id=vehiculo_id).first()
+        if conflicto:
+            errores['vehiculo_id'] = (
+                f'El vehículo ya está asignado a la ruta "{conflicto.nombre}" '
+                f'para esa fecha.'
+            )
+
+    return errores
 
 
 # ─────────────────────────────────────────
@@ -226,6 +305,15 @@ class RutasListView(APIView):
 
         if 'origen' not in tipos or 'destino' not in tipos:
             return Response({'error': 'Se requiere al menos un origen y un destino.'}, status=400)
+
+        # ── Validar conflictos de fecha / conductor / vehículo ────────────────
+        errores = _validar_conflictos(
+            data.get('fecha_programada'),
+            data.get('conductor_id'),
+            data.get('vehiculo_id'),
+        )
+        if errores:
+            return Response(errores, status=400)
 
         ruta = Ruta(
             empresa=empresa,
@@ -310,6 +398,16 @@ class RutaDetailView(APIView):
         if 'vehiculo_id' in data:
             vid = data['vehiculo_id']
             ruta.vehiculo = Vehiculo.objects.filter(pk=vid, flota__empresa=empresa).first() if vid else None
+
+        # ── Validar conflictos con los valores finales ─────────────────────────
+        errores = _validar_conflictos(
+            data.get('fecha_programada', ruta.fecha_programada),
+            data.get('conductor_id',    ruta.conductor_id),
+            data.get('vehiculo_id',     ruta.vehiculo_id),
+            excluir_ruta_id=ruta.id,
+        )
+        if errores:
+            return Response(errores, status=400)
 
         ruta.save()
 

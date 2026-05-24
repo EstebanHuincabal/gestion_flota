@@ -6,6 +6,9 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
 
+  // Leer variables de entorno desde la raíz del monorepo (gestion_flota/.env)
+  envDir: '..',
+
   resolve: {
     alias: {
       // Permite usar '@/...' igual que en el sistema web

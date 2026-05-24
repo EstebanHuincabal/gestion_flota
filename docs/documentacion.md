@@ -1,7 +1,7 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 2.1 · **Última actualización:** Mayo 2026  
-> **Stack:** Django 5 · Vue 3 · SQLite · JWT
+> **Versión:** 2.2 · **Última actualización:** Mayo 2026  
+> **Stack:** Django 5 · Vue 3 · Capacitor 8 · SQLite · JWT
 
 ---
 
@@ -17,6 +17,7 @@
 8. [Planes de suscripción](#8-planes-de-suscripción)
 9. [Módulos del sistema](#9-módulos-del-sistema)
     - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
+    - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
 10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
 11. [Modelo de datos](#11-modelo-de-datos)
 12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
@@ -44,6 +45,7 @@ Un usuario **Superadmin** opera a nivel global: administra las empresas cliente,
 | **Rutas y Trabajos** | Planificación de rutas con mapa Leaflet, cálculo OSRM, detección de peajes y liquidación automática de costos |
 | **Notificaciones** | Alertas in-app en tiempo real (WebSocket) + preferencias de canal |
 | **Permisos** | Una capa basada en el plan: módulos visibles y acciones disponibles se definen a nivel de plan de suscripción |
+| **App Conductores** | Aplicación móvil (Vue 3 + Capacitor 8) para conductores: consulta de rutas asignadas, inicio/finalización con km y costos reales, mapa Leaflet, soporte offline con SQLite |
 
 ---
 
@@ -52,23 +54,23 @@ Un usuario **Superadmin** opera a nivel global: administra las empresas cliente,
 El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
 
 ```
-┌─────────────────────────────────────────────────┐
-│              Cliente (Navegador)                 │
-│   Vue 3 SPA · Vite · TailwindCSS · Chart.js      │
-│              http://localhost:7183               │
-└────────────────────┬────────────────────────────┘
-                     │ HTTP/JSON (JWT Bearer)
-                     │ WebSocket (ws://)
-┌────────────────────▼────────────────────────────┐
-│             Backend (Django 5 / ASGI)            │
-│   Django REST Framework · SimpleJWT · Channels   │
-│              http://localhost:8000               │
-└────────────────────┬────────────────────────────┘
-                     │ ORM
-┌────────────────────▼────────────────────────────┐
-│              Base de datos                       │
-│              SQLite (desarrollo)                 │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────┐  ┌─────────────────────────┐
+│   Panel Web (Navegador)  │  │  App Conductores (móvil) │
+│  Vue 3 · Chart.js        │  │  Vue 3 · Capacitor 8     │
+│  http://localhost:7183   │  │  http://localhost:5174   │
+└────────────┬────────────┘  └────────────┬────────────┘
+             │ HTTP/JSON (JWT Bearer)       │ HTTP/JSON (JWT Bearer)
+             │ WebSocket (ws://)            │
+┌────────────▼─────────────────────────────▼────────────┐
+│                Backend (Django 5 / ASGI)               │
+│      Django REST Framework · SimpleJWT · Channels      │
+│                 http://localhost:8000                  │
+└────────────────────────┬───────────────────────────────┘
+                         │ ORM
+┌────────────────────────▼───────────────────────────────┐
+│                    Base de datos                        │
+│                  SQLite (desarrollo)                    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Tecnologías
@@ -85,7 +87,7 @@ El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
 | openpyxl | — | Exportación de reportes a XLSX |
 | python-dotenv | — | Gestión de variables de entorno |
 
-**Frontend**
+**Frontend web**
 
 | Tecnología | Versión | Propósito |
 |---|---|---|
@@ -95,17 +97,30 @@ El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
 | TailwindCSS | — | Estilos utilitarios |
 | Chart.js | — | Visualizaciones y gráficos |
 
+**App móvil de conductores**
+
+| Tecnología | Versión | Propósito |
+|---|---|---|
+| Vue.js 3 (Composition API) | — | Framework SPA |
+| Vite + Capacitor 8 | — | Bundler + empaquetado Android/iOS |
+| Pinia | — | Gestión de estado global |
+| @capacitor/preferences | — | Almacenamiento seguro de tokens (Keychain/EncryptedSharedPreferences) |
+| @capacitor-community/sqlite | — | Base de datos local para modo offline |
+| @capacitor/network | — | Detección de conectividad |
+| Leaflet.js | — | Mapas interactivos con paradas y polilínea |
+
 ---
 
 ## 3. Estructura del repositorio
 
 ```
 gestion_flota/
-├── iniciar.ps1                   # Script de arranque conjunto (Windows)
+├── iniciar.ps1                   # Script de arranque conjunto (3 servicios)
+├── .env                          # Variables de entorno centralizadas (no commitear)
 ├── docs/
 │   └── documentacion.md          # Este archivo
 │
-├── gestion-frontend/             # Aplicación Vue 3
+├── gestion-frontend/             # Panel web — Vue 3 SPA
 │   ├── src/
 │   │   ├── App.vue               # Raíz de la aplicación
 │   │   ├── router/               # Definición de rutas del SPA
@@ -143,29 +158,63 @@ gestion_flota/
 │   │       └── usuarios/
 │   └── package.json
 │
+├── app_conductor/                # App móvil conductores — Vue 3 + Capacitor 8
+│   ├── src/
+│   │   ├── main.js               # Punto de entrada
+│   │   ├── router/
+│   │   │   └── index.js          # Rutas + guard de autenticación
+│   │   ├── stores/
+│   │   │   ├── auth.js           # Sesión: login con RUT, tokens en Preferences
+│   │   │   └── rutas.js          # Estado de rutas + offline optimista
+│   │   ├── services/
+│   │   │   ├── api.js            # Cliente HTTP con auto-refresh JWT
+│   │   │   ├── db.js             # SQLite (nativo) / Map en memoria (navegador)
+│   │   │   └── sync.js           # Sincronización offline → online
+│   │   ├── views/
+│   │   │   ├── Login.vue         # Login con RUT chileno + validación módulo 11
+│   │   │   ├── Rutas/
+│   │   │   │   ├── ListaRutas.vue   # Lista activa, pendientes e historial
+│   │   │   │   └── DetalleRuta.vue  # Mapa Leaflet + acción iniciar/finalizar
+│   │   │   ├── Solicitudes/
+│   │   │   │   └── ListaSolicitudes.vue
+│   │   │   ├── Ajustes/
+│   │   │   │   └── Ajustes.vue
+│   │   │   └── Onboarding/
+│   │   │       └── SubirDocumentos.vue
+│   │   ├── components/
+│   │   │   ├── BottomNav.vue     # Barra de navegación inferior (3 tabs)
+│   │   │   └── RutaCard.vue      # Tarjeta de ruta (variantes: activa/pendiente/finalizada)
+│   │   ├── utils/
+│   │   │   └── formato.js        # formatCLP, formatDuracion, formatFechaRuta, iniciales
+│   │   └── assets/
+│   │       └── main.css          # Tailwind + variables CSS --color-acento
+│   ├── vite.config.js            # Puerto 5174 · envDir '..' · proxy /api → :8000
+│   └── package.json
+│
 └── gestion_backend/              # Backend Django
     ├── manage.py
-    ├── .env                      # Variables de entorno (no commitear)
     ├── requirements.txt
     ├── g_de_flota/               # App principal
     │   ├── models.py             # Modelos ORM
-    │   ├── views.py              # Endpoints principales
+    │   ├── views.py              # Endpoints principales (incluye login con vehiculo_asignado)
     │   ├── views_gastos.py       # Endpoints de finanzas
     │   ├── views_reportes.py     # Endpoints de reportes
-    │   ├── views_documentos.py   # Endpoints de documentos
+    │   ├── views_documentos.py   # Endpoints de documentos (logs enriquecidos)
     │   ├── views_planes.py       # Endpoints de planes
     │   ├── views_config.py       # Perfil y configuración
-    │   ├── views_rutas.py        # Endpoints de rutas y trabajos
+    │   ├── views_rutas.py        # Endpoints de rutas y trabajos (panel web)
+    │   ├── views_conductor.py    # Endpoints exclusivos app móvil conductores
     │   ├── ruta_calculator.py    # Motor de cálculo (OSRM, peajes, costos)
-    │   ├── serializers.py        # Serializadores DRF
+    │   ├── audit.py              # registrar_log() + _parse_navegador/so() + _diff_campos()
+    │   ├── serializers.py        # Serializadores DRF (LogAuditoria incluye navegador/so)
     │   ├── backends.py           # Backend de autenticación por RUT
     │   ├── middleware.py         # Middleware de seguridad
     │   └── management/
     │       └── commands/
     │           └── seed_peajes.py  # Carga inicial de peajes de Chile
     └── gestion_backend/
-        ├── settings.py
-        ├── urls.py               # Router principal (79 endpoints)
+        ├── settings.py           # load_dotenv desde raíz del monorepo
+        ├── urls.py               # Router principal (82+ endpoints)
         ├── asgi.py               # Configuración ASGI / Channels
         └── wsgi.py
 ```
@@ -182,11 +231,16 @@ gestion_flota/
 
 ### Arranque rápido (recomendado)
 
-Desde la raíz del proyecto ejecutar el script PowerShell que levanta ambos servidores simultáneamente:
+Desde la raíz del proyecto ejecutar el script PowerShell que levanta los **3 servicios** simultáneamente en pestañas separadas de Windows Terminal:
 
 ```powershell
 .\iniciar.ps1
 ```
+
+Los tres servicios que se inician son:
+- **Backend Django** → `http://localhost:8000`
+- **Panel web** → `http://localhost:7183`
+- **App conductores** → `http://localhost:5174`
 
 ### Arranque manual
 
@@ -212,7 +266,7 @@ python manage.py runserver
 # → API disponible en http://localhost:8000
 ```
 
-**Frontend (terminal 2)**
+**Panel web (terminal 2)**
 
 ```bash
 cd gestion-frontend
@@ -225,15 +279,29 @@ npm run dev
 # → Interfaz disponible en http://localhost:7183
 ```
 
+**App conductores (terminal 3)**
+
+```bash
+cd app_conductor
+
+# Instalar dependencias (primera vez)
+npm install
+
+# Iniciar servidor de desarrollo (web/browser)
+npm run dev
+# → App disponible en http://localhost:5174
+```
+
 ### Variables de entorno necesarias
 
-Crear `gestion_backend/.env` con el siguiente contenido mínimo (ver sección 15 para detalle completo):
+Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`) que es leído por Django y por Vite de ambos frontends (ver sección 15 para detalle completo):
 
 ```ini
 SECRET_KEY=<clave-django-aleatoria>
 ENCRYPTION_KEY=<clave-cifrado-fernet>
 FERNET_KEY=<clave-fernet-base64>
 DEBUG=True
+VITE_API_URL=
 ```
 
 ---
@@ -509,7 +577,7 @@ BORRADOR → PENDIENTE → ACTIVO → FINALIZADO
 Al crear o calcular una ruta, el sistema:
 
 1. **Geocodificación:** Nominatim (`nominatim.openstreetmap.org`) resuelve cada dirección a coordenadas (debounce 500 ms).
-2. **Trazado OSRM:** El motor de enrutamiento `router.project-osrm.org` calcula el polilínea óptimo entre todas las paradas. Si el servicio no está disponible, la ruta se guarda sin distancia estimada.
+2. **Trazado OSRM:** El motor de enrutamiento `router.project-osrm.org` calcula el polilínea óptimo entre todas las paradas. Si OSRM no está disponible, se aplica el **cálculo fallback Haversine**: distancia en línea recta entre paradas × 1.3 (factor de sinuosidad) y velocidad media de 60 km/h para la duración. La ruta se guarda con los costos estimados y muestra un aviso amarillo al usuario.
 3. **Detección de peajes:** Se filtran los peajes activos cuya `categoria` coincide con la `categoria_peaje` del vehículo, usando el radio de detección individual de cada peaje (`radio_metros` — entre 400 m y 1000 m según la ruta).
 4. **Estimación de costos:**
    - Combustible: `(km / 100) × consumo_l_100km × precio_litro`
@@ -522,6 +590,20 @@ Al marcar una ruta como finalizada:
 - Se actualiza `vehiculo.km_actuales = km_fin`.
 - Se crea automáticamente un `GastoOperativo` de categoría `combustible`.
 - Si hubo peajes, se crea un segundo `GastoOperativo` de categoría `peaje`.
+
+#### Validaciones al crear/editar una ruta
+
+Al crear o editar una ruta se aplican las siguientes reglas antes de guardar:
+
+| Validación | Regla | Respuesta |
+|---|---|---|
+| **Fecha no pasada** | `fecha_programada` debe ser ≥ hoy | 400 `{fecha_programada: "La fecha no puede..."}` |
+| **Conflicto de conductor** | El conductor no puede tener otra ruta `pendiente` o `activa` el mismo día | 400 `{conductor_id: "El conductor ya tiene..."}` |
+| **Conflicto de vehículo** | El vehículo no puede estar asignado a otra ruta `pendiente` o `activa` el mismo día | 400 `{vehiculo_id: "El vehículo ya está..."}` |
+
+Las rutas en estado `cancelado` o `finalizado` **no** cuentan como conflicto. Al editar una ruta, se excluye a sí misma del chequeo. Si no hay `fecha_programada`, no se aplica ninguna validación de conflicto.
+
+**Frontend:** la validación de fecha pasada también se aplica localmente en el paso 1 del asistente. Los errores de conflicto se muestran en un banner rojo dentro del modal, sin cerrarlo.
 
 #### Gestión de peajes
 
@@ -543,6 +625,66 @@ Cada peaje tiene su propio `radio_metros` (400–1000 m según la ruta) para evi
 **Backend:** `views_rutas.py` · `ruta_calculator.py`  
 **Modelos:** `Ruta` · `Parada` · `Peaje` · `PeajeRuta` · `ConfiguracionRuta`  
 **Permiso requerido:** `rutas.ver` (ver lista y detalle), `rutas.crear` (crear, editar, cambiar estado)
+
+---
+
+### 9.14 App Móvil de Conductores
+
+Aplicación Vue 3 + Capacitor 8 orientada exclusivamente al rol `CONDUCTOR`. Accede al mismo backend Django mediante JWT, con soporte **offline-first** usando `@capacitor-community/sqlite`.
+
+#### Pantallas
+
+| Pantalla | Ruta | Descripción |
+|---|---|---|
+| `Login.vue` | `/login` | Autenticación por RUT chileno + contraseña. Validación módulo 11 en el cliente. |
+| `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. |
+| `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Costos / Detalles). Mapa Leaflet (carga dinámica desde CDN). Lista combinada de paradas + peajes. Bottom-sheet modales con validación para iniciar y finalizar ruta. Toast de confirmación. |
+| `ListaSolicitudes.vue` | `/solicitudes` | Notificaciones del conductor desde `/api/notificaciones/`. Paginación, pull-to-refresh, marcar leídas (individual y todas), íconos por tipo (actividad / mantención / documentos / seguridad). |
+| `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. Botón "Cerrar sesión" con bottom-sheet de confirmación. |
+
+#### Componentes
+
+| Componente | Descripción |
+|---|---|
+| `BottomNav.vue` | Barra inferior fija con 3 tabs: Rutas, Solicitudes, Ajustes |
+| `RutaCard.vue` | Tarjeta de ruta con tres variantes: `activa` (borde verde, pulso), `pendiente` (indigo), `finalizada` (gris compacta) |
+| `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino/peaje). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
+
+#### Servicios
+
+| Servicio | Archivo | Descripción |
+|---|---|---|
+| API HTTP | `services/api.js` | `apiFetch()` con auto-refresh JWT en 401. Tokens en `@capacitor/preferences`. |
+| Base de datos local | `services/db.js` | SQLite en dispositivo nativo; Map en memoria en navegador. Guarda rutas y acciones pendientes. |
+| Sincronización | `services/sync.js` | Detecta reconexión (`@capacitor/network`) y envía acciones encoladas durante el modo offline. |
+
+#### Autenticación con RUT chileno
+
+1. El usuario ingresa el RUT en formato `12.345.678-9` (formato display).
+2. El frontend normaliza a `12345678-9` (igual que `normalizar_rut()` del backend).
+3. Valida dígito verificador con algoritmo módulo 11 antes de llamar a la API.
+4. Si `primer_login = true`, redirige a la pantalla de onboarding; si no, a la lista de rutas.
+
+#### Modo offline
+
+1. Al cargar rutas, si hay conexión se descarga desde la API y se persiste en SQLite.
+2. Sin conexión, se sirven los datos almacenados localmente y se muestra el banner naranja.
+3. Las acciones de inicio/fin de ruta se encolan en `acciones_pendientes` y se sincronizan automáticamente al recuperar la conexión.
+
+#### Endpoints exclusivos (app conductores)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/conductor/rutas/` | Lista rutas del conductor autenticado (pendiente, activo, finalizado) |
+| `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, peajes, vehículo con `km_actuales` y `consumo_l_100km` |
+| `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo |
+| `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin`, costos reales, notas y actualiza `km_actuales` |
+| `GET` | `/api/notificaciones/` | Notificaciones del conductor paginadas (20/página); filtros `leida`, `tipo` |
+| `POST` | `/api/notificaciones/leer/` | Marca notificaciones como leídas (`ids: []` o `todas: true`) |
+
+**Backend:** `views_conductor.py`  
+**Puerto de desarrollo:** `http://localhost:5174`  
+**CORS configurado:** `http://localhost:5174`, `capacitor://localhost`, `http://localhost`
 
 ---
 
@@ -737,6 +879,18 @@ Authorization: Bearer <access_token>
 | `GET` | `/api/empresa/rutas/peajes/` | Listar peajes activos (filtrable por ruta/categoría) |
 | `GET/PUT` | `/api/empresa/rutas/configuracion/` | Configuración de precios y radio de detección |
 
+### App conductores (endpoints exclusivos)
+
+> Requieren `rol = CONDUCTOR`. Usan el mismo JWT que el resto de la API.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/conductor/rutas/` | Rutas asignadas al conductor (pendiente / activo / finalizado) |
+| `POST` | `/api/conductor/rutas/<id>/iniciar/` | Inicia la ruta — registra `km_inicio` y `fecha_inicio` |
+| `POST` | `/api/conductor/rutas/<id>/finalizar/` | Finaliza la ruta — registra `km_fin`, costos reales y notas |
+
+**Backend:** `views_conductor.py`
+
 ### Notificaciones
 
 | Método | Endpoint | Descripción |
@@ -928,26 +1082,37 @@ El componente `AppToast.vue` escucha este evento globalmente y muestra la alerta
 
 ## 15. Variables de entorno
 
-El archivo `gestion_backend/.env` no debe commitearse al repositorio. Contiene:
+### Archivo centralizado
 
-| Variable | Requerida | Descripción |
-|---|---|---|
-| `SECRET_KEY` | Sí | Clave secreta de Django |
-| `ENCRYPTION_KEY` | Sí | Clave base para derivar la clave Fernet |
-| `FERNET_KEY` | Sí | Clave Fernet en formato base64-url |
-| `DEBUG` | No | `True` para desarrollo, `False` para producción |
-| `ALLOWED_HOSTS` | No | Hosts permitidos (separados por coma) |
-| `EMAIL_BACKEND` | No | Backend de email (por defecto: consola) |
-| `EMAIL_HOST` | No | Servidor SMTP |
-| `EMAIL_PORT` | No | Puerto SMTP (por defecto: 587) |
-| `EMAIL_USE_TLS` | No | Usar TLS (por defecto: `True`) |
-| `EMAIL_HOST_USER` | No | Usuario SMTP |
-| `EMAIL_HOST_PASSWORD` | No | Contraseña SMTP |
-| `DEFAULT_FROM_EMAIL` | No | Dirección remitente de emails |
+Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No debe commitearse al repositorio.
+
+- **Django** lo lee con `python-dotenv`: `load_dotenv(BASE_DIR.parent / '.env')` (en `settings.py`).
+- **Vite** (panel web y app conductores) lo lee con `envDir: '..'` en `vite.config.js`.
+
+| Variable | Requerida | Leída por | Descripción |
+|---|---|---|---|
+| `SECRET_KEY` | Sí | Django | Clave secreta de Django |
+| `ENCRYPTION_KEY` | Sí | Django | Clave base para derivar la clave Fernet |
+| `FERNET_KEY` | Sí | Django | Clave Fernet en formato base64-url |
+| `DEBUG` | No | Django | `True` para desarrollo, `False` para producción |
+| `ALLOWED_HOSTS` | No | Django | Hosts permitidos (separados por coma) |
+| `VITE_API_URL` | No | Vite | URL base de la API; vacío = peticiones relativas (proxy Vite) |
+| `EMAIL_BACKEND` | No | Django | Backend de email (por defecto: consola) |
+| `EMAIL_HOST` | No | Django | Servidor SMTP |
+| `EMAIL_PORT` | No | Django | Puerto SMTP (por defecto: 587) |
+| `EMAIL_USE_TLS` | No | Django | Usar TLS (por defecto: `True`) |
+| `EMAIL_HOST_USER` | No | Django | Usuario SMTP |
+| `EMAIL_HOST_PASSWORD` | No | Django | Contraseña SMTP |
+| `DEFAULT_FROM_EMAIL` | No | Django | Dirección remitente de emails |
 
 ### Configuración CORS
 
-En desarrollo, el backend acepta peticiones desde `http://localhost:7183`. En producción, configurar `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` en `settings.py` con los dominios reales.
+En desarrollo, el backend acepta peticiones desde:
+- `http://localhost:7183` (panel web)
+- `http://localhost:5174` (app conductores en navegador)
+- `capacitor://localhost` y `http://localhost` (app conductores en dispositivo)
+
+En producción, configurar `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` en `settings.py` con los dominios reales.
 
 ---
 

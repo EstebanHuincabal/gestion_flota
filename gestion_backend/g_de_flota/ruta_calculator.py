@@ -45,6 +45,33 @@ def calcular_ruta_osrm(paradas):
         return None
 
 
+def calcular_ruta_fallback(puntos):
+    """
+    Fallback cuando OSRM no está disponible.
+    Distancia = suma de segmentos Haversine × 1.3 (factor de sinuosidad).
+    Duración  = distancia_km / 60 km·h (velocidad media en carretera).
+    Polyline  = sólo los waypoints (el frontend lo dibuja como línea punteada).
+    """
+    if len(puntos) < 2:
+        return None
+    distancia_recta = sum(
+        haversine_km(
+            puntos[i]['lat'], puntos[i]['lng'],
+            puntos[i + 1]['lat'], puntos[i + 1]['lng'],
+        )
+        for i in range(len(puntos) - 1)
+    )
+    distancia_km = round(distancia_recta * 1.3, 2)
+    duracion_min = max(1, round((distancia_km / 60) * 60))
+    polyline     = [[p['lat'], p['lng']] for p in puntos]
+    return {
+        'distancia_km': distancia_km,
+        'duracion_min': duracion_min,
+        'polyline':     polyline,
+        'es_fallback':  True,
+    }
+
+
 def _dist_peaje_segmento(plat, plng, alat, alng, blat, blng):
     """
     Distancia mínima en km entre un punto P y el segmento A-B.

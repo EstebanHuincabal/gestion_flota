@@ -616,25 +616,36 @@
           </div>
 
           <!-- Footer modal -->
-          <div class="flex items-center justify-between p-4 border-t border-gray-100">
-            <button v-if="paso > 1" @click="paso--"
-              class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition">
-              Anterior
-            </button>
-            <div v-else></div>
-            <div class="flex gap-2">
-              <button @click="cerrarModal" class="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition">
-                Cancelar
+          <div class="border-t border-gray-100">
+            <!-- Banner de error (conflictos / fecha pasada / errores backend) -->
+            <div v-if="errorModal"
+                 class="flex items-start gap-2 px-4 py-3 bg-red-50 border-b border-red-100">
+              <svg class="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              <p class="text-xs text-red-700 whitespace-pre-line leading-relaxed">{{ errorModal }}</p>
+            </div>
+
+            <div class="flex items-center justify-between p-4">
+              <button v-if="paso > 1" @click="paso--; errorModal = ''"
+                class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition">
+                Anterior
               </button>
-              <button v-if="paso < 3" @click="siguientePaso"
-                :disabled="paso === 1 && !form.nombre.trim()"
-                class="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                Siguiente
-              </button>
-              <button v-else @click="guardarRuta" :disabled="guardando"
-                class="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">
-                {{ guardando ? 'Guardando...' : (modoEdicion ? 'Guardar cambios' : 'Crear ruta') }}
-              </button>
+              <div v-else></div>
+              <div class="flex gap-2">
+                <button @click="cerrarModal" class="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition">
+                  Cancelar
+                </button>
+                <button v-if="paso < 3" @click="siguientePaso"
+                  :disabled="paso === 1 && !form.nombre.trim()"
+                  class="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                  Siguiente
+                </button>
+                <button v-else @click="guardarRuta" :disabled="guardando"
+                  class="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">
+                  {{ guardando ? 'Guardando...' : (modoEdicion ? 'Guardar cambios' : 'Crear ruta') }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -803,6 +814,7 @@ const paso        = ref(1)
 const guardando   = ref(false)
 const calculando  = ref(false)
 const calculoResult = ref(null)
+const errorModal  = ref('')   // mensaje de error a mostrar dentro del modal
 
 const formInicial = () => ({
   tipo: 'carga',
@@ -973,13 +985,26 @@ function abrirModalEditar(ruta) {
 }
 
 function cerrarModal() {
-  modalCrear.value      = false
-  geoSugerencias.value  = {}
+  modalCrear.value        = false
+  errorModal.value        = ''
+  geoSugerencias.value    = {}
   autoFillConductor.value = false
   autoFillVehiculo.value  = false
 }
 
 async function siguientePaso() {
+  errorModal.value = ''
+
+  // Validación de fecha al salir del paso 1
+  if (paso.value === 1 && form.value.fecha_programada) {
+    const hoy    = new Date(); hoy.setHours(0, 0, 0, 0)
+    const elegida = new Date(form.value.fecha_programada + 'T00:00:00')
+    if (elegida < hoy) {
+      errorModal.value = 'La fecha programada no puede ser anterior a hoy.'
+      return
+    }
+  }
+
   if (paso.value === 2) {
     paso.value = 3
     await ejecutarCalculo()
@@ -1013,7 +1038,8 @@ async function ejecutarCalculo() {
 }
 
 async function guardarRuta() {
-  guardando.value = true
+  guardando.value  = true
+  errorModal.value = ''
   const payload = {
     tipo:             form.value.tipo,
     nombre:           form.value.nombre,
@@ -1036,13 +1062,31 @@ async function guardarRuta() {
       body: JSON.stringify(payload),
     })
     if (res.ok) {
+      const data = await res.json()
       cerrarModal()
       await cargarRutas()
       toast('exito', modoEdicion.value ? 'Ruta actualizada correctamente.' : 'Ruta creada correctamente.')
+      // Mostrar aviso de cálculo fallback si viene en la respuesta
+      if (data.aviso) {
+        setTimeout(() => toast('info', data.aviso), 400)
+      }
     } else {
-      const err = await res.json()
-      toast('error', err.error || 'No se pudo guardar la ruta.')
+      const errData = await res.json().catch(() => ({}))
+      // El backend devuelve un dict con claves específicas para conflictos
+      const msgs = [
+        errData.fecha_programada,
+        errData.conductor_id,
+        errData.vehiculo_id,
+        errData.error,
+      ].filter(Boolean)
+      if (msgs.length) {
+        errorModal.value = msgs.join('\n')
+      } else {
+        errorModal.value = errData.detail || 'No se pudo guardar la ruta.'
+      }
     }
+  } catch {
+    errorModal.value = 'Error de conexión al guardar la ruta.'
   } finally {
     guardando.value = false
   }

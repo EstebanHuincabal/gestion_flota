@@ -46,6 +46,10 @@ from g_de_flota.views_rutas import (
     RutaIniciarView, RutaFinalizarView, RutaCancelarView,
     RouteCalcularView, PeajesListView, RutaConfigView,
 )
+from g_de_flota.views_conductor import (
+    conductor_rutas, conductor_detalle_ruta,
+    conductor_iniciar_ruta, conductor_finalizar_ruta,
+)
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -144,6 +148,12 @@ urlpatterns = [
     path('api/empresa/reportes/documentos/',   reporte_documentos,    name='reporte-documentos'),
     path('api/empresa/reportes/combustible/',  reporte_combustible,   name='reporte-combustible'),
     path('api/admin/reportes/empresas/',       reporte_admin_empresas, name='reporte-admin-empresas'),
+
+    # App conductores — endpoints exclusivos para la app móvil
+    path('api/conductor/rutas/',                              conductor_rutas,           name='conductor-rutas'),
+    path('api/conductor/rutas/<int:ruta_id>/iniciar/',        conductor_iniciar_ruta,    name='conductor-iniciar-ruta'),
+    path('api/conductor/rutas/<int:ruta_id>/finalizar/',      conductor_finalizar_ruta,  name='conductor-finalizar-ruta'),
+    path('api/conductor/rutas/<int:ruta_id>/',                conductor_detalle_ruta,    name='conductor-detalle-ruta'),
 
     # Rutas y trabajos — rutas específicas ANTES de las rutas con :id
     path('api/empresa/rutas/calcular/',                RouteCalcularView.as_view(),  name='rutas-calcular'),

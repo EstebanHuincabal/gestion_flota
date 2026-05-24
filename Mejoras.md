@@ -1,298 +1,345 @@
-Vas a implementar la pantalla de Login para la app móvil de conductores construida con Vue 3 + Capacitor.
+Vas a implementar la pantalla "Detalle de Ruta" de la app móvil de conductores. El login y ListaRutas ya están implementados.
 
 ---
 
-## CONTEXTO DE LA APP
+## CONTEXTO
 
-- Stack: Vue 3 Composition API + Vite + TailwindCSS 4 + Capacitor
-- Estado global: Pinia
-- Navegación: Vue Router
-- La app es SOLO para conductores (rol='CONDUCTOR')
-- El backend es Django con autenticación JWT (mismo backend del sistema web)
-- Puerto backend desarrollo: http://localhost:8000
-- Los datos sensibles (nombre, RUT) vienen cifrados con Fernet — el backend los descifra y retorna en texto plano en la respuesta del login
+- Stack: Vue 3 + Capacitor + TailwindCSS 4 + Pinia
+- apiFetch en src/services/api.js (ya existe)
+- Store auth en src/stores/auth.js (ya existe)
+- Store rutas en src/stores/rutas.js (ya existe, con iniciarRuta y finalizarRuta)
+- sync.js y db.js ya existen
+- Ruta del router: /rutas/:id → DetalleRuta.vue
+- BottomNav.vue ya existe
+- formatCLP, formatDuracion, formatFechaRuta en src/utils/formato.js ya existen
 
 ---
 
-## FLUJO DE LOGIN
+## ENDPOINT
 
-1. Conductor ingresa RUT y contraseña
-2. POST /api/login/ con { rut, password }
-3. Backend retorna:
+GET /api/conductor/rutas/:id/
+Retorna el objeto ruta completo igual al listado pero con paradas detalladas y peajes:
 ```json
 {
-  "access": "jwt_token",
-  "refresh": "refresh_token",
-  "usuario": {
-    "id": 1,
-    "nombre": "Juan Muñoz",
-    "email": "juan@email.com",
-    "rol": "CONDUCTOR",
-    "primer_login": true,
-    "empresa": { "id": 1, "nombre": "Transportes del Norte" },
-    "vehiculo_asignado": { "id": 3, "patente": "PPU-4421", "marca": "Mercedes", "modelo": "Actros" }
-  }
+  "id": 1,
+  "nombre": "STG → VAL #084",
+  "tipo": "carga",
+  "estado": "pendiente",
+  "origen": "Bodega Central, Pudahuel",
+  "destino": "Puerto Valparaíso, Muelle 5",
+  "fecha_programada": "2025-05-20T08:30:00",
+  "fecha_inicio": null,
+  "fecha_fin": null,
+  "km_inicio": null,
+  "km_fin": null,
+  "distancia_km": 142.5,
+  "duracion_min": 165,
+  "costo_combustible_est": 71000,
+  "costo_peajes_est": 14400,
+  "costo_total_est": 85400,
+  "costo_combustible_real": null,
+  "costo_peajes_real": null,
+  "costo_total_real": null,
+  "polyline": [[-33.4489, -70.6693], [-33.4234, -71.0123], [-33.0456, -71.6234]],
+  "paradas": [
+    { "id": 1, "orden": 1, "tipo": "origen",  "nombre": "Bodega Central", "direccion": "Av. Industrial 1234", "latitud": -33.4489, "longitud": -70.6693, "notas": "" },
+    { "id": 2, "orden": 2, "tipo": "parada",  "nombre": "Planta Lo Prado","direccion": "Ruta 68 km 8",      "latitud": -33.4234, "longitud": -71.0123, "notas": "Entrega parcial" },
+    { "id": 3, "orden": 3, "tipo": "destino", "nombre": "Puerto Valparaíso","direccion": "Av. Errázuriz 25", "latitud": -33.0456, "longitud": -71.6234, "notas": "" }
+  ],
+  "peajes_ruta": [
+    { "id": 1, "nombre": "Zapata",     "ruta": "Ruta 68", "tarifa": 2700, "latitud": -33.4456, "longitud": -70.9789 },
+    { "id": 2, "nombre": "Lo Prado",   "ruta": "Ruta 68", "tarifa": 4800, "latitud": -33.4012, "longitud": -71.1234 },
+    { "id": 3, "nombre": "Casablanca", "ruta": "Ruta 68", "tarifa": 2700, "latitud": -33.3234, "longitud": -71.4123 }
+  ],
+  "notas": "",
+  "vehiculo": { "id": 3, "patente": "PPU-4421", "marca": "Mercedes", "modelo": "Actros", "tipo_combustible": "diesel" },
+  "conductor": { "id": 5, "nombre": "Juan Muñoz" }
 }
 ```
-4. Si primer_login === true → navegar a /onboarding
-5. Si primer_login === false → navegar a /rutas (pantalla principal)
-6. Si el rol no es 'CONDUCTOR' → mostrar error "Esta app es solo para conductores"
 
 ---
 
-## ALMACENAMIENTO DE TOKENS
+## VISTA: src/views/Rutas/DetalleRuta.vue
 
-Usar @capacitor/preferences (NO localStorage ni sessionStorage — no son confiables en Capacitor):
+### Estructura general
+- Header con botón atrás + título de la ruta + badge de estado
+- Contenido scrolleable
+- Botón de acción fijo al fondo (según estado)
+- BottomNav debajo del botón de acción
 
+### Header
+[←]  STG → VAL #084          [• En curso]
+- Botón atrás: router.back()
+- Badge de estado con colores: pendiente=azul, activo=verde animado, finalizado=gris, cancelado=rojo
+
+### Tabs de contenido
+Tres tabs: Ruta | Costos | Detalles
+Tabs en pills horizontales, desplazables si no caben.
+El tab activo usa el color de acento.
+
+---
+
+## TAB 1 — RUTA
+
+### Mapa (componente MapaRuta)
+Altura fija 220px.
+Cargar Leaflet dinámicamente desde unpkg si window.L no existe.
+Mostrar:
+- Polyline azul (weight 4, opacity 0.8) con los puntos de la ruta
+- Marcadores por tipo:
+  - origen: verde (#1D9E75), ícono pin SVG inline
+  - parada: azul (#378ADD)
+  - destino: rojo (#E24B4A)
+  - peaje: naranja (#EF9F27), ícono más pequeño
+- fitBounds a todos los puntos con padding [20,20]
+- Tile layer OpenStreetMap
+
+Para modo offline: intentar cargar tiles desde cache del filesystem.
+Si Leaflet no carga (sin conexión) mostrar placeholder gris con mensaje "Mapa no disponible sin conexión".
+
+### Lista de paradas
+Debajo del mapa, conectadas con línea vertical punteada:
+●  Bodega Central                    Origen
+Av. Industrial 1234, Pudahuel
+Salida programada: Hoy 08:30
+┆
+●  Planta Lo Prado                   Parada 1
+Ruta 68 km 8
+Entrega parcial
+┆
+◆  Zapata                            Peaje
+Ruta 68 · $2.700
+┆
+●  Puerto Valparaíso                 Destino
+Av. Errázuriz 25
+
+Línea vertical punteada entre paradas (border-left dashed en el contenedor).
+Puntos de colores según tipo (mismo esquema que el mapa).
+Peajes aparecen entre paradas según su orden geográfico en la ruta.
+
+### Datos de la ruta
+Debajo de las paradas, fila de chips informativos:
+[🗺 142 km]  [⏱ 2h 45min]  [📅 Hoy 08:30]
+
+---
+
+## TAB 2 — COSTOS
+
+### Estimados vs reales
+Si la ruta no está finalizada: solo columna de estimados.
+Si está finalizada: dos columnas (Estimado | Real) con diferencia coloreada.
+                Estimado      Real      Diferencia
+Combustible         $71.000      $68.500      -$2.500 ✓
+Peajes              $14.400      $14.400         $0   =
+─────────────────────────────────────────────────────
+Total               $85.400      $82.900      -$2.500 ✓
+
+Verde si el real fue menor al estimado.
+Rojo si el real fue mayor.
+Gris si son iguales.
+
+### Desglose de peajes
+Lista de peajes detectados en la ruta:
+Zapata         Ruta 68      $2.700
+Lo Prado       Ruta 68      $4.800
+Casablanca     Ruta 68      $2.700
+────────────────────────────────
+Total peajes               $10.200
+
+### Datos de combustible
+Distancia:        142 km
+Consumo est.:     12 L/100km
+Litros est.:      17.0 L
+Precio/litro:     $1.250 (diésel)
+Total est.:       $71.000
+
+---
+
+## TAB 3 — DETALLES
+
+Información completa de la ruta:
+- Tipo: badge Carga / Personas
+- Vehículo: patente + marca + modelo + combustible
+- Conductor: nombre
+- Fecha programada
+- Fecha inicio real (si aplica)
+- Fecha fin real (si aplica)
+- Km inicio / km fin / km recorridos reales (si aplica)
+- Notas (si hay)
+
+---
+
+## BOTÓN DE ACCIÓN FIJO
+
+Según el estado de la ruta, mostrar un botón diferente fijo al fondo
+(sobre el BottomNav, con padding-bottom adecuado):
+
+### Estado: pendiente
+[▶  Iniciar ruta]   ← verde, grande
+Al tocar → abre ModalIniciarRuta
+
+### Estado: activo
+[✓  Finalizar ruta]   ← morado/acento, grande
+Al tocar → abre ModalFinalizarRuta
+
+### Estado: finalizado o cancelado
+Sin botón de acción. Solo mostrar un banner informativo:
+Estado: Finalizado · 19/05/2025 14:32
+
+---
+
+## MODAL: ModalIniciarRuta (componente interno)
+
+Sheet modal que sube desde abajo (bottom sheet, no modal centrado).
+Altura: 40% de la pantalla.
+──────────────────────
+▬▬▬           ← handle para arrastrar
+Iniciar ruta
+Odómetro actual
+[    142.580    km]   ← input numérico, pre-rellena con vehiculo.km_actuales
+[Cancelar]  [Iniciar ▶]
+──────────────────────
+
+Al confirmar:
+1. Llamar rutasStore.iniciarRuta(ruta.id, { km_inicio: kmInicio })
+2. Si online: POST directo → mostrar éxito → actualizar estado local
+3. Si offline: encolar acción → mostrar "Se registrará cuando haya conexión" → actualizar estado local optimistamente
+4. Cerrar modal y actualizar vista
+
+---
+
+## MODAL: ModalFinalizarRuta (componente interno)
+
+Sheet modal más alto: 65% de la pantalla.
+────────────────────────
+▬▬▬
+Finalizar ruta
+Odómetro final
+[    143.000    km]   ← input numérico obligatorio
+Costo combustible real
+[     68.500    CLP]  ← pre-rellena con costo_combustible_est, editable
+Costo peajes real
+[     14.400    CLP]  ← pre-rellena con costo_peajes_est, editable
+Notas (opcional)
+[                  ]
+⚠ Se crearán gastos operativos automáticamente
+[Cancelar]   [Finalizar ✓]
+────────────────────────
+
+Validaciones:
+- km_fin > km_inicio (si km_inicio existe)
+- km_fin obligatorio
+- costos >= 0
+
+Al confirmar:
+1. Llamar rutasStore.finalizarRuta(ruta.id, datos)
+2. Mismo comportamiento online/offline que iniciar
+3. Mostrar toast de éxito: "Ruta finalizada. Se registraron los gastos."
+4. router.push('/rutas')
+
+---
+
+## COMPONENTE: src/components/MapaRuta.vue (crear)
+
+Props:
 ```javascript
-import { Preferences } from '@capacitor/preferences'
+{
+  paradas:  Array,   // [{tipo, nombre, latitud, longitud}]
+  polyline: Array,   // [[lat, lng], ...]
+  peajes:   Array,   // [{nombre, ruta, tarifa, latitud, longitud}]
+  altura:   String,  // default '220px'
+}
+```
 
-// Guardar
-await Preferences.set({ key: 'access_token', value: token })
-await Preferences.set({ key: 'refresh_token', value: refreshToken })
-await Preferences.set({ key: 'usuario', value: JSON.stringify(usuario) })
+Cargar Leaflet desde unpkg.com con script dinámico.
+Si window.L ya existe no cargarlo de nuevo.
+onUnmounted: limpiar instancia del mapa.
+watch profundo en paradas y polyline para re-renderizar.
 
-// Leer
-const { value } = await Preferences.get({ key: 'access_token' })
-
-// Eliminar (logout)
-await Preferences.remove({ key: 'access_token' })
+Íconos SVG inline por tipo (sin dependencias externas):
+```javascript
+function crearIcono(tipo) {
+  const colores = {
+    origen:  '#1D9E75',
+    parada:  '#378ADD',
+    destino: '#E24B4A',
+    peaje:   '#EF9F27',
+  }
+  const color = colores[tipo] || '#378ADD'
+  const size  = tipo === 'peaje' ? 20 : 26
+  const svg = `<svg width="${size}" height="${size*1.3}" viewBox="0 0 24 32"
+    xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20S24 21 24 12C24 5.4 18.6 0 12 0z"
+      fill="${color}"/>
+    <circle cx="12" cy="12" r="5" fill="white"/>
+  </svg>`
+  return L.divIcon({
+    html: svg, className: '',
+    iconSize: [size, size*1.3],
+    iconAnchor: [size/2, size*1.3],
+    popupAnchor: [0, -size*1.3],
+  })
+}
 ```
 
 ---
 
-## ARCHIVOS A CREAR
+## ANIMACIONES Y UX
 
-### 1. src/services/api.js
-Servicio centralizado de HTTP. Todas las llamadas al backend pasan por aquí.
-
-```javascript
-import { Preferences } from '@capacitor/preferences'
-
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
-export async function apiFetch(url, options = {}) {
-  const { value: token } = await Preferences.get({ key: 'access_token' })
-
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers,
-  }
-
-  const res = await fetch(`${BASE_URL}${url}`, { ...options, headers })
-
-  if (res.status === 401) {
-    // Intentar refresh automático
-    const refreshed = await intentarRefresh()
-    if (refreshed) {
-      // Reintentar la llamada original con el nuevo token
-      const { value: newToken } = await Preferences.get({ key: 'access_token' })
-      const retryRes = await fetch(`${BASE_URL}${url}`, {
-        ...options,
-        headers: { ...headers, Authorization: `Bearer ${newToken}` },
-      })
-      if (!retryRes.ok) throw new Error('Sesión expirada')
-      return retryRes.json()
-    }
-    // Refresh falló — limpiar sesión
-    await limpiarSesion()
-    throw new Error('SESION_EXPIRADA')
-  }
-
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}))
-    throw new Error(error.error || error.detail || 'Error del servidor')
-  }
-
-  return res.json()
-}
-
-async function intentarRefresh() {
-  try {
-    const { value: refresh } = await Preferences.get({ key: 'refresh_token' })
-    if (!refresh) return false
-    const res = await fetch(`${BASE_URL}/api/token/refresh/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh }),
-    })
-    if (!res.ok) return false
-    const data = await res.json()
-    await Preferences.set({ key: 'access_token', value: data.access })
-    return true
-  } catch {
-    return false
-  }
-}
-
-export async function limpiarSesion() {
-  await Preferences.remove({ key: 'access_token' })
-  await Preferences.remove({ key: 'refresh_token' })
-  await Preferences.remove({ key: 'usuario' })
-}
-```
-
-### 2. src/stores/auth.js
-Store Pinia de autenticación.
-
-Estado:
-- usuario: null | objeto usuario
-- cargando: false
-- error: null
-
-Acciones:
-- login(rut, password): llama POST /api/login/, guarda tokens y usuario en Preferences, retorna { success, primerLogin }
-- logout(): limpia Preferences y resetea estado
-- cargarSesion(): al iniciar la app, lee Preferences y restaura el estado si hay sesión guardada
-- get estaAutenticado(): boolean
-- get esConductor(): boolean
-
-### 3. src/views/Login.vue
-Pantalla de login completa.
-
-DISEÑO:
-- Fondo con color de acento suave (usando variable CSS --color-acento, default #534AB7)
-- Logo o ícono de la app centrado arriba (ti-truck grande)
-- Nombre de la app: "Conductor" en texto blanco grande
-- Card blanca redondeada (border-radius 20px) en la parte inferior
-  que ocupa 60% de la pantalla
-- Dentro del card:
-  - Título "Iniciar sesión"
-  - Input RUT con formato automático (12.345.678-9 mientras escribe)
-  - Input contraseña con toggle mostrar/ocultar (ícono ti-eye / ti-eye-off)
-  - Mensaje de error en rojo si falla
-  - Botón "Ingresar" grande con color de acento
-  - Loading spinner dentro del botón mientras carga
-
-FORMATO DE RUT:
-```javascript
-function formatearRut(valor) {
-  // Eliminar todo excepto números y K
-  let rut = valor.replace(/[^0-9kK]/g, '').toUpperCase()
-  if (rut.length < 2) return rut
-  // Separar dígito verificador
-  const dv = rut.slice(-1)
-  let cuerpo = rut.slice(0, -1)
-  // Agregar puntos cada 3 dígitos
-  cuerpo = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-  return `${cuerpo}-${dv}`
-}
-```
-
-VALIDACIONES FRONTEND:
-- RUT no puede estar vacío
-- Contraseña mínimo 4 caracteres
-- Mostrar errores bajo cada campo
-
-COMPORTAMIENTO:
-- Al montar: verificar si ya hay sesión guardada con cargarSesion()
-  Si hay sesión válida → redirigir directo sin mostrar el login
-- Al hacer submit: llamar store.login(rut, password)
-  Si éxito y primerLogin → router.push('/onboarding')
-  Si éxito y no primerLogin → router.push('/rutas')
-  Si error → mostrar mensaje bajo el formulario
-- Teclado numérico para el campo RUT (inputmode="numeric")
-- Al presionar "Siguiente" en el teclado del RUT → focus al campo contraseña
-- Al presionar "Enter/Listo" en contraseña → submit del formulario
-- Botón deshabilitado mientras carga
-
-### 4. src/router/index.js
-Configuración completa del router con guards de navegación.
-
-Rutas:
-```javascript
-const routes = [
-  { path: '/',           redirect: '/login' },
-  { path: '/login',      component: () => import('@/views/Login.vue'),      meta: { publica: true } },
-  { path: '/onboarding', component: () => import('@/views/Onboarding/SubirDocumentos.vue'), meta: { requiereAuth: true } },
-  { path: '/rutas',      component: () => import('@/views/Rutas/ListaRutas.vue'),           meta: { requiereAuth: true } },
-  { path: '/rutas/:id',  component: () => import('@/views/Rutas/DetalleRuta.vue'),          meta: { requiereAuth: true } },
-  { path: '/solicitudes',component: () => import('@/views/Solicitudes/ListaSolicitudes.vue'),meta: { requiereAuth: true } },
-  { path: '/ajustes',    component: () => import('@/views/Ajustes/Ajustes.vue'),            meta: { requiereAuth: true } },
-]
-```
-
-Guard de navegación:
-- Si la ruta requiere auth y no hay sesión → redirigir a /login
-- Si la ruta es /login y ya hay sesión → redirigir a /rutas
-- El guard lee la sesión desde el store de auth (cargarSesion si no está cargado)
-
-### 5. src/App.vue
-Componente raíz limpio.
-- Cargar el tema guardado en Preferences al montar (color acento + modo oscuro/claro)
-- Aplicar tema al :root con CSS variables
-- Solo mostrar <router-view />
-
-### 6. .env
-VITE_API_URL=http://localhost:8000
-
-### 7. src/assets/main.css
+Bottom sheet modal:
 ```css
-@import "tailwindcss";
-
-:root {
-  --color-acento: #534AB7;
-  --color-acento-suave: #EEEDFE;
+.bottom-sheet {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  border-radius: 20px 20px 0 0;
+  background: white;
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
 }
-
-* { -webkit-tap-highlight-color: transparent; }
-
-input, button { outline: none; }
-
-body {
-  overscroll-behavior: none;
-  user-select: none;
-  -webkit-user-select: none;
+.bottom-sheet.visible {
+  transform: translateY(0);
 }
 ```
+
+Overlay oscuro detrás del modal con transition de opacity.
+Al tocar el overlay → cerrar modal.
+Handle drag: al arrastrar el handle hacia abajo cierra el modal.
+
+Tab activo: transición suave con underline animado usando transition-all.
+
+Skeleton loader mientras carga el detalle:
+- Placeholder gris del mapa (220px, border-radius 12px)
+- 3 líneas grises animadas para las paradas
 
 ---
 
-## VISTAS VACÍAS A CREAR (solo el archivo, sin lógica aún)
+## MANEJO DE ERRORES
 
-Crear estos archivos con un template mínimo para que el router no rompa:
-- src/views/Onboarding/SubirDocumentos.vue
-- src/views/Rutas/ListaRutas.vue
-- src/views/Rutas/DetalleRuta.vue
-- src/views/Solicitudes/ListaSolicitudes.vue
-- src/views/Ajustes/Ajustes.vue
-
-Cada uno con:
-```vue
-<template>
-  <div class="p-4">
-    <p>{{ nombre de la vista }}</p>
-  </div>
-</template>
-
-<script setup>
-</script>
-```
+- Si el id de la ruta no existe → mostrar "Ruta no encontrada" con botón volver
+- Si falla la carga → mostrar "Error al cargar la ruta" con botón reintentar
+- Si no hay conexión y no hay cache → mostrar "Sin conexión y sin datos guardados"
+- Si OSRM no cargó el polyline → mostrar mapa solo con marcadores (sin línea de ruta)
 
 ---
 
 ## CONVENCIONES
 
-- Composition API con <script setup> siempre
-- Nunca usar localStorage ni sessionStorage — siempre @capacitor/preferences
-- Nunca usar fetch directo — siempre apiFetch de services/api.js
-- Todos los textos en español
-- El RUT se envía al backend normalizado (sin puntos, con guión): "12345678-9"
-- Manejar siempre el caso de red caída con mensaje amigable: "Sin conexión. Verifica tu red."
-- El botón de submit nunca debe quedar en estado de carga si hay error — resetear cargando a false en el catch
+- Composition API <script setup> siempre
+- Nunca fetch directo — siempre apiFetch
+- Nunca localStorage — siempre @capacitor/preferences o SQLite
+- Textos en español
+- Touch targets mínimo 44px
+- Bottom sheets con safe-area para iPhone X+:
+  padding-bottom: calc(16px + env(safe-area-inset-bottom))
+- El handle del bottom sheet debe ser arrastrable con touch events
+- Montos siempre con formatCLP()
+- Duraciones siempre con formatDuracion()
 
 ---
 
 ## ARCHIVOS A ENTREGAR
 
-1. src/services/api.js — completo
-2. src/stores/auth.js — completo
-3. src/views/Login.vue — completo
-4. src/router/index.js — completo
-5. src/App.vue — completo
-6. src/assets/main.css — completo
-7. .env — completo
-8. Las 5 vistas vacías
+1. src/views/Rutas/DetalleRuta.vue — completo
+2. src/components/MapaRuta.vue — completo
 
-Cada archivo completo. Sin "// resto igual".
+Sin "// resto igual".
