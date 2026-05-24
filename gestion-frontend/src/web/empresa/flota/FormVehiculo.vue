@@ -25,6 +25,7 @@ const form = ref({
   modelo: '',
   anio: '',
   tipo_combustible: 'bencina',
+  categoria_peaje: 'liviano',
   km_actuales: 0,
 })
 
@@ -44,7 +45,7 @@ const cargarVehiculo = async () => {
     const res = await apiFetchEmpresa(`/api/empresa/vehiculos/${vehiculoId}/`)
     if (!res.ok) throw new Error('Vehículo no encontrado')
     const v = await res.json()
-    form.value = { flota: v.flota, patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, km_actuales: v.km_actuales }
+    form.value = { flota: v.flota, patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, categoria_peaje: v.categoria_peaje || 'liviano', km_actuales: v.km_actuales }
   } catch (e) { error.value = e.message }
   finally { cargando.value = false }
 }
@@ -122,6 +123,18 @@ onMounted(async () => {
           </div>
         </div>
 
+        <div class="form-group">
+          <label class="label">Categoría de peaje</label>
+          <select v-model="form.categoria_peaje" class="input select">
+            <option value="moto">Moto / Motoneta</option>
+            <option value="liviano">Auto / Camioneta / SUV</option>
+            <option value="liviano_rem">Auto/Camioneta con remolque</option>
+            <option value="pesado_2">Bus / Camión 2 ejes</option>
+            <option value="pesado_3">Camión 3+ ejes</option>
+          </select>
+          <p class="field-help">Define la tarifa de peaje que paga este vehículo</p>
+        </div>
+
         <div class="form-row">
           <div class="form-group">
             <label class="label">Marca</label>
@@ -178,6 +191,7 @@ onMounted(async () => {
 .input.input-error { border-color: #EF4444; }
 .select { cursor: pointer; }
 .field-error { font-size: 0.8125rem; color: #EF4444; margin: 0; }
+.field-help  { font-size: 0.8125rem; color: #9CA3AF; margin: 0.25rem 0 0; }
 .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; }
 .btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; font-family: inherit; }
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }

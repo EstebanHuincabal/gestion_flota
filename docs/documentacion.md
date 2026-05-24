@@ -510,10 +510,10 @@ Al crear o calcular una ruta, el sistema:
 
 1. **Geocodificación:** Nominatim (`nominatim.openstreetmap.org`) resuelve cada dirección a coordenadas (debounce 500 ms).
 2. **Trazado OSRM:** El motor de enrutamiento `router.project-osrm.org` calcula el polilínea óptimo entre todas las paradas. Si el servicio no está disponible, la ruta se guarda sin distancia estimada.
-3. **Detección de peajes:** Se filtran los peajes activos en la base de datos que estén dentro del radio de detección configurado (por defecto 500 m) de cualquier punto del polilínea.
+3. **Detección de peajes:** Se filtran los peajes activos cuya `categoria` coincide con la `categoria_peaje` del vehículo, usando el radio de detección individual de cada peaje (`radio_metros` — entre 400 m y 1000 m según la ruta).
 4. **Estimación de costos:**
    - Combustible: `(km / 100) × consumo_l_100km × precio_litro`
-   - Peajes: suma de tarifas detectadas según la categoría del vehículo
+   - Peajes: suma de tarifas de los peajes detectados (tarifa_normal o tarifa_punta según horario), ya filtradas por categoría del vehículo
    - Se usan los precios configurados en `ConfiguracionRuta` de la empresa.
 
 #### Liquidación al finalizar
@@ -525,9 +525,19 @@ Al marcar una ruta como finalizada:
 
 #### Gestión de peajes
 
-Los peajes se cargan con el comando de gestión `seed_peajes` (21 puntos de cobro en rutas principales de Chile: Ruta 5 Norte/Sur, Ruta 68, Ruta 78, Ruta 60 CH, Ruta 57). Cada peaje tiene 5 registros por ubicación (liviano, moto, camión 2 ejes, camión 3+ ejes, bus), con tarifas aproximadas del MOP.
+Los peajes se cargan con el comando `seed_peajes` (21 ubicaciones × 5 categorías = 105 registros). Rutas cubiertas: Ruta 5 Norte/Sur, Ruta 68, Ruta 78, Ruta 60 CH, Ruta 57.
 
-La empresa puede ajustar el radio de detección y los precios de combustible desde el panel de configuración.
+**Categorías de peaje disponibles** (modelo `Vehiculo.categoria_peaje`):
+
+| Valor | Etiqueta |
+|---|---|
+| `moto` | Moto / Motoneta |
+| `liviano` | Auto / Camioneta / SUV (default) |
+| `liviano_rem` | Auto/Camioneta con remolque |
+| `pesado_2` | Bus / Camión 2 ejes |
+| `pesado_3` | Camión 3+ ejes |
+
+Cada peaje tiene su propio `radio_metros` (400–1000 m según la ruta) para evitar falsos positivos en autopistas con carriles paralelos. El radio global de `ConfiguracionRuta` ya no se usa en la detección; se mantiene solo como referencia de configuración.
 
 **Vistas:** `Rutas.vue` · `MapaRuta.vue`  
 **Backend:** `views_rutas.py` · `ruta_calculator.py`  
@@ -550,6 +560,36 @@ Cada usuario configura sus preferencias de canal (in-app, email) por categoría 
 Registro de eventos de seguridad y actividad del sistema. Accesible únicamente por SUPERADMIN.
 
 **Vista:** `Logs.vue`
+
+**Campos almacenados por evento:**
+
+| Campo | Descripción |
+|---|---|
+| `tipo` | `SEGURIDAD` o `ACTIVIDAD` |
+| `accion` | Código del evento (`login_exitoso`, `documento_subido`, etc.) |
+| `usuario` | FK al usuario que generó la acción |
+| `ip` | IP del cliente (soporta proxy `X-Forwarded-For`) |
+| `user_agent` | User-Agent completo del navegador |
+| `so` | Sistema operativo detectado (Windows 10/11, macOS, Android, iOS, Linux) |
+| `metodo` | Método HTTP de la request (GET, POST, PUT, DELETE) |
+| `endpoint` | URL path que generó el evento (ej: `/api/empresa/documentos/`) |
+| `detalle` | JSON con contexto específico — incluye `cambios` en ediciones |
+| `fecha` | Timestamp con auto_now_add |
+
+**Campos calculados en el serializer** (no almacenados en BD):
+- `navegador` — nombre del browser extraído del `user_agent` (Chrome, Edge, Firefox, Opera, Safari, Internet Explorer, Otro)
+- `descripcion` — oración legible en español que resume el evento (ej: "Juan subió Permiso de circulación para ABC-123")
+
+**Diff antes/después en ediciones** — los eventos de edición de vehículo, conductor, flota, mantención y documento incluyen en `detalle.cambios` una lista de campos modificados con valor anterior y nuevo:
+```json
+{ "cambios": [{"campo": "marca", "antes": "Toyota", "despues": "Ford"}] }
+```
+
+**Detalles enriquecidos de documentos** — todos los eventos de documentos registran: ID, tipo, entidad, nombre del archivo, patente del vehículo o nombre del conductor, fechas de emisión/vencimiento y notas.
+
+**Helpers en `audit.py`:** `registrar_log()`, `_parse_navegador(ua)`, `_parse_so(ua)`, `_diff_campos(antes, despues)`, `_snap(obj, campos)`.
+
+**Filtros disponibles en la UI:** tipo, acción, usuario/IP, rango de fechas. Paginación de 50 registros.
 
 ### 9.12 Configuración de Cuenta
 
@@ -783,7 +823,7 @@ Usuario (CONDUCTOR) ──< Documento (docs_c)
 | `MantencionProgramada` | Instancia programada de una regla sobre un vehículo |
 | `AlertaMantencion` | Alerta generada por proximidad de vencimiento |
 | `Notificacion` | Notificación in-app por usuario |
-| `LogAuditoria` | Registro de eventos de seguridad y actividad |
+| `LogAuditoria` | Registro de eventos de seguridad y actividad — campos: tipo, accion, usuario (FK), detalle (JSON), ip, **user_agent**, fecha |
 | `Peaje` | Punto de cobro de peaje con coordenadas, tarifa y categoría vehicular |
 | `ConfiguracionRuta` | Precios de combustible y radio de detección de peajes por empresa (1:1) |
 | `Ruta` | Ruta planificada con conductor, vehículo, estado, costos estimados y reales |
@@ -911,4 +951,3 @@ En desarrollo, el backend acepta peticiones desde `http://localhost:7183`. En pr
 
 ---
 
-*Documentación generada para el equipo de desarrollo. Para contribuir a este documento, editar `docs/documentacion.md` en el repositorio.*

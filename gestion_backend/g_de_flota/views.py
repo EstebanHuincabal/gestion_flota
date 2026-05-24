@@ -23,7 +23,7 @@ from .models import (
     Ruta,
 )
 from .views_planes import verificar_limite_plan, verificar_modulo_plan
-from .audit import registrar_log
+from .audit import registrar_log, _diff_campos, _snap
 from .notificaciones import notificar, notificar_admins_empresa
 from .serializers import (
     EmpresaSerializer,
@@ -241,6 +241,77 @@ def dashboard_global_view(request):
     top_empresas_10 = Empresa.objects.annotate(num_vehiculos=Count('flotas__vehiculos')).order_by('-num_vehiculos')[:10]
     top_empresas_bar = [{"nombre": e.nombre, "vehiculos": e.num_vehiculos} for e in top_empresas_10]
 
+    # ── S1: MRR histórico 12 meses ───────────────────────────────
+    mrr_hist_labels, mrr_hist_data = [], []
+    for i in range(11, -1, -1):
+        dm = now.month - i
+        mes_obj = now.replace(
+            year=now.year - 1 if dm <= 0 else now.year,
+            month=(dm + 12 if dm <= 0 else dm),
+            day=1, hour=0, minute=0, second=0, microsecond=0,
+        )
+        fin_mes = (mes_obj + timedelta(days=32)).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0)
+        mrr_mes = _calc_mrr(Empresa.objects.filter(created_at__lt=fin_mes, estado='activa'))
+        mrr_hist_labels.append(f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}")
+        mrr_hist_data.append(mrr_mes)
+
+    # ── S2: Usuarios nuevos por mes (12 meses) ───────────────────
+    hace_12m = now - timedelta(days=365)
+    rows_usu = (
+        Usuario.objects.filter(rol__in=[Rol.USUARIO, Rol.CONDUCTOR], date_joined__gte=hace_12m)
+        .annotate(mes=TruncMonth('date_joined'))
+        .values('mes').annotate(total=Count('id')).order_by('mes')
+    )
+    usu_map = {r['mes'].strftime('%Y-%m'): r['total'] for r in rows_usu if r['mes']}
+    usu_labels, usu_data = [], []
+    curr_usu = now.replace(day=1)
+    meses_usu = []
+    for _ in range(12):
+        meses_usu.append(curr_usu.strftime('%Y-%m'))
+        curr_usu = (curr_usu - timedelta(days=1)).replace(day=1)
+    for k in reversed(meses_usu):
+        y, m = k.split('-')
+        usu_labels.append(f"{MESES_ES[int(m)-1]} {y[2:]}")
+        usu_data.append(usu_map.get(k, 0))
+
+    # ── S3: Top 8 empresas con más alertas predictivas vencidas ──
+    alertas_glob_qs = (
+        MantencionProgramada.objects
+        .filter(estado='activa', fecha_siguiente__lte=now.date())
+        .values('vehiculo__flota__empresa__nombre')
+        .annotate(alertas=Count('id'))
+        .order_by('-alertas')[:8]
+    )
+    empresas_alertas = [
+        {'nombre': r['vehiculo__flota__empresa__nombre'], 'alertas': r['alertas']}
+        for r in alertas_glob_qs
+    ]
+
+    # ── S4: Top 10 marcas de vehículos en toda la plataforma ─────
+    top_marcas_qs = (
+        Vehiculo.objects.values('marca')
+        .annotate(total=Count('id')).order_by('-total')[:10]
+    )
+    top_marcas_global = [
+        {'marca': r['marca'] or 'Sin marca', 'total': r['total']}
+        for r in top_marcas_qs
+    ]
+
+    # ── S5: Usuarios activos últimos 30 días (por día) ───────────
+    hace_30 = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows_activos = (
+        Usuario.objects.filter(last_login__gte=hace_30)
+        .annotate(dia=TruncDay('last_login'))
+        .values('dia').annotate(total=Count('id')).order_by('dia')
+    )
+    activos_map = {r['dia'].date(): r['total'] for r in rows_activos if r['dia']}
+    activos_labels, activos_data = [], []
+    for i in range(30):
+        d = (hace_30 + timedelta(days=i)).date()
+        activos_labels.append(f"{d.day:02d} {MESES_ES[d.month - 1]}")
+        activos_data.append(activos_map.get(d, 0))
+
     return Response({
         "kpis": {
             "empresas_activas":    empresas_activas,
@@ -259,20 +330,23 @@ def dashboard_global_view(request):
                 "labels": list(distribucion_flota.keys()),
                 "data":   list(distribucion_flota.values()),
             },
-            "top_empresas":           top_empresas_data,
-            "distribucion_planes":    distribucion_planes,
+            "top_empresas":             top_empresas_data,
+            "distribucion_planes":      distribucion_planes,
             "distribucion_combustible": distribucion_combustible,
-            "top_empresas_bar":       top_empresas_bar,
+            "top_empresas_bar":         top_empresas_bar,
+            "mrr_historico":   {"labels": mrr_hist_labels, "data": mrr_hist_data},
+            "usuarios_nuevos": {"labels": usu_labels,      "data": usu_data},
+            "activos_30d":     {"labels": activos_labels,  "data": activos_data},
+            "top_marcas_global": top_marcas_global,
         },
-        "sin_actividad": sin_actividad,
+        "sin_actividad":    sin_actividad,
+        "empresas_alertas": empresas_alertas,
     })
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def empresa_dashboard_view(request):
-    # El dashboard es accesible a todo USUARIO y SUPERADMIN.
-    # CONDUCTOR no tiene panel web.
     if request.user.rol == Rol.CONDUCTOR:
         return Response({"detail": "Sin permisos."}, status=403)
 
@@ -286,267 +360,299 @@ def empresa_dashboard_view(request):
         periodo = '12m'
 
     hoy = timezone.now().date()
+    MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
-    # KPIs
-    total_flotas      = Flota.objects.filter(empresa=empresa).count()
-    total_vehiculos   = Vehiculo.objects.filter(flota__empresa=empresa).count()
-    total_conductores = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR).count()
-    mantenciones_pendientes = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa, estado='pendiente'
-    ).count()
-    docs_por_vencer = Documento.objects.filter(
-        entidad='vehiculo',
-        vehiculo__flota__empresa=empresa,
+    # ── Permisos de dashboard por categoría ──────────────────────
+    p_flota       = tiene_permiso(request.user, 'dashboard.flota')
+    p_mant        = tiene_permiso(request.user, 'dashboard.mantenimiento')
+    p_finanzas    = tiene_permiso(request.user, 'dashboard.finanzas')
+    p_docs        = tiene_permiso(request.user, 'dashboard.documentos')
+    p_rutas       = tiene_permiso(request.user, 'dashboard.rutas')
+    p_conductores = tiene_permiso(request.user, 'dashboard.conductores')
+
+    # Sin ningún permiso → panel vacío con indicador
+    if not any([p_flota, p_mant, p_finanzas, p_docs, p_rutas, p_conductores]):
+        return Response({
+            "sin_acceso": True,
+            "kpis": {}, "charts": {}, "widgets": {},
+            "permisos_dashboard": {
+                "flota": False, "mantenimiento": False, "finanzas": False,
+                "documentos": False, "rutas": False, "conductores": False,
+            },
+        })
+
+    # ── Pre-cómputos compartidos ──────────────────────────────────
+    total_vehiculos = Vehiculo.objects.filter(flota__empresa=empresa).count()
+    mant_pend = Mantencion.objects.filter(
+        vehiculo__flota__empresa=empresa, estado='pendiente').count() if p_mant or p_flota else 0
+    docs_pv = Documento.objects.filter(
+        entidad='vehiculo', vehiculo__flota__empresa=empresa,
         fecha_vencimiento__gte=hoy,
         fecha_vencimiento__lte=hoy + timedelta(days=30),
-    ).count()
+    ).count() if p_docs or p_flota else 0
 
-    MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+    # ── KPIs (según permiso) ──────────────────────────────────────
+    kpis = {}
+    if p_flota:
+        kpis['total_flotas']    = Flota.objects.filter(empresa=empresa).count()
+        kpis['total_vehiculos'] = total_vehiculos
+    if p_conductores:
+        kpis['total_conductores'] = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR).count()
+    if p_mant:
+        kpis['mantenciones_pendientes'] = mant_pend
+    if p_docs:
+        kpis['docs_por_vencer'] = docs_pv
 
-    # Gráfico 1: Vehículos por flota (bar, siempre snapshot)
-    flotas_qs = (
-        Flota.objects.filter(empresa=empresa)
-        .annotate(num_vehiculos=Count('vehiculos'))
-        .order_by('-num_vehiculos')
-    )
-    bar_labels = [f.nombre for f in flotas_qs]
-    bar_values = [f.num_vehiculos for f in flotas_qs]
+    charts = {}
 
-    # Gráfico 2: Mantenciones programadas por período (fecha_programada es DateField)
-    if periodo in ('7d', '30d'):
-        days = 7 if periodo == '7d' else 30
-        desde = hoy - timedelta(days=days - 1)
-        rows = (
-            Mantencion.objects.filter(
-                vehiculo__flota__empresa=empresa,
-                fecha_programada__gte=desde,
-                fecha_programada__lte=hoy,
-            )
-            .annotate(dia=TruncDay('fecha_programada'))
-            .values('dia').annotate(total=Count('id')).order_by('dia')
+    # ── FLOTA ─────────────────────────────────────────────────────
+    if p_flota:
+        flotas_qs = (
+            Flota.objects.filter(empresa=empresa)
+            .annotate(num_vehiculos=Count('vehiculos'))
+            .order_by('-num_vehiculos')
         )
-        data_map = {r['dia']: r['total'] for r in rows if r['dia']}
-        mant_labels, mant_values = [], []
-        for i in range(days):
-            d = desde + timedelta(days=i)
-            mant_labels.append(f"{d.day:02d} {MESES_ES[d.month - 1]}")
-            mant_values.append(data_map.get(d, 0))
-
-    elif periodo in ('3m', '6m'):
-        weeks = 13 if periodo == '3m' else 26
-        desde = hoy - timedelta(weeks=weeks)
-        rows = (
-            Mantencion.objects.filter(
-                vehiculo__flota__empresa=empresa,
-                fecha_programada__gte=desde,
-                fecha_programada__lte=hoy,
-            )
-            .annotate(semana=TruncWeek('fecha_programada'))
-            .values('semana').annotate(total=Count('id')).order_by('semana')
-        )
-        data_map = {r['semana']: r['total'] for r in rows if r['semana']}
-        mant_labels, mant_values = [], []
-        cursor = desde - timedelta(days=desde.weekday())
-        while cursor <= hoy:
-            mant_labels.append(f"{cursor.day:02d} {MESES_ES[cursor.month - 1]}")
-            mant_values.append(data_map.get(cursor, 0))
-            cursor += timedelta(days=7)
-
-    else:  # 12m — granularidad mensual
-        hace_12_meses = hoy - timedelta(days=365)
-        rows = (
-            Mantencion.objects.filter(
-                vehiculo__flota__empresa=empresa,
-                fecha_programada__gte=hace_12_meses,
-                fecha_programada__lte=hoy,
-            )
-            .annotate(mes=TruncMonth('fecha_programada'))
-            .values('mes').annotate(total=Count('id')).order_by('mes')
-        )
-        meses_data = {}
-        curr = hoy.replace(day=1)
-        for _ in range(12):
-            meses_data[curr.strftime("%Y-%m")] = 0
-            if curr.month == 1:
-                curr = curr.replace(year=curr.year - 1, month=12)
-            else:
-                curr = curr.replace(month=curr.month - 1)
-        for r in rows:
-            if r['mes']:
-                ms = r['mes'].strftime("%Y-%m")
-                if ms in meses_data:
-                    meses_data[ms] = r['total']
-        mant_labels, mant_values = [], []
-        for k in reversed(list(meses_data.keys())):
-            y, m = k.split('-')
-            mant_labels.append(f"{MESES_ES[int(m) - 1]} {y[2:]}")
-            mant_values.append(meses_data[k])
-
-    # ── Nuevos widgets ──────────────────────────────────────────
-
-    # Próximas mantenciones en los próximos 7 días
-    proximas_qs = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
-        estado__in=['pendiente', 'en_proceso'],
-        fecha_programada__gte=hoy,
-        fecha_programada__lte=hoy + timedelta(days=7),
-    ).select_related('vehiculo').order_by('fecha_programada')[:5]
-
-    proximas_7_dias = [
-        {
-            'id':       m.id,
-            'vehiculo': f"{m.vehiculo.marca} {m.vehiculo.modelo} · {m.vehiculo.patente}",
-            'tipo':     m.tipo_mantencion,
-            'fecha':    m.fecha_programada.isoformat(),
-            'estado':   m.estado,
+        charts['vehiculos_por_flota'] = {
+            'labels': [f.nombre for f in flotas_qs],
+            'data':   [f.num_vehiculos for f in flotas_qs],
         }
-        for m in proximas_qs
-    ]
-
-    # Gasto real del mes vs presupuesto
-    gasto_mes = GastoOperativo.objects.filter(
-        empresa=empresa, fecha__year=hoy.year, fecha__month=hoy.month,
-    ).aggregate(t=Sum('monto'))['t'] or 0
-
-    try:
-        presup = PresupuestoMensual.objects.get(empresa=empresa, mes=hoy.month, anio=hoy.year)
-        pct_gasto = round(float(gasto_mes) / float(presup.monto) * 100) if presup.monto > 0 else None
-        gasto_vs_presupuesto = {
-            'gasto':       int(gasto_mes),
-            'presupuesto': int(presup.monto),
-            'pct':         pct_gasto,
+        charts['estado_flota'] = {
+            'sin_alerta':     max(0, total_vehiculos - docs_pv - mant_pend),
+            'docs_vencer':    docs_pv,
+            'mant_pendiente': mant_pend,
         }
-    except PresupuestoMensual.DoesNotExist:
-        gasto_vs_presupuesto = {'gasto': int(gasto_mes), 'presupuesto': None, 'pct': None}
-
-    # Top 3 vehículos más costosos del mes (gastos operativos)
-    top_veh_qs = (
-        GastoOperativo.objects.filter(
-            empresa=empresa,
-            fecha__year=hoy.year,
-            fecha__month=hoy.month,
-            vehiculo__isnull=False,
+        marcas_qs = (
+            Vehiculo.objects.filter(flota__empresa=empresa)
+            .values('marca').annotate(total=Count('id')).order_by('-total')[:8]
         )
-        .values('vehiculo_id', 'vehiculo__patente', 'vehiculo__marca', 'vehiculo__modelo')
-        .annotate(total=Sum('monto'))
-        .order_by('-total')[:3]
-    )
-    top_vehiculos_costo = [
-        {
-            'vehiculo_id': v['vehiculo_id'],
-            'patente':     v['vehiculo__patente'],
-            'label':       f"{v['vehiculo__marca']} {v['vehiculo__modelo']}",
-            'total':       int(v['total']),
-        }
-        for v in top_veh_qs
-    ]
+        charts['marcas_flota'] = [
+            {'marca': r['marca'] or 'Sin marca', 'total': r['total']}
+            for r in marcas_qs
+        ]
 
-    # Mantenimiento predictivo — planes activos vs vencidos
-    planes_activos = MantencionProgramada.objects.filter(
-        vehiculo__flota__empresa=empresa, estado='activa'
-    )
-    pred_al_dia   = planes_activos.filter(fecha_siguiente__gt=hoy).count()
-    pred_vencidas = planes_activos.filter(fecha_siguiente__lte=hoy).count()
-    pred_total    = pred_al_dia + pred_vencidas
-    pred_pct      = round(pred_al_dia / pred_total * 100) if pred_total else 100
-
-    # ── Gráficos adicionales ────────────────────────────────────
-
-    # Gastos por categoría — últimos 6 meses (stacked bar)
-    CATEGORIAS_GASTO = ['combustible', 'mantencion', 'seguro', 'multa', 'otro']
-    gastos_labels = []
-    gastos_datasets = {cat: [] for cat in CATEGORIAS_GASTO}
-    for i in range(5, -1, -1):
-        if hoy.month - i <= 0:
-            mes_obj = hoy.replace(year=hoy.year - 1, month=hoy.month - i + 12, day=1)
+    # ── MANTENIMIENTO ─────────────────────────────────────────────
+    if p_mant:
+        if periodo in ('7d', '30d'):
+            days = 7 if periodo == '7d' else 30
+            desde = hoy - timedelta(days=days - 1)
+            rows = (
+                Mantencion.objects.filter(
+                    vehiculo__flota__empresa=empresa,
+                    fecha_programada__gte=desde,
+                    fecha_programada__lte=hoy,
+                )
+                .annotate(dia=TruncDay('fecha_programada'))
+                .values('dia').annotate(total=Count('id')).order_by('dia')
+            )
+            data_map = {r['dia']: r['total'] for r in rows if r['dia']}
+            mant_labels, mant_values = [], []
+            for i in range(days):
+                d = desde + timedelta(days=i)
+                mant_labels.append(f"{d.day:02d} {MESES_ES[d.month - 1]}")
+                mant_values.append(data_map.get(d, 0))
+        elif periodo in ('3m', '6m'):
+            weeks = 13 if periodo == '3m' else 26
+            desde = hoy - timedelta(weeks=weeks)
+            rows = (
+                Mantencion.objects.filter(
+                    vehiculo__flota__empresa=empresa,
+                    fecha_programada__gte=desde,
+                    fecha_programada__lte=hoy,
+                )
+                .annotate(semana=TruncWeek('fecha_programada'))
+                .values('semana').annotate(total=Count('id')).order_by('semana')
+            )
+            data_map = {r['semana']: r['total'] for r in rows if r['semana']}
+            mant_labels, mant_values = [], []
+            cursor = desde - timedelta(days=desde.weekday())
+            while cursor <= hoy:
+                mant_labels.append(f"{cursor.day:02d} {MESES_ES[cursor.month - 1]}")
+                mant_values.append(data_map.get(cursor, 0))
+                cursor += timedelta(days=7)
         else:
-            mes_obj = hoy.replace(month=hoy.month - i, day=1)
-        gastos_labels.append(f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}")
-        for cat in CATEGORIAS_GASTO:
-            total_cat = GastoOperativo.objects.filter(
-                empresa=empresa,
-                fecha__year=mes_obj.year,
-                fecha__month=mes_obj.month,
-                categoria=cat,
+            hace_12 = hoy - timedelta(days=365)
+            rows = (
+                Mantencion.objects.filter(
+                    vehiculo__flota__empresa=empresa,
+                    fecha_programada__gte=hace_12,
+                    fecha_programada__lte=hoy,
+                )
+                .annotate(mes=TruncMonth('fecha_programada'))
+                .values('mes').annotate(total=Count('id')).order_by('mes')
+            )
+            meses_data = {}
+            curr = hoy.replace(day=1)
+            for _ in range(12):
+                meses_data[curr.strftime('%Y-%m')] = 0
+                curr = (curr - timedelta(days=1)).replace(day=1)
+            for r in rows:
+                if r['mes']:
+                    ms = r['mes'].strftime('%Y-%m')
+                    if ms in meses_data:
+                        meses_data[ms] = r['total']
+            mant_labels, mant_values = [], []
+            for k in reversed(list(meses_data.keys())):
+                y, m = k.split('-')
+                mant_labels.append(f"{MESES_ES[int(m) - 1]} {y[2:]}")
+                mant_values.append(meses_data[k])
+
+        charts['mantenciones'] = {'labels': mant_labels, 'data': mant_values}
+        charts['mant_por_estado'] = {
+            estado: Mantencion.objects.filter(
+                vehiculo__flota__empresa=empresa, estado=estado
+            ).count()
+            for estado in ['pendiente', 'en_proceso', 'completada', 'cancelada']
+        }
+        alertas_qs = (
+            MantencionProgramada.objects
+            .filter(vehiculo__flota__empresa=empresa, estado='activa',
+                    fecha_siguiente__lte=hoy)
+            .values('regla__tipo').annotate(total=Count('id')).order_by('-total')[:6]
+        )
+        charts['alertas_por_tipo'] = [
+            {'tipo': r['regla__tipo'] or 'General', 'total': r['total']}
+            for r in alertas_qs
+        ]
+
+    # ── FINANZAS ──────────────────────────────────────────────────
+    if p_finanzas:
+        CATS_GASTO = ['combustible', 'mantencion', 'seguro', 'multa', 'otro']
+        g6_labels, g6_ds = [], {c: [] for c in CATS_GASTO}
+        g12_labels, g12_data = [], []
+        for i in range(11, -1, -1):
+            dm = hoy.month - i
+            mes_obj = hoy.replace(year=hoy.year - 1 if dm <= 0 else hoy.year,
+                                   month=(dm + 12 if dm <= 0 else dm), day=1)
+            lbl = f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}"
+            g12_labels.append(lbl)
+            total_mes = GastoOperativo.objects.filter(
+                empresa=empresa, fecha__year=mes_obj.year, fecha__month=mes_obj.month,
             ).aggregate(t=Sum('monto'))['t'] or 0
-            gastos_datasets[cat].append(int(total_cat))
+            g12_data.append(int(total_mes))
+            if i < 6:
+                g6_labels.append(lbl)
+                for cat in CATS_GASTO:
+                    tc = GastoOperativo.objects.filter(
+                        empresa=empresa, fecha__year=mes_obj.year,
+                        fecha__month=mes_obj.month, categoria=cat,
+                    ).aggregate(t=Sum('monto'))['t'] or 0
+                    g6_ds[cat].append(int(tc))
+        charts['gastos_6m']  = {'labels': g6_labels,  'datasets': {c: g6_ds[c] for c in CATS_GASTO}}
+        charts['gastos_12m'] = {'labels': g12_labels, 'data': g12_data}
 
-    # Rutas completadas vs canceladas — últimos 6 meses
-    rutas_labels = []
-    rutas_finalizadas = []
-    rutas_canceladas = []
-    for i in range(5, -1, -1):
-        if hoy.month - i <= 0:
-            mes_obj = hoy.replace(year=hoy.year - 1, month=hoy.month - i + 12, day=1)
-        else:
-            mes_obj = hoy.replace(month=hoy.month - i, day=1)
-        rutas_labels.append(f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}")
-        fin = Ruta.objects.filter(
-            empresa=empresa,
-            estado='finalizado',
-            fecha_fin__year=mes_obj.year,
-            fecha_fin__month=mes_obj.month,
-        ).count()
-        can = Ruta.objects.filter(
-            empresa=empresa,
-            estado='cancelado',
-            fecha_fin__year=mes_obj.year,
-            fecha_fin__month=mes_obj.month,
-        ).count()
-        rutas_finalizadas.append(fin)
-        rutas_canceladas.append(can)
-
-    # Top 5 conductores por km recorridos (rutas finalizadas)
-    top_conductores_qs = (
-        Ruta.objects.filter(empresa=empresa, estado='finalizado', conductor__isnull=False)
-        .values('conductor_id')
-        .annotate(total_km=Sum('distancia_km'))
-        .order_by('-total_km')[:5]
-    )
-    conductores_ids = [r['conductor_id'] for r in top_conductores_qs]
-    conductores_map = {u.id: u for u in Usuario.objects.filter(id__in=conductores_ids)}
-    top_conductores_km = [
-        {
-            'nombre': conductores_map[r['conductor_id']].nombre or f"Conductor {r['conductor_id']}",
-            'km':     float(r['total_km'] or 0),
+    # ── DOCUMENTOS ────────────────────────────────────────────────
+    if p_docs:
+        charts['docs_por_estado'] = {
+            'vigentes':   Documento.objects.filter(
+                entidad='vehiculo', vehiculo__flota__empresa=empresa,
+                fecha_vencimiento__gt=hoy + timedelta(days=30),
+            ).count(),
+            'por_vencer': docs_pv,
+            'vencidos':   Documento.objects.filter(
+                entidad='vehiculo', vehiculo__flota__empresa=empresa,
+                fecha_vencimiento__lt=hoy,
+            ).count(),
         }
-        for r in top_conductores_qs
-        if r['conductor_id'] in conductores_map
-    ]
+
+    # ── RUTAS ─────────────────────────────────────────────────────
+    if p_rutas:
+        r_labels, r_fin, r_can, r_km, r_costo = [], [], [], [], []
+        for i in range(5, -1, -1):
+            dm = hoy.month - i
+            mes_obj = hoy.replace(year=hoy.year - 1 if dm <= 0 else hoy.year,
+                                   month=(dm + 12 if dm <= 0 else dm), day=1)
+            r_labels.append(f"{MESES_ES[mes_obj.month - 1]} {str(mes_obj.year)[2:]}")
+            base = Ruta.objects.filter(
+                empresa=empresa, fecha_fin__year=mes_obj.year, fecha_fin__month=mes_obj.month)
+            r_fin.append(base.filter(estado='finalizado').count())
+            r_can.append(base.filter(estado='cancelado').count())
+            r_km.append(float(base.filter(estado='finalizado').aggregate(
+                t=Sum('distancia_km'))['t'] or 0))
+            r_costo.append(int(base.filter(estado='finalizado').aggregate(
+                t=Sum('costo_total_est'))['t'] or 0))
+        charts['rutas_6m']        = {'labels': r_labels, 'finalizadas': r_fin, 'canceladas': r_can}
+        charts['km_por_mes']      = {'labels': r_labels, 'data': r_km}
+        charts['costo_rutas_mes'] = {'labels': r_labels, 'data': r_costo}
+
+    # ── CONDUCTORES ───────────────────────────────────────────────
+    if p_conductores:
+        top_qs = (
+            Ruta.objects.filter(empresa=empresa, estado='finalizado', conductor__isnull=False)
+            .values('conductor_id').annotate(total_km=Sum('distancia_km')).order_by('-total_km')[:5]
+        )
+        cond_ids = [r['conductor_id'] for r in top_qs]
+        cond_map = {u.id: u for u in Usuario.objects.filter(id__in=cond_ids)}
+        charts['top_conductores_km'] = [
+            {'nombre': cond_map[r['conductor_id']].nombre or f"Conductor {r['conductor_id']}",
+             'km': float(r['total_km'] or 0)}
+            for r in top_qs if r['conductor_id'] in cond_map
+        ]
+
+    # ── Widgets ───────────────────────────────────────────────────
+    widgets = {}
+
+    if p_mant:
+        proximas_qs = Mantencion.objects.filter(
+            vehiculo__flota__empresa=empresa,
+            estado__in=['pendiente', 'en_proceso'],
+            fecha_programada__gte=hoy,
+            fecha_programada__lte=hoy + timedelta(days=7),
+        ).select_related('vehiculo').order_by('fecha_programada')[:5]
+        widgets['proximas_7_dias'] = [
+            {'id': m.id,
+             'vehiculo': f"{m.vehiculo.marca} {m.vehiculo.modelo} · {m.vehiculo.patente}",
+             'tipo': m.tipo_mantencion, 'fecha': m.fecha_programada.isoformat(), 'estado': m.estado}
+            for m in proximas_qs
+        ]
+        planes_act  = MantencionProgramada.objects.filter(vehiculo__flota__empresa=empresa, estado='activa')
+        pred_al_dia   = planes_act.filter(fecha_siguiente__gt=hoy).count()
+        pred_vencidas = planes_act.filter(fecha_siguiente__lte=hoy).count()
+        pred_total    = pred_al_dia + pred_vencidas
+        widgets['predictivo'] = {
+            'al_dia': pred_al_dia, 'vencidas': pred_vencidas,
+            'total': pred_total,
+            'pct': round(pred_al_dia / pred_total * 100) if pred_total else 100,
+        }
+
+    if p_finanzas:
+        gasto_mes = GastoOperativo.objects.filter(
+            empresa=empresa, fecha__year=hoy.year, fecha__month=hoy.month,
+        ).aggregate(t=Sum('monto'))['t'] or 0
+        try:
+            presup = PresupuestoMensual.objects.get(empresa=empresa, mes=hoy.month, anio=hoy.year)
+            pct = round(float(gasto_mes) / float(presup.monto) * 100) if presup.monto > 0 else None
+            widgets['gasto_vs_presupuesto'] = {
+                'gasto': int(gasto_mes), 'presupuesto': int(presup.monto), 'pct': pct}
+        except PresupuestoMensual.DoesNotExist:
+            widgets['gasto_vs_presupuesto'] = {'gasto': int(gasto_mes), 'presupuesto': None, 'pct': None}
+
+        top_veh_qs = (
+            GastoOperativo.objects.filter(
+                empresa=empresa, fecha__year=hoy.year, fecha__month=hoy.month,
+                vehiculo__isnull=False,
+            )
+            .values('vehiculo_id', 'vehiculo__patente', 'vehiculo__marca', 'vehiculo__modelo')
+            .annotate(total=Sum('monto')).order_by('-total')[:3]
+        )
+        widgets['top_vehiculos_costo'] = [
+            {'vehiculo_id': v['vehiculo_id'], 'patente': v['vehiculo__patente'],
+             'label': f"{v['vehiculo__marca']} {v['vehiculo__modelo']}", 'total': int(v['total'])}
+            for v in top_veh_qs
+        ]
 
     return Response({
-        "kpis": {
-            "total_flotas":            total_flotas,
-            "total_vehiculos":         total_vehiculos,
-            "total_conductores":       total_conductores,
-            "mantenciones_pendientes": mantenciones_pendientes,
-            "docs_por_vencer":         docs_por_vencer,
+        "permisos_dashboard": {
+            "flota":        p_flota,
+            "mantenimiento": p_mant,
+            "finanzas":     p_finanzas,
+            "documentos":   p_docs,
+            "rutas":        p_rutas,
+            "conductores":  p_conductores,
         },
-        "charts": {
-            "vehiculos_por_flota": {"labels": bar_labels, "data": bar_values},
-            "mantenciones":        {"labels": mant_labels, "data": mant_values},
-            "gastos_6m": {
-                "labels":   gastos_labels,
-                "datasets": {cat: gastos_datasets[cat] for cat in CATEGORIAS_GASTO},
-            },
-            "rutas_6m": {
-                "labels":      rutas_labels,
-                "finalizadas": rutas_finalizadas,
-                "canceladas":  rutas_canceladas,
-            },
-            "top_conductores_km": top_conductores_km,
-        },
-        "widgets": {
-            "proximas_7_dias":      proximas_7_dias,
-            "gasto_vs_presupuesto": gasto_vs_presupuesto,
-            "top_vehiculos_costo":  top_vehiculos_costo,
-            "predictivo": {
-                "al_dia":   pred_al_dia,
-                "vencidas": pred_vencidas,
-                "total":    pred_total,
-                "pct":      pred_pct,
-            },
-        },
+        "kpis":    kpis,
+        "charts":  charts,
+        "widgets": widgets,
     })
 
 
@@ -593,7 +699,8 @@ def login_view(request):
             if user_obj.intentos_fallidos >= 5:
                 user_obj.is_blocked = True
             user_obj.save()
-            LogAuditoria.objects.create(tipo=TipoLog.SEGURIDAD, accion='login_fallido', usuario=user_obj, ip=ip, detalle={'intentos': user_obj.intentos_fallidos, 'bloqueado': user_obj.is_blocked})
+            registrar_log('SEGURIDAD', 'login_fallido', request, usuario=user_obj,
+                          detalle={'intentos': user_obj.intentos_fallidos, 'bloqueado': user_obj.is_blocked})
             if user_obj.is_blocked:
                 notificar(user_obj, TipoNotificacion.SEGURIDAD,
                           "Cuenta bloqueada",
@@ -605,14 +712,15 @@ def login_view(request):
                               f"La cuenta de '{user_obj.nombre or user_obj.email}' fue bloqueada automáticamente por {user_obj.intentos_fallidos} intentos fallidos desde IP {ip}.",
                               url_accion='/usuarios')
         else:
-            LogAuditoria.objects.create(tipo=TipoLog.SEGURIDAD, accion='login_fallido', ip=ip, detalle={'motivo': 'usuario_no_encontrado'})
+            registrar_log('SEGURIDAD', 'login_fallido', request,
+                          detalle={'motivo': 'usuario_no_encontrado'})
 
         return JsonResponse({"error": "Credenciales inválidas"}, status=401)
 
     # 3. Éxito: Resetear intentos y registrar acceso
     user.intentos_fallidos = 0
     user.save()
-    LogAuditoria.objects.create(tipo=TipoLog.SEGURIDAD, accion='login_exitoso', usuario=user, ip=ip)
+    registrar_log('SEGURIDAD', 'login_exitoso', request, usuario=user)
 
     refresh = RefreshToken.for_user(user)
 
@@ -1015,6 +1123,10 @@ def conductores_lista_crear(request):
     serializer = ConductorCrearSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
         conductor = serializer.save()
+        registrar_log('ACTIVIDAD', 'conductor_creado', request, detalle={
+            'email':  conductor.email,
+            'nombre': conductor.nombre or '',
+        })
         return Response(ConductorListSerializer(conductor).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1042,14 +1154,25 @@ def conductores_detalle(request, pk):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         serializer = ConductorEditarSerializer(conductor, data=request.data, partial=True)
         if serializer.is_valid():
+            _campos_cond = ['nombre_cifrado', 'email', 'telefono', 'licencia_tipo']
+            _antes = _snap(conductor, _campos_cond)
             serializer.save()
             conductor.refresh_from_db()
+            _despues = _snap(conductor, _campos_cond)
+            registrar_log('ACTIVIDAD', 'conductor_editado', request, detalle={
+                'email':        conductor.email,
+                'conductor_id': pk,
+                'cambios':      _diff_campos(_antes, _despues),
+            })
             return Response(ConductorListSerializer(conductor).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == 'DELETE':
         if not tiene_permiso(request.user, 'conductores.eliminar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        registrar_log('ACTIVIDAD', 'conductor_desactivado', request, detalle={
+            'email': conductor.email, 'conductor_id': pk,
+        })
         conductor.is_active = False
         conductor.save(update_fields=['is_active'])
         return Response({"message": "Conductor desactivado."})
@@ -1087,6 +1210,10 @@ def conductores_asignar(request, pk):
         desde=timezone.now()
     )
     conductor.refresh_from_db()
+    registrar_log('ACTIVIDAD', 'conductor_asignado', request, detalle={
+        'conductor': conductor.email,
+        'vehiculo':  vehiculo.patente,
+    })
     notificar_admins_empresa(
         empresa, TipoNotificacion.ACTIVIDAD,
         "Nueva asignación de vehículo",
@@ -1111,6 +1238,9 @@ def conductores_desasignar(request, pk):
 
     Asignacion.objects.filter(conductor=conductor, activo=True).update(activo=False)
     conductor.refresh_from_db()
+    registrar_log('ACTIVIDAD', 'conductor_desasignado', request, detalle={
+        'conductor': conductor.email,
+    })
     notificar_admins_empresa(
         empresa, TipoNotificacion.ACTIVIDAD,
         "Conductor desasignado",
@@ -1189,7 +1319,10 @@ def flotas_lista_crear(request):
 
     serializer = FlotaSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
-        serializer.save(empresa=empresa)
+        flota = serializer.save(empresa=empresa)
+        registrar_log('ACTIVIDAD', 'flota_creada', request, detalle={
+            'nombre': flota.nombre, 'empresa': empresa.nombre,
+        })
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1215,13 +1348,24 @@ def flotas_detalle(request, pk):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         serializer = FlotaSerializer(flota, data=request.data, partial=True, context={'empresa': empresa})
         if serializer.is_valid():
+            _antes = _snap(flota, ['nombre', 'descripcion'])
             serializer.save()
+            flota.refresh_from_db()
+            _despues = _snap(flota, ['nombre', 'descripcion'])
+            registrar_log('ACTIVIDAD', 'flota_editada', request, detalle={
+                'nombre':   flota.nombre,
+                'flota_id': pk,
+                'cambios':  _diff_campos(_antes, _despues),
+            })
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == 'DELETE':
         if not tiene_permiso(request.user, 'flotas.eliminar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        registrar_log('ACTIVIDAD', 'flota_eliminada', request, detalle={
+            'nombre': flota.nombre, 'flota_id': pk,
+        })
         flota.delete()
         return Response({"message": "Flota eliminada."})
 
@@ -1257,7 +1401,12 @@ def vehiculos_lista_crear(request):
 
     serializer = VehiculoSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
-        serializer.save()
+        vehiculo = serializer.save()
+        registrar_log('ACTIVIDAD', 'vehiculo_creado', request, detalle={
+            'patente': vehiculo.patente,
+            'marca':   vehiculo.marca or '',
+            'modelo':  vehiculo.modelo or '',
+        })
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1283,13 +1432,25 @@ def vehiculos_detalle(request, pk):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         serializer = VehiculoSerializer(vehiculo, data=request.data, partial=True, context={'empresa': empresa})
         if serializer.is_valid():
+            _campos_veh = ['patente', 'marca', 'modelo', 'anio', 'color', 'km_actuales']
+            _antes = _snap(vehiculo, _campos_veh)
             serializer.save()
+            vehiculo.refresh_from_db()
+            _despues = _snap(vehiculo, _campos_veh)
+            registrar_log('ACTIVIDAD', 'vehiculo_editado', request, detalle={
+                'patente':    vehiculo.patente,
+                'vehiculo_id': pk,
+                'cambios':    _diff_campos(_antes, _despues),
+            })
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == 'DELETE':
         if not tiene_permiso(request.user, 'vehiculos.eliminar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        registrar_log('ACTIVIDAD', 'vehiculo_desactivado', request, detalle={
+            'patente': vehiculo.patente, 'vehiculo_id': pk,
+        })
         vehiculo.activo = False
         vehiculo.save(update_fields=['activo'])
         return Response({"message": "Vehículo desactivado."})
@@ -1464,7 +1625,12 @@ def mantenciones_lista_crear(request):
 
     serializer = MantencionSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        mantencion = serializer.save()
+        registrar_log('ACTIVIDAD', 'mantencion_creada', request, detalle={
+            'vehiculo': vehiculo.patente,
+            'tipo':     tipo_mantencion,
+            'fecha':    str(fecha_programada or ''),
+        })
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1519,15 +1685,35 @@ def mantenciones_detalle(request, pk):
             if fecha_r and str(fecha_r) > timezone.now().date().isoformat():
                 return Response({"error": "La fecha realizada no puede ser una fecha futura."}, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = MantencionSerializer(mantencion, data=data, partial=True)
+        _campos_mant = ['descripcion', 'fecha_programada', 'kilometraje_programado', 'costo', 'notas']
+        _antes_mant  = _snap(mantencion, _campos_mant)
+        serializer   = MantencionSerializer(mantencion, data=data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            mantencion.refresh_from_db()
+            if nuevo_estado != estado_actual:
+                registrar_log('ACTIVIDAD', 'mantencion_estado_cambiado', request, detalle={
+                    'vehiculo':      mantencion.vehiculo.patente,
+                    'tipo':          mantencion.tipo_mantencion,
+                    'estado_previo': estado_actual,
+                    'estado_nuevo':  nuevo_estado,
+                })
+            else:
+                registrar_log('ACTIVIDAD', 'mantencion_editada', request, detalle={
+                    'vehiculo': mantencion.vehiculo.patente,
+                    'tipo':     mantencion.tipo_mantencion,
+                    'cambios':  _diff_campos(_antes_mant, _snap(mantencion, _campos_mant)),
+                })
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == 'DELETE':
         if not tiene_permiso(request.user, 'mantenciones.eliminar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        registrar_log('ACTIVIDAD', 'mantencion_eliminada', request, detalle={
+            'vehiculo': mantencion.vehiculo.patente,
+            'tipo':     mantencion.tipo_mantencion,
+        })
         mantencion.delete()
         return Response({"message": "Mantención eliminada."})
 

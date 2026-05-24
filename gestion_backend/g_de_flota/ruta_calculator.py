@@ -63,41 +63,34 @@ def _dist_peaje_segmento(plat, plng, alat, alng, blat, blng):
     return haversine_km(plat, plng, proj_lat, proj_lng)
 
 
-def detectar_peajes_en_ruta(polyline, radio_km=2.0):
+def detectar_peajes_en_ruta(polyline, categoria_vehiculo='liviano', radio_default_km=0.8):
     """
-    Detecta peajes activos cuya posición esté dentro de radio_km de algún
-    segmento de la polyline. Usa distancia al segmento (no solo a los puntos)
-    para cubrir tramos donde OSRM simplifica y los puntos quedan separados.
+    Detecta peajes usando radio variable por peaje (radio_metros del modelo).
+    Filtra por categoría del vehículo para retornar solo las tarifas correctas.
+    Cada peaje tiene su propio radio de detección — los de autopistas urbanas
+    necesitan radio menor (200 m) para no detectar peajes de carriles paralelos,
+    los rurales pueden tener radio mayor (1000 m).
     Retorna lista de objetos Peaje sin duplicados.
     """
     from .models import Peaje
 
-    peajes = list(Peaje.objects.filter(activo=True))
+    peajes_activos = list(Peaje.objects.filter(activo=True, categoria=categoria_vehiculo))
     detectados = []
     ids_vistos = set()
 
-    for peaje in peajes:
+    for peaje in peajes_activos:
         if peaje.id in ids_vistos:
             continue
+        radio_km = (peaje.radio_metros / 1000) if peaje.radio_metros else radio_default_km
         plat = float(peaje.latitud)
         plng = float(peaje.longitud)
 
         encontrado = False
-        for i in range(len(polyline) - 1):
-            dist = _dist_peaje_segmento(
-                plat, plng,
-                polyline[i][0], polyline[i][1],
-                polyline[i + 1][0], polyline[i + 1][1],
-            )
+        for punto in polyline:
+            dist = haversine_km(punto[0], punto[1], plat, plng)
             if dist <= radio_km:
                 encontrado = True
                 break
-
-        # Verificar también el último punto
-        if not encontrado and polyline:
-            dist = haversine_km(plat, plng, polyline[-1][0], polyline[-1][1])
-            if dist <= radio_km:
-                encontrado = True
 
         if encontrado:
             detectados.append(peaje)
@@ -106,9 +99,12 @@ def detectar_peajes_en_ruta(polyline, radio_km=2.0):
     return detectados
 
 
-def calcular_costos(distancia_km, vehiculo, peajes, config_ruta, es_punta=False):
+def calcular_costos(distancia_km, vehiculo, peajes, config_ruta, es_punta=False,
+                    categoria_vehiculo=None):
     """
     Calcula el costo estimado de combustible y peajes para una ruta.
+    Los peajes ya deben estar filtrados por categoría del vehículo desde
+    detectar_peajes_en_ruta().
 
     Retorna:
         combustible     — costo estimado de combustible (CLP)

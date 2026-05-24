@@ -480,6 +480,7 @@
               </div>
               <div v-if="vehiculoSeleccionado" class="bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
                 Consumo: {{ vehiculoSeleccionado.consumo_l_100km }} L/100km · Combustible: {{ vehiculoSeleccionado.tipo_combustible }}
+                · Categoría peaje: {{ CATEGORIAS_PEAJE_LABEL[vehiculoSeleccionado.categoria_peaje] || vehiculoSeleccionado.categoria_peaje || 'Auto / Camioneta / SUV' }}
               </div>
               <div>
                 <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha programada</label>
@@ -748,6 +749,14 @@ const rutas     = ref([])
 const resumen   = ref({ total: 0, activas: 0, pendientes: 0, finalizadas: 0, canceladas: 0, km_mes: 0, costo_est_mes: 0 })
 const vehiculos = ref([])
 const conductores = ref([])
+
+const CATEGORIAS_PEAJE_LABEL = {
+  moto:        'Moto / Motoneta',
+  liviano:     'Auto / Camioneta / SUV',
+  liviano_rem: 'Auto/Camioneta con remolque',
+  pesado_2:    'Bus / Camión 2 ejes',
+  pesado_3:    'Camión 3+ ejes',
+}
 
 // ── Superadmin: selector de empresa ──────────────────────────────────────
 const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))

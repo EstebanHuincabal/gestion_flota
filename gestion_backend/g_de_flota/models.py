@@ -349,12 +349,24 @@ class Vehiculo(models.Model):
         ('hibrido',   'Híbrido'),
     ]
 
+    CATEGORIAS_PEAJE = [
+        ('moto',        'Moto / Motoneta'),
+        ('liviano',     'Auto / Camioneta / SUV'),
+        ('liviano_rem', 'Auto/Camioneta con remolque'),
+        ('pesado_2',    'Bus / Camión 2 ejes'),
+        ('pesado_3',    'Camión 3+ ejes'),
+    ]
+
     flota            = models.ForeignKey(Flota, on_delete=models.CASCADE, related_name="vehiculos")
     patente          = models.CharField(max_length=10, unique=True)
     marca            = models.CharField(max_length=100, blank=True, default='')
     modelo           = models.CharField(max_length=100, blank=True, default='')
     anio             = models.IntegerField(null=True, blank=True)
     tipo_combustible = models.CharField(max_length=20, choices=COMBUSTIBLE, default='bencina')
+    categoria_peaje  = models.CharField(
+        max_length=20, choices=CATEGORIAS_PEAJE, default='liviano',
+        help_text='Categoría de peaje del vehículo'
+    )
     km_actuales      = models.IntegerField(default=0)
     activo           = models.BooleanField(default=True)
     consumo_l_100km  = models.DecimalField(max_digits=5, decimal_places=2, default=10.0)
@@ -430,9 +442,13 @@ class LogAuditoria(models.Model):
         'Usuario', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='logs_auditoria'
     )
-    detalle = models.JSONField(default=dict, blank=True)
-    ip      = models.GenericIPAddressField(null=True, blank=True)
-    fecha   = models.DateTimeField(auto_now_add=True)
+    detalle    = models.JSONField(default=dict, blank=True)
+    ip         = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(null=True, blank=True)
+    so         = models.CharField(max_length=30, null=True, blank=True)   # Sistema operativo
+    metodo     = models.CharField(max_length=10, null=True, blank=True)   # Método HTTP
+    endpoint   = models.CharField(max_length=300, null=True, blank=True)  # URL path
+    fecha      = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-fecha']
@@ -693,24 +709,41 @@ class Documento(models.Model):
 # ─────────────────────────────────────────
 
 class Peaje(models.Model):
+    CATEGORIAS = [
+        ('moto',        'Moto / Motoneta'),
+        ('liviano',     'Auto / Camioneta / SUV'),
+        ('liviano_rem', 'Auto/Camioneta con remolque'),
+        ('pesado_2',    'Bus / Camión 2 ejes'),
+        ('pesado_3',    'Camión 3+ ejes'),
+    ]
+
     nombre        = models.CharField(max_length=200)
     ruta          = models.CharField(max_length=100)
     autopista     = models.CharField(max_length=200, blank=True, default='')
     latitud       = models.FloatField()
     longitud      = models.FloatField()
+    categoria     = models.CharField(max_length=20, choices=CATEGORIAS, default='liviano')
     tarifa_normal = models.DecimalField(max_digits=8, decimal_places=0)
     tarifa_punta  = models.DecimalField(max_digits=8, decimal_places=0, null=True, blank=True)
+    km_ruta       = models.DecimalField(
+        max_digits=7, decimal_places=2, null=True, blank=True,
+        help_text='Kilómetro en la ruta donde está el peaje'
+    )
+    radio_metros  = models.PositiveIntegerField(
+        default=800,
+        help_text='Radio de detección personalizado en metros'
+    )
     activo        = models.BooleanField(default=True)
     updated_at    = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together     = ('nombre', 'ruta')
+        unique_together     = ('nombre', 'ruta', 'categoria')
         verbose_name        = 'Peaje'
         verbose_name_plural = 'Peajes'
-        ordering            = ['ruta', 'nombre']
+        ordering            = ['ruta', 'nombre', 'categoria']
 
     def __str__(self):
-        return f"{self.nombre} ({self.ruta})"
+        return f"{self.nombre} ({self.ruta}) [{self.get_categoria_display()}]"
 
 
 class ConfiguracionRuta(models.Model):

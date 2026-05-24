@@ -1,251 +1,181 @@
-## STACK
-- Mapas: Leaflet.js (CDN, gratuito)
-- Ruteo: OSRM Demo Server (gratuito, sin API key)
-- Peajes: tabla propia en DB con datos MOP (sin API externa)
-- Combustible: cálculo local con consumo del vehículo
+Vas a corregir y mejorar el módulo de peajes existente. No reescribir lo que funciona — solo aplicar los cambios específicos indicados.
 
 ---
 
-## MODELOS NUEVOS
+## CAMBIO 1 — Modelo Peaje (models.py)
 
-### Peaje
-nombre, ruta, autopista, latitud, longitud, categoria (liviano/camion2/camion3/bus/moto), tarifa_normal, tarifa_punta (nullable), activo, updated_at.
-unique_together: (nombre, ruta, categoria)
-
-### ConfiguracionRuta
-OneToOne con Empresa. Campos: precio_bencina (default 1380), precio_diesel (default 1250), radio_deteccion_peaje en metros (default 500).
-Método de clase: get_for_empresa(empresa) que hace get_or_create.
-
-### Ruta
-empresa FK, tipo (carga/personas), nombre, descripcion, estado (borrador/pendiente/activo/finalizado/cancelado), conductor FK nullable, vehiculo FK nullable, fecha_programada, fecha_inicio, fecha_fin, km_inicio, km_fin, distancia_km, duracion_min, costo_combustible_est, costo_peajes_est, costo_total_est, costo_combustible_real, costo_peajes_real, costo_total_real, polyline JSONField (lista de [lat,lng]), notas, created_at, updated_at.
-@property km_reales: retorna km_fin - km_inicio si ambos existen.
-
-### Parada
-ruta FK, tipo (origen/parada/destino), orden, nombre, direccion, latitud, longitud, notas, hora_estimada nullable.
-ordering: ['orden']
-
-### PeajeRuta
-ruta FK, peaje FK, tarifa.
-unique_together: (ruta, peaje)
-
-### Modificar Vehiculo
-Agregar: consumo_l_100km = DecimalField(max_digits=5, decimal_places=2, default=10.0)
-
----
-
-## MANAGEMENT COMMAND: seed_peajes
-
-Crear g_de_flota/management/commands/seed_peajes.py
-
-Para cada peaje del listado, crear una entrada por cada categoría aplicando estos multiplicadores sobre la tarifa de liviano: moto ×0.5, camion2 ×2.0, camion3 ×3.0, bus ×1.8.
-
-Peajes a incluir (nombre, ruta, lat, lng, tarifa_liviano_normal, tarifa_punta):
-
-Ruta 5 Norte:
-- Lampa Troncal, -33.2847, -70.9142, 2917, None
-- Las Vegas Troncal, -32.8234, -71.0123, 2917, None
-- Pichidangui Troncal, -32.1456, -71.5234, 4376, None
-- Los Vilos Troncal, -31.9098, -71.5012, 4050, None
-- Socos Troncal, -30.7234, -71.4567, 4050, None
-- Serena Troncal, -29.9456, -71.2345, 4050, None
-
-Ruta 5 Sur:
-- Río Maipo Troncal, -33.6789, -70.8901, 1320, None
-- Angostura Troncal, -33.8901, -70.8456, 3100, None
-- Talca Troncal, -35.4234, -71.6234, 3100, None
-- Chillán Troncal, -36.6234, -72.1012, 3500, None
-- Collipulli Troncal, -37.9456, -72.4345, 3500, None
-- Temuco Troncal, -38.7345, -72.5901, 3500, None
-- Osorno Troncal, -40.5678, -73.1234, 3500, None
-
-Ruta 68 (Santiago–Valparaíso):
-- Zapata, -33.4456, -70.9789, 2700, 4100
-- Lo Prado, -33.4012, -71.1234, 2700, 4100
-- Casablanca, -33.3234, -71.4123, 2700, 4100
-
-Ruta 78 (free flow):
-- Melipilla A, -33.6890, -71.2134, 3300, None
-- Melipilla B, -33.7234, -71.4012, 5940, None
-
-Ruta 60 CH:
-- Quillota Troncal, -32.8789, -71.2345, 5000, 7000
-
-Ruta 57 (Los Andes):
-- Chacabuco, -33.0234, -70.6789, 2700, None
-- Los Andes, -32.8345, -70.5901, 2700, None
-
----
-
-## MOTOR DE CÁLCULO: ruta_calculator.py
-
-Crear g_de_flota/ruta_calculator.py con estas funciones:
-
-calcular_ruta_osrm(paradas):
-- Llama a https://router.project-osrm.org/route/v1/driving/{coords}
-- params: overview=full, geometries=geojson
-- Retorna {distancia_km, duracion_min, polyline [[lat,lng],...]}
-- Si falla retorna None
-
-haversine_km(lat1, lng1, lat2, lng2):
-- Distancia en km entre dos coordenadas usando fórmula de Haversine
-
-detectar_peajes_en_ruta(polyline, categoria='liviano', radio_km=0.5):
-- Para cada Peaje activo de la categoría, verificar si algún punto de la polyline está a ≤ radio_km
-- Retorna lista de objetos Peaje sin duplicados
-
-calcular_costos(distancia_km, vehiculo, peajes, config_ruta, es_punta=False):
-- combustible = (distancia_km/100) × consumo_l_100km × precio_litro
-- precio_litro: config_ruta.precio_diesel si vehiculo.tipo_combustible=='diesel', sino precio_bencina
-- peajes_total = suma de tarifa_punta (si es_punta y existe) o tarifa_normal por cada peaje
-- Retorna {combustible, peajes_total, total, desglose_peajes, litros_estimados}
-
----
-
-## VISTAS (en views.py)
-
-### GET /api/empresa/rutas/
-Parámetros opcionales: estado, tipo, conductor_id, vehiculo_id, fecha_desde, fecha_hasta.
-Retorna lista de rutas + resumen {total, activas, pendientes, finalizadas, canceladas, km_mes, costo_est_mes}.
-
-### POST /api/empresa/rutas/
-Body: tipo, nombre, descripcion, conductor_id, vehiculo_id, fecha_programada, notas, paradas [{tipo, orden, nombre, direccion, lat, lng, notas}], es_punta.
-Al crear: validar 1 origen y 1 destino → llamar calcular_ruta_osrm → detectar_peajes_en_ruta → calcular_costos → guardar Ruta + Parada + PeajeRuta.
-Si OSRM falla: guardar sin datos de distancia, incluir aviso en respuesta.
-registrar_log acción 'ruta_creada'.
-
-### GET /api/empresa/rutas/:id/
-Retorna ruta completa con paradas, peajes, conductor, vehículo y costos.
-
-### PUT /api/empresa/rutas/:id/
-Permite editar: nombre, descripcion, conductor_id, vehiculo_id, fecha_programada, notas, paradas.
-Si cambian paradas: recalcular ruta OSRM, peajes y costos.
-
-### POST /api/empresa/rutas/:id/iniciar/
-Body: {km_inicio}. Estado pendiente → activo. Registra fecha_inicio=now(). registrar_log.
-
-### POST /api/empresa/rutas/:id/finalizar/
-Body: {km_fin, costo_combustible_real, costo_peajes_real, notas}.
-Estado activo → finalizado. Registra fecha_fin=now(). Calcula costo_total_real.
-Crea GastoOperativo automáticamente:
-- uno con categoria='combustible', monto=costo_combustible_real, descripcion=f"Combustible ruta {ruta.nombre}"
-- si costo_peajes_real > 0: otro con categoria='peaje'
-Actualiza vehiculo.km_actuales = km_fin.
-registrar_log acción 'ruta_finalizada'.
-
-### POST /api/empresa/rutas/:id/cancelar/
-Body: {motivo}. Solo desde estado pendiente o activo. registrar_log.
-
-### POST /api/empresa/rutas/calcular/
-Igual que POST /rutas/ pero sin guardar. Retorna {distancia_km, duracion_min, costos, peajes_detectados, polyline}.
-
-### GET /api/empresa/rutas/peajes/
-Lista todos los peajes activos (para capa del mapa).
-
-### GET/PUT /api/empresa/rutas/configuracion/
-GET retorna ConfiguracionRuta de la empresa.
-PUT actualiza precio_bencina, precio_diesel, radio_deteccion_peaje.
-
----
-
-## URLS
-
+Reemplazar las CATEGORIAS existentes por:
 ```python
-# Rutas específicas ANTES de las rutas con :id
-path('api/empresa/rutas/calcular/',                RouteCalcularView.as_view()),
-path('api/empresa/rutas/peajes/',                  PeajesListView.as_view()),
-path('api/empresa/rutas/configuracion/',           RutaConfigView.as_view()),
-path('api/empresa/rutas/',                         RutasListView.as_view()),
-path('api/empresa/rutas/<int:ruta_id>/',           RutaDetailView.as_view()),
-path('api/empresa/rutas/<int:ruta_id>/iniciar/',   RutaIniciarView.as_view()),
-path('api/empresa/rutas/<int:ruta_id>/finalizar/', RutaFinalizarView.as_view()),
-path('api/empresa/rutas/<int:ruta_id>/cancelar/',  RutaCancelarView.as_view()),
+CATEGORIAS = [
+    ('moto',        'Moto / Motoneta'),
+    ('liviano',     'Auto / Camioneta / SUV'),
+    ('liviano_rem', 'Auto/Camioneta con remolque'),
+    ('pesado_2',    'Bus / Camión 2 ejes'),
+    ('pesado_3',    'Camión 3+ ejes'),
+]
 ```
 
----
+Agregar dos campos nuevos al modelo Peaje después de longitud:
+```python
+km_ruta     = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True,
+              help_text='Kilómetro en la ruta donde está el peaje')
+radio_metros = models.PositiveIntegerField(default=800,
+              help_text='Radio de detección personalizado en metros')
+```
 
-## COMPONENTE MapaRuta.vue
+## CAMBIO 2 — Modelo Vehiculo (models.py)
 
-Crear src/web/rutas/MapaRuta.vue.
-Props: paradas [{tipo, nombre, latitud, longitud}], polyline [[lat,lng],...], peajes [{nombre, latitud, longitud, tarifa}], mapId (string).
+Agregar campo después de tipo_combustible:
+```python
+categoria_peaje = models.CharField(
+    max_length=20,
+    choices=[
+        ('moto',        'Moto / Motoneta'),
+        ('liviano',     'Auto / Camioneta / SUV'),
+        ('liviano_rem', 'Auto/Camioneta con remolque'),
+        ('pesado_2',    'Bus / Camión 2 ejes'),
+        ('pesado_3',    'Camión 3+ ejes'),
+    ],
+    default='liviano',
+    help_text='Categoría de peaje del vehículo'
+)
+```
 
-Cargar Leaflet dinámicamente desde unpkg.com si window.L no existe (CSS + JS).
-Usar OpenStreetMap como tile layer.
-Íconos SVG inline por tipo: origen=verde (#1D9E75), parada=azul (#378ADD), destino=rojo (#E24B4A), peaje=naranja (#EF9F27).
-Dibujar polyline en azul (weight 4) si existe.
-fitBounds a todos los puntos con padding [24,24].
-Vista por defecto si no hay puntos: Santiago [-33.4489, -70.6693] zoom 7.
-watch profundo en paradas/polyline/peajes para re-renderizar.
-onUnmounted: limpiar instancia del mapa.
+## CAMBIO 3 — Motor de detección (ruta_calculator.py)
 
----
+Reemplazar detectar_peajes_en_ruta() por versión mejorada con radio variable:
 
-## VISTA Rutas.vue
+```python
+def detectar_peajes_en_ruta(polyline, categoria_vehiculo='liviano', radio_default_km=0.8):
+    """
+    Detecta peajes usando radio variable por peaje (radio_metros del modelo).
+    Cada peaje tiene su propio radio de detección — los de autopistas urbanas
+    necesitan radio menor (200m) para no detectar peajes de carriles paralelos,
+    los rurales pueden tener radio mayor (1000m).
+    """
+    peajes_activos = Peaje.objects.filter(activo=True, categoria=categoria_vehiculo)
+    detectados = []
+    ids_vistos  = set()
 
-Crear src/web/rutas/Rutas.vue.
+    for peaje in peajes_activos:
+        if peaje.id in ids_vistos:
+            continue
+        radio_km = (peaje.radio_metros / 1000) if peaje.radio_metros else radio_default_km
+        for punto in polyline:
+            dist = haversine_km(punto[0], punto[1], peaje.latitud, peaje.longitud)
+            if dist <= radio_km:
+                detectados.append(peaje)
+                ids_vistos.add(peaje.id)
+                break
 
-Header: título "Rutas y trabajos" + botón "Nueva ruta".
-Tabs: Todas | Activas | Pendientes | Finalizadas.
-KPI cards: Rutas activas · Pendientes hoy · Km este mes · Costo estimado mes.
+    return detectados
+```
 
-Tabla con columnas: Nombre, Tipo (badge), Origen→Destino, Conductor, Vehículo, Fecha, Km, Costo est., Estado (badge), Acciones.
-Badges de estado: activo=verde con animate-pulse, pendiente=azul, finalizado=gris, cancelado=rojo, borrador=amarillo.
-Acciones por estado: pendiente→[Iniciar, Editar, Ver, Cancelar] | activo→[Finalizar, Ver] | resto→[Ver].
-Click en fila: abre panel lateral con detalle y mapa.
+Modificar calcular_costos() para usar categoria_peaje del vehículo:
+- Recibir categoria_vehiculo como parámetro en lugar de asumir 'liviano'
+- En la vista POST /rutas/ y POST /rutas/calcular/, pasar vehiculo.categoria_peaje
 
-Panel lateral (detalle de ruta seleccionada):
-Tabs: Detalle | Mapa | Costos.
-Tab Mapa: MapaRuta.vue a 400px altura con polyline, paradas y peajes detectados. Toggle para mostrar/ocultar peajes.
-Tab Costos: estimado vs real si está finalizada. Desglose combustible + peajes + total.
+## CAMBIO 4 — seed_peajes.py (reemplazar completo)
 
-Modal crear/editar en 3 pasos:
+Usar update_or_create. Para cada entrada crear UNA fila por categoría con la tarifa REAL de esa categoría — no multiplicadores, tarifas exactas.
 
-Paso 1 — Datos generales:
-tipo (radio Carga/Personas), nombre, conductor (select), vehículo (select, muestra combustible y consumo), fecha_programada, notas.
+Peajes y tarifas 2026 reales por categoría (moto, liviano, liviano_rem, pesado_2, pesado_3):
 
-Paso 2 — Paradas:
-Origen (fijo arriba) y Destino (fijo abajo). Botón "Agregar parada intermedia".
-Cada parada: input con búsqueda Nominatim (debounce 500ms), guarda lat/lng al seleccionar.
-Geocodificación: fetch a https://nominatim.openstreetmap.org/search?format=json&q={texto}&countrycodes=cl&limit=5
+Ruta 68 — aplica a Zapata (-33.4456,-70.9789), Lo Prado (-33.4012,-71.1234), Casablanca (-33.3234,-71.4123):
+normal: moto=800, liviano=2700, liviano_rem=3400, pesado_2=4800, pesado_3=8600
+punta:  moto=1200, liviano=4000, liviano_rem=5000, pesado_2=7200, pesado_3=12900
+radio_metros: 600 (carretera de montaña, radio más ajustado)
 
-Paso 3 — Calcular y confirmar:
-Al llegar: POST /api/empresa/rutas/calcular/ automáticamente.
-Mostrar: mini mapa MapaRuta (250px), distancia, duración, card de costos (combustible + desglose peajes + total), toggle horario punta.
-Si OSRM falla: aviso amarillo, permitir crear igual.
-Botón "Crear ruta" → POST /api/empresa/rutas/.
+Ruta 5 Norte troncales — aplica a Las Vegas (-32.8234,-71.0123), Pichidangui (-32.1456,-71.5234):
+normal: moto=1200, liviano=4050, liviano_rem=5100, pesado_2=7300, pesado_3=12950
+punta: None (tarifa plana)
+radio_metros: 1000
 
-Modal iniciar: campo km_inicio (pre-rellena con vehiculo.km_actuales).
-Modal finalizar: km_fin, costo_combustible_real (pre-rellena con estimado), costo_peajes_real, notas. Aviso: "Se crearán gastos operativos automáticamente."
-Modal cancelar: campo motivo.
+Ruta 5 Norte — Lampa (-33.2847,-70.9142):
+normal: moto=750, liviano=2917, liviano_rem=3700, pesado_2=5250, pesado_3=9330
+radio_metros: 800
 
-Configuración de precios: botón "Configurar precios" abre panel con precio_bencina, precio_diesel → PUT /api/empresa/rutas/configuracion/.
+Ruta 5 Norte Los Vilos–Serena — Socos (-30.7234,-71.4567), Serena (-29.9456,-71.2345):
+normal: moto=1200, liviano=4050, liviano_rem=5100, pesado_2=7300, pesado_3=12950
+radio_metros: 1000
 
----
+Ruta 5 Sur troncal Stgo–Talca — Río Maipo (-33.6789,-70.8901), Angostura (-33.8901,-70.8456), Talca (-35.4234,-71.6234):
+normal: moto=950, liviano=3800, liviano_rem=4800, pesado_2=6840, pesado_3=12160
+radio_metros: 1000
 
-## NAVEGACIÓN
+Ruta 5 Sur lateral — mismo lat/lng que troncales pero con _lat field:
+Río Maipo lateral (-33.6820,-70.8950): moto=230, liviano=900, liviano_rem=1140, pesado_2=1620, pesado_3=2880
+radio_metros: 400 (lateral, radio chico para no confundir con troncal)
 
-Sidebar USUARIO: Ítem "Rutas y trabajos" · ícono ti-route · ruta /empresa/rutas.
-router/index.js: { path: '/empresa/rutas', component: () => import('@/web/rutas/Rutas.vue'), meta: { requiresAuth: true, roles: ['USUARIO'] } }
+Ruta 5 Sur Talca–Chillán — Chillán (-36.6234,-72.1012):
+normal: moto=900, liviano=3100, liviano_rem=3900, pesado_2=5580, pesado_3=9920
+radio_metros: 1000
 
----
+Ruta 5 Sur Chillán–Collipulli — Collipulli (-37.9456,-72.4345):
+normal: moto=1000, liviano=3200, liviano_rem=4030, pesado_2=5760, pesado_3=10240
+radio_metros: 1000
 
-## CONVENCIONES
-- Montos CLP formato $X.XXX
-- OSRM y Nominatim pueden fallar — siempre fail-graceful
-- Nominatim: debounce 500ms obligatorio (rate limit)
-- apiFetch siempre, excepto Nominatim y carga de Leaflet
-- registrar_log en todas las acciones críticas
-- Al finalizar ruta: actualizar vehiculo.km_actuales = km_fin
-- Composition API <script setup>
+Ruta 5 Sur Temuco–Osorno — Temuco (-38.7345,-72.5901), Osorno (-40.5678,-73.1234):
+normal: moto=950, liviano=3500, liviano_rem=4400, pesado_2=6300, pesado_3=11200
+radio_metros: 1000
 
----
+Ruta 57 Santiago–Los Andes — Chacabuco (-33.0234,-70.6789), Los Andes (-32.8345,-70.5901):
+normal: moto=680, liviano=2700, liviano_rem=3400, pesado_2=4860, pesado_3=8640
+radio_metros: 700
+
+Ruta 78 — Melipilla A (-33.6890,-71.2134):
+normal: moto=830, liviano=3300, liviano_rem=4160, pesado_2=5940, pesado_3=10560
+radio_metros: 500
+
+Ruta 78 — Melipilla B (-33.7234,-71.4012):
+normal: moto=1490, liviano=5940, liviano_rem=7480, pesado_2=10690, pesado_3=19010
+radio_metros: 500
+
+Ruta 60 CH — Quillota (-32.8789,-71.2345):
+normal: moto=1250, liviano=5000, liviano_rem=6300, pesado_2=9000, pesado_3=16000
+punta:  moto=1750, liviano=7000, liviano_rem=8820, pesado_2=12600, pesado_3=22400
+radio_metros: 700
+
+## CAMBIO 5 — Formulario de vehículo (frontend)
+
+En la vista de crear/editar vehículo, agregar campo select:
+```vue
+<div>
+  <label class="label">Categoría de peaje</label>
+  <select v-model="form.categoria_peaje" class="input">
+    <option value="moto">Moto / Motoneta</option>
+    <option value="liviano">Auto / Camioneta / SUV</option>
+    <option value="liviano_rem">Auto/Camioneta con remolque</option>
+    <option value="pesado_2">Bus / Camión 2 ejes</option>
+    <option value="pesado_3">Camión 3+ ejes</option>
+  </select>
+  <p class="text-xs text-gray-400 mt-1">
+    Define la tarifa de peaje que paga este vehículo
+  </p>
+</div>
+```
+
+## CAMBIO 6 — Vista de crear ruta (Rutas.vue)
+
+En el paso 3 del modal (calculadora), mostrar la categoría de peaje del vehículo seleccionado:
+Vehículo: PPU-4421 — Mercedes Actros · Diésel · Categoría: Bus/Camión 2 ejes
+Así el usuario sabe qué tarifa se está aplicando antes de confirmar.
+
+## CAMBIO 7 — Migración
+
+```bash
+python manage.py makemigrations --name mejorar_peajes_categorias
+python manage.py migrate
+python manage.py seed_peajes  # reemplaza datos anteriores
+```
 
 ## ARCHIVOS A ENTREGAR
-1. models_patch.py — 5 modelos nuevos + campo consumo_l_100km en Vehiculo
-2. ruta_calculator.py — módulo de cálculo completo
-3. views_rutas_patch.py — 8 vistas con indicación de dónde van en views.py
-4. urls_patch.py — 8 rutas
-5. seed_peajes.py — management command completo
-6. Rutas.vue — vista principal completa
-7. MapaRuta.vue — componente de mapa completo
-8. router_patch.js + nav_patch.md
-9. MIGRACION.md — makemigrations → migrate → seed_peajes → verificar
+
+1. models_patch.py — solo los cambios en Peaje y Vehiculo
+2. ruta_calculator_patch.py — solo detectar_peajes_en_ruta() y calcular_costos() modificados
+3. seed_peajes.py — completo, reemplaza el anterior
+4. vehiculo_form_patch.vue — solo el campo categoria_peaje a agregar en el form de vehículo
+5. rutas_paso3_patch.vue — solo la línea de categoría a mostrar en el paso 3
+6. MIGRACION.md — makemigrations → migrate → seed_peajes
+
+Sin "# resto igual".

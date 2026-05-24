@@ -138,9 +138,9 @@ def _procesar_paradas_y_calcular(ruta, paradas_data, es_punta, empresa):
             ruta.duracion_min = osrm['duracion_min']
             ruta.polyline = osrm['polyline']
 
-            config    = ConfiguracionRuta.get_for_empresa(empresa)
-            radio_km  = config.radio_deteccion_peaje / 1000
-            peajes    = detectar_peajes_en_ruta(osrm['polyline'], radio_km=radio_km)
+            config   = ConfiguracionRuta.get_for_empresa(empresa)
+            cat      = ruta.vehiculo.categoria_peaje if ruta.vehiculo else 'liviano'
+            peajes   = detectar_peajes_en_ruta(osrm['polyline'], categoria_vehiculo=cat)
 
             PeajeRuta.objects.filter(ruta=ruta).delete()
             for peaje in peajes:
@@ -151,6 +151,7 @@ def _procesar_paradas_y_calcular(ruta, paradas_data, es_punta, empresa):
             if ruta.vehiculo:
                 costos = calcular_costos(
                     float(osrm['distancia_km']), ruta.vehiculo, peajes, config, es_punta,
+                    categoria_vehiculo=cat,
                 )
                 ruta.costo_combustible_est = costos['combustible']
                 ruta.costo_peajes_est      = costos['peajes_total']
@@ -483,14 +484,18 @@ class RouteCalcularView(APIView):
             })
 
         config   = ConfiguracionRuta.get_for_empresa(empresa)
-        radio_km = config.radio_deteccion_peaje / 1000
-        peajes   = detectar_peajes_en_ruta(osrm['polyline'], radio_km=radio_km)
 
         vehiculo = None
         if vehiculo_id:
             vehiculo = Vehiculo.objects.filter(pk=vehiculo_id, flota__empresa=empresa).first()
 
-        costos = calcular_costos(float(osrm['distancia_km']), vehiculo, peajes, config, es_punta) if vehiculo else None
+        cat    = vehiculo.categoria_peaje if vehiculo else 'liviano'
+        peajes = detectar_peajes_en_ruta(osrm['polyline'], categoria_vehiculo=cat)
+
+        costos = calcular_costos(
+            float(osrm['distancia_km']), vehiculo, peajes, config, es_punta,
+            categoria_vehiculo=cat,
+        ) if vehiculo else None
 
         return Response({
             'distancia_km': osrm['distancia_km'],

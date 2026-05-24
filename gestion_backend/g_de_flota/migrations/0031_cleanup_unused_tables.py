@@ -16,9 +16,9 @@ class Migration(migrations.Migration):
         migrations.DeleteModel(name='Ubicacion'),
         migrations.DeleteModel(name='Evento'),
         migrations.RunPython(eliminar_peajes_no_liviano, migrations.RunPython.noop),
-        migrations.RemoveField(model_name='peaje', name='categoria'),
         migrations.AlterUniqueTogether(
             name='peaje',
             unique_together={('nombre', 'ruta')},
         ),
+        migrations.RemoveField(model_name='peaje', name='categoria'),
     ]

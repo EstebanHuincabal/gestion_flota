@@ -11,7 +11,7 @@ from rest_framework import status
 from .models import (
     Documento, Empresa, Vehiculo, Usuario, Rol, TipoNotificacion, Notificacion,
 )
-from .audit import registrar_log
+from .audit import registrar_log, _diff_campos, _snap
 from .notificaciones import notificar_admins_empresa
 
 
@@ -262,8 +262,17 @@ class DocumentosListView(APIView):
 
         doc.save()
 
-        registrar_log('ACTIVIDAD', 'documento_subido', request,
-                      detalle={'documento_id': doc.id, 'tipo': doc.get_tipo_display(), 'entidad': entidad})
+        registrar_log('ACTIVIDAD', 'documento_subido', request, detalle={
+            'documento_id':      doc.id,
+            'tipo':              doc.get_tipo_display(),
+            'entidad':           entidad,
+            'nombre_archivo':    doc.nombre_archivo or None,
+            'vehiculo_patente':  doc.vehiculo.patente if doc.vehiculo else None,
+            'conductor_nombre':  doc.conductor.nombre if doc.conductor else None,
+            'fecha_emision':     str(doc.fecha_emision) if doc.fecha_emision else None,
+            'fecha_vencimiento': str(doc.fecha_vencimiento) if doc.fecha_vencimiento else None,
+            'notas':             doc.notas or None,
+        })
 
         if user.rol == Rol.CONDUCTOR:
             notificar_admins_empresa(
@@ -304,6 +313,9 @@ class DocumentoDetailView(APIView):
         data    = request.data
         archivo = request.FILES.get('archivo')
 
+        _campos_doc = ['fecha_emision', 'fecha_vencimiento', 'notas', 'nombre_archivo']
+        _antes_doc  = _snap(doc, _campos_doc)
+
         if data.get('fecha_emision'):     doc.fecha_emision     = data['fecha_emision']
         if data.get('fecha_vencimiento'): doc.fecha_vencimiento = data['fecha_vencimiento']
         if 'notas' in data:               doc.notas             = data['notas']
@@ -316,8 +328,15 @@ class DocumentoDetailView(APIView):
             doc.nombre_archivo = archivo.name
 
         doc.save()
-        registrar_log('ACTIVIDAD', 'documento_editado', request,
-                      detalle={'documento_id': doc.id, 'tipo': doc.get_tipo_display()})
+        registrar_log('ACTIVIDAD', 'documento_editado', request, detalle={
+            'documento_id':      doc.id,
+            'tipo':              doc.get_tipo_display(),
+            'nombre_archivo':    doc.nombre_archivo or None,
+            'vehiculo_patente':  doc.vehiculo.patente if doc.vehiculo else None,
+            'conductor_nombre':  doc.conductor.nombre if doc.conductor else None,
+            'fecha_vencimiento': str(doc.fecha_vencimiento) if doc.fecha_vencimiento else None,
+            'cambios':           _diff_campos(_antes_doc, _snap(doc, _campos_doc)),
+        })
         return Response(_doc_dict(doc))
 
     def delete(self, request, doc_id):
@@ -338,8 +357,13 @@ class DocumentoDetailView(APIView):
             try: default_storage.delete(doc.archivo.name)
             except Exception: pass
 
-        registrar_log('ACTIVIDAD', 'documento_eliminado', request,
-                      detalle={'documento_id': doc.id, 'tipo': doc.get_tipo_display()})
+        registrar_log('ACTIVIDAD', 'documento_eliminado', request, detalle={
+            'documento_id':     doc.id,
+            'tipo':             doc.get_tipo_display(),
+            'nombre_archivo':   doc.nombre_archivo or None,
+            'vehiculo_patente': doc.vehiculo.patente if doc.vehiculo else None,
+            'conductor_nombre': doc.conductor.nombre if doc.conductor else None,
+        })
         doc.delete()
         return Response({'message': 'Documento eliminado.'})
 
@@ -362,8 +386,13 @@ class DocumentoDescargarView(APIView):
         if not doc.archivo:
             return Response({'error': 'Este documento no tiene archivo adjunto.'}, status=status.HTTP_404_NOT_FOUND)
 
-        registrar_log('ACTIVIDAD', 'documento_descargado', request,
-                      detalle={'documento_id': doc.id})
+        registrar_log('ACTIVIDAD', 'documento_descargado', request, detalle={
+            'documento_id':     doc.id,
+            'tipo':             doc.get_tipo_display(),
+            'nombre_archivo':   doc.nombre_archivo or None,
+            'vehiculo_patente': doc.vehiculo.patente if doc.vehiculo else None,
+            'conductor_nombre': doc.conductor.nombre if doc.conductor else None,
+        })
 
         try:
             archivo  = doc.archivo.open('rb')
@@ -408,7 +437,15 @@ class DocumentoRenovarView(APIView):
         )
         nuevo.save()
 
-        registrar_log('ACTIVIDAD', 'documento_renovado', request,
-                      detalle={'documento_id': nuevo.id, 'tipo': nuevo.get_tipo_display(), 'anterior_id': anterior.id})
+        registrar_log('ACTIVIDAD', 'documento_renovado', request, detalle={
+            'documento_id':      nuevo.id,
+            'tipo':              nuevo.get_tipo_display(),
+            'anterior_id':       anterior.id,
+            'nombre_archivo':    nuevo.nombre_archivo or None,
+            'vehiculo_patente':  nuevo.vehiculo.patente if nuevo.vehiculo else None,
+            'conductor_nombre':  nuevo.conductor.nombre if nuevo.conductor else None,
+            'fecha_emision':     str(nuevo.fecha_emision) if nuevo.fecha_emision else None,
+            'fecha_vencimiento': str(nuevo.fecha_vencimiento) if nuevo.fecha_vencimiento else None,
+        })
 
         return Response(_doc_dict(nuevo), status=status.HTTP_201_CREATED)

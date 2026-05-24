@@ -1,13 +1,16 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import (
-    Usuario, Empresa,
+    Usuario, Empresa, CambioPlan,
     Flota, Vehiculo, Asignacion,
     Mantencion,
     LogAuditoria, PlanSuscripcion, Permiso,
+    Notificacion,
     PlanMantenimiento, ReglaMantenimiento, VehiculoPlan,
     MantencionProgramada, AlertaMantencion,
     GastoOperativo, PresupuestoMensual, Documento,
+    Peaje, ConfiguracionRuta,
+    Ruta, Parada, PeajeRuta,
 )
 
 # ─────────────────────────────────────────
@@ -157,3 +160,66 @@ class DocumentoAdmin(admin.ModelAdmin):
     list_display = ('empresa', 'entidad', 'tipo', 'vehiculo', 'conductor', 'fecha_vencimiento')
     list_filter = ('entidad', 'tipo', 'empresa')
     search_fields = ('vehiculo__patente', 'conductor__email')
+
+
+# ─────────────────────────────────────────
+# Suscripciones
+# ─────────────────────────────────────────
+
+@admin.register(CambioPlan)
+class CambioPlanAdmin(admin.ModelAdmin):
+    list_display  = ('empresa', 'plan_antes', 'plan_despues', 'cambiado_por', 'fecha')
+    list_filter   = ('plan_antes', 'plan_despues')
+    search_fields = ('empresa__nombre', 'cambiado_por__email', 'motivo')
+    readonly_fields = ('fecha',)
+
+
+# ─────────────────────────────────────────
+# Notificaciones
+# ─────────────────────────────────────────
+
+@admin.register(Notificacion)
+class NotificacionAdmin(admin.ModelAdmin):
+    list_display  = ('usuario', 'tipo', 'titulo', 'leida', 'fecha')
+    list_filter   = ('tipo', 'leida')
+    search_fields = ('usuario__email', 'titulo', 'mensaje')
+    readonly_fields = ('fecha',)
+
+
+# ─────────────────────────────────────────
+# Rutas y Trabajos
+# ─────────────────────────────────────────
+
+@admin.register(Peaje)
+class PeajeAdmin(admin.ModelAdmin):
+    list_display  = ('nombre', 'ruta', 'categoria', 'tarifa_normal', 'tarifa_punta', 'radio_metros', 'activo')
+    list_filter   = ('categoria', 'activo', 'ruta')
+    search_fields = ('nombre', 'ruta', 'autopista')
+
+
+@admin.register(ConfiguracionRuta)
+class ConfiguracionRutaAdmin(admin.ModelAdmin):
+    list_display  = ('empresa', 'precio_bencina', 'precio_diesel', 'radio_deteccion_peaje')
+    search_fields = ('empresa__nombre',)
+
+
+@admin.register(Ruta)
+class RutaAdmin(admin.ModelAdmin):
+    list_display  = ('nombre', 'empresa', 'tipo', 'estado', 'conductor', 'vehiculo', 'fecha_programada', 'distancia_km', 'costo_total_est')
+    list_filter   = ('tipo', 'estado', 'empresa')
+    search_fields = ('nombre', 'conductor__email', 'vehiculo__patente')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(Parada)
+class ParadaAdmin(admin.ModelAdmin):
+    list_display  = ('nombre', 'ruta', 'tipo', 'orden', 'direccion')
+    list_filter   = ('tipo',)
+    search_fields = ('nombre', 'ruta__nombre', 'direccion')
+
+
+@admin.register(PeajeRuta)
+class PeajeRutaAdmin(admin.ModelAdmin):
+    list_display  = ('ruta', 'peaje', 'tarifa')
+    list_filter   = ('peaje__categoria',)
+    search_fields = ('ruta__nombre', 'peaje__nombre')

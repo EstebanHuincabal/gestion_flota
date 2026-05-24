@@ -681,7 +681,7 @@ class VehiculoResumenSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Vehiculo
         fields = ['id', 'patente', 'marca', 'modelo', 'anio',
-                  'tipo_combustible', 'km_actuales', 'activo']
+                  'tipo_combustible', 'categoria_peaje', 'km_actuales', 'activo']
 
 
 class FlotaSerializer(serializers.ModelSerializer):
@@ -725,8 +725,8 @@ class VehiculoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Vehiculo
         fields = ['id', 'flota', 'flota_nombre', 'patente', 'marca', 'modelo',
-                  'anio', 'tipo_combustible', 'km_actuales', 'consumo_l_100km',
-                  'conductor_asignado', 'activo']
+                  'anio', 'tipo_combustible', 'categoria_peaje', 'km_actuales',
+                  'consumo_l_100km', 'conductor_asignado', 'activo']
         read_only_fields = ['id']
 
     def get_flota_nombre(self, obj):
@@ -817,19 +817,128 @@ class CambioPlanSerializer(serializers.ModelSerializer):
         return obj.cambiado_por.email if obj.cambiado_por else None
 
 
+def _generar_descripcion(accion, detalle, nombre):
+    """Genera una oración en español que resume el evento del log."""
+    u = nombre or 'Un usuario'
+    d = detalle or {}
+
+    def _veh():   return d.get('patente') or d.get('vehiculo_patente') or ''
+    def _cond():  return d.get('conductor_nombre') or d.get('conductor') or d.get('email') or ''
+    def _flota(): return d.get('nombre') or ''
+    def _doc():   return d.get('tipo') or ''
+    def _arch():  return f' "{d["nombre_archivo"]}"' if d.get('nombre_archivo') else ''
+    def _entid(): return _veh() or _cond()
+
+    desc = {
+        # Seguridad
+        'login_exitoso':          lambda: f'{u} inició sesión correctamente.',
+        'login_fallido':          lambda: f'Intento de acceso fallido para {d.get("usuario_email", "usuario desconocido")}.',
+        'cambio_password':        lambda: f'{u} restableció la contraseña de {d.get("usuario_email", "")}.',
+        'cambio_rol':             lambda: f'{u} cambió el rol de {d.get("usuario_email", "")} de {d.get("rol_anterior", "?")} a {d.get("rol_nuevo", "?")}.',
+        'cambio_permisos':        lambda: f'{u} modificó los permisos de {d.get("usuario_email", "")}.',
+        'usuario_bloqueado':      lambda: f'{u} bloqueó la cuenta de {d.get("usuario_email", "")}.',
+        'usuario_desbloqueado':   lambda: f'{u} desbloqueó la cuenta de {d.get("usuario_email", "")}.',
+        # Usuarios
+        'usuario_creado':         lambda: f'{u} creó el usuario {d.get("usuario_email", "")} con rol {d.get("rol", "")}.',
+        'usuario_modificado':     lambda: f'{u} modificó los datos de {d.get("usuario_email", "")}.',
+        'usuario_eliminado':      lambda: f'{u} eliminó al usuario {d.get("usuario_email", "")}.',
+        'perfil_actualizado':     lambda: f'{u} actualizó su propio perfil.',
+        # Empresa
+        'empresa_creada':         lambda: f'{u} registró la empresa "{d.get("empresa_nombre", "")}".',
+        'empresa_suspendida':     lambda: f'{u} suspendió la empresa "{d.get("empresa_nombre", "")}".',
+        'empresa_eliminada':      lambda: f'{u} eliminó la empresa "{d.get("empresa_nombre", "")}".',
+        # Planes
+        'plan_creado':            lambda: f'{u} creó el plan "{d.get("plan", "")}".',
+        'plan_editado':           lambda: f'{u} editó el plan "{d.get("plan", "")}".',
+        'plan_eliminado':         lambda: f'{u} eliminó el plan "{d.get("plan", "")}".',
+        'plan_asignado':          lambda: f'{u} asignó el plan "{d.get("plan_nuevo", d.get("plan",""))}" a {d.get("empresa", "")}.',
+        'plan_permisos_editados': lambda: f'{u} editó los permisos del plan "{d.get("plan", "")}" ({d.get("total", 0)} permisos).',
+        'solicitud_cambio_plan':  lambda: f'{u} solicitó cambiar al plan "{d.get("plan_solicitado", "")}".',
+        # Flotas
+        'flota_creada':           lambda: f'{u} creó la flota "{_flota()}".',
+        'flota_editada':          lambda: f'{u} editó la flota "{_flota()}".',
+        'flota_eliminada':        lambda: f'{u} eliminó la flota "{_flota()}".',
+        # Vehículos
+        'vehiculo_creado':        lambda: f'{u} registró el vehículo {_veh()} ({d.get("marca","")} {d.get("modelo","")}).',
+        'vehiculo_editado':       lambda: f'{u} modificó el vehículo {_veh()}.',
+        'vehiculo_desactivado':   lambda: f'{u} desactivó el vehículo {_veh()}.',
+        # Conductores
+        'conductor_creado':       lambda: f'{u} registró al conductor {d.get("nombre", d.get("email", ""))}.',
+        'conductor_editado':      lambda: f'{u} editó al conductor {d.get("email", "")}.',
+        'conductor_desactivado':  lambda: f'{u} desactivó al conductor {d.get("email", "")}.',
+        'conductor_asignado':     lambda: f'{u} asignó a {_cond()} al vehículo {_veh()}.',
+        'conductor_desasignado':  lambda: f'{u} desasignó al conductor {_cond()}.',
+        # Mantenciones
+        'mantencion_creada':      lambda: f'{u} registró una mantención {d.get("tipo","")} para {_veh()}.',
+        'mantencion_editada':     lambda: f'{u} editó una mantención {d.get("tipo","")} de {_veh()}.',
+        'mantencion_eliminada':   lambda: f'{u} eliminó una mantención {d.get("tipo","")} de {_veh()}.',
+        'mantencion_estado_cambiado': lambda: f'{u} cambió el estado de mantención de {_veh()} de "{d.get("estado_previo","")}" a "{d.get("estado_nuevo","")}".',
+        # Documentos
+        'documento_subido':       lambda: f'{u} subió {_doc()}{_arch()} para {_entid()}.',
+        'documento_editado':      lambda: f'{u} editó el documento {_doc()}{_arch()} de {_entid()}.',
+        'documento_eliminado':    lambda: f'{u} eliminó el documento {_doc()} de {_entid()}.',
+        'documento_descargado':   lambda: f'{u} descargó {_doc()}{_arch()} de {_entid()}.',
+        'documento_renovado':     lambda: f'{u} renovó {_doc()}{_arch()} para {_entid()} (ID anterior: {d.get("anterior_id","")}).',
+        # Rutas
+        'ruta_creada':            lambda: f'{u} creó la ruta "{d.get("nombre", "")}".',
+        'ruta_eliminada':         lambda: f'{u} eliminó la ruta "{d.get("nombre", "")}".',
+        'ruta_iniciada':          lambda: f'{u} inició la ruta #{d.get("ruta_id","")} (Km inicial: {d.get("km_inicio","")}).',
+        'ruta_finalizada':        lambda: f'{u} finalizó la ruta #{d.get("ruta_id","")} ({d.get("km_reales","")} km, costo: ${d.get("costo_total_real","")}).',
+        'ruta_cancelada':         lambda: f'{u} canceló la ruta #{d.get("ruta_id","")}. Motivo: {d.get("motivo","")}.',
+        # Gastos
+        'gasto_creado':           lambda: f'{u} registró un gasto de ${d.get("monto","")} en {d.get("categoria","")}.',
+        'gasto_editado':          lambda: f'{u} editó el gasto #{d.get("gasto_id","")}.',
+        'gasto_eliminado':        lambda: f'{u} eliminó un gasto de ${d.get("monto","")} en {d.get("categoria","")}.',
+        'presupuesto_creado':     lambda: f'{u} creó un presupuesto de ${d.get("monto","")} para {d.get("mes","")}/{d.get("anio","")}.',
+        'presupuesto_editado':    lambda: f'{u} editó el presupuesto de {d.get("mes","")}/{d.get("anio","")} a ${d.get("monto","")}.',
+        # Predictivo
+        'crear_plan_mantenimiento':      lambda: f'{u} creó el plan de mantenimiento #{d.get("plan_id","")}.',
+        'actualizar_plan_mantenimiento': lambda: f'{u} actualizó el plan de mantenimiento #{d.get("plan_id","")}.',
+        'eliminar_plan_mantenimiento':   lambda: f'{u} eliminó el plan de mantenimiento #{d.get("plan_id","")}.',
+        'atender_alerta_mantencion':     lambda: f'{u} atendió la alerta #{d.get("alerta_id","")}.',
+        'asignar_plan_vehiculo':         lambda: f'{u} asignó el plan #{d.get("plan_id","")} al vehículo #{d.get("vehiculo_id","")}.',
+        'desasignar_plan_vehiculo':      lambda: f'{u} eliminó la asignación #{d.get("asignacion_id","")} de plan.',
+        'generar_alertas_predictivas':   lambda: f'{u} generó alertas predictivas.',
+    }
+
+    fn = desc.get(accion)
+    if not fn:
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
 class LogAuditoriaSerializer(serializers.ModelSerializer):
     usuario_email  = serializers.SerializerMethodField()
     usuario_nombre = serializers.SerializerMethodField()
+    navegador      = serializers.SerializerMethodField()
+    descripcion    = serializers.SerializerMethodField()
 
     class Meta:
         model  = LogAuditoria
-        fields = ['id', 'tipo', 'accion', 'usuario_email', 'usuario_nombre', 'detalle', 'ip', 'fecha']
+        fields = [
+            'id', 'tipo', 'accion', 'descripcion',
+            'usuario_email', 'usuario_nombre',
+            'detalle', 'ip', 'user_agent', 'navegador', 'so',
+            'metodo', 'endpoint',
+            'fecha',
+        ]
 
     def get_usuario_email(self, obj):
         return obj.usuario.email if obj.usuario else None
 
     def get_usuario_nombre(self, obj):
         return obj.usuario.nombre if obj.usuario else None
+
+    def get_navegador(self, obj):
+        from .audit import _parse_navegador
+        return _parse_navegador(obj.user_agent)
+
+    def get_descripcion(self, obj):
+        nombre = obj.usuario.nombre if obj.usuario else None
+        return _generar_descripcion(obj.accion, obj.detalle, nombre)
 
 
 # ─────────────────────────────────────────
