@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { clearEmpresaActiva } from '../utils/empresaActiva.js'
 import NotificacionesBell from '../components/NotificacionesBell.vue'
@@ -109,6 +109,13 @@ const navOperaciones = [
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>`
   },
+  {
+    label: 'Solicitudes',
+    path: '/solicitudes',
+    badge: true,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>`
+  },
 ]
 
 const navConductor = [
@@ -132,6 +139,26 @@ const navCuenta = [
 
 const isActive = (path) => route.path.startsWith(path)
 
+// ── Badge de solicitudes para SUPERADMIN ──────────────────────────────────────
+const solicitudesPendientes = ref(0)
+let pollingSolAdmin = null
+
+async function refrescarConteoSolicitudesAdmin() {
+  if (!esSuperadmin.value) return
+  try {
+    const empresa = JSON.parse(sessionStorage.getItem('empresaActiva') || 'null')
+    if (!empresa?.id) return
+    const res  = await apiFetch(`/api/empresa/solicitudes/conteo/?empresa_id=${empresa.id}`)
+    if (!res.ok) return
+    const data = await res.json()
+    solicitudesPendientes.value = data.pendientes ?? 0
+  } catch {}
+}
+
+function onSolicitudesAdminBadge(e) {
+  solicitudesPendientes.value = e.detail ?? 0
+}
+
 const { mostrarModal, segundosRestantes, extenderSesion, logoutDesdeModal } = useSessionTimer()
 
 const cerrarSesion = () => {
@@ -144,6 +171,19 @@ const cerrarSesion = () => {
   clearEmpresaActiva()
   router.push('/login')
 }
+
+onMounted(() => {
+  if (esSuperadmin.value) {
+    refrescarConteoSolicitudesAdmin()
+    pollingSolAdmin = setInterval(refrescarConteoSolicitudesAdmin, 60_000)
+    window.addEventListener('solicitudes-admin-badge', onSolicitudesAdminBadge)
+  }
+})
+
+onUnmounted(() => {
+  clearInterval(pollingSolAdmin)
+  window.removeEventListener('solicitudes-admin-badge', onSolicitudesAdminBadge)
+})
 </script>
 
 <template>
@@ -221,10 +261,16 @@ const cerrarSesion = () => {
             :class="['nav-item', { active: isActive(item.path) }]"
             :title="navCollapsed ? item.label : ''"
           >
-            <span class="nav-icon">
+            <span class="nav-icon" style="position:relative">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+              <!-- Punto rojo en modo colapsado -->
+              <span v-if="navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-dot"/>
             </span>
             <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
+            <!-- Contador inline en modo expandido -->
+            <span v-if="!navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-count">
+              {{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}
+            </span>
             <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
           </router-link>
         </template>
@@ -496,4 +542,28 @@ const cerrarSesion = () => {
 .page-content { flex: 1; overflow-y: auto; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Badge de solicitudes en sidebar ── */
+.base-badge-dot {
+  position: absolute;
+  top: -3px; right: -3px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #EF4444;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1.5px rgba(239,68,68,0.4);
+}
+.base-badge-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  background: #EF4444;
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  flex-shrink: 0;
+}
 </style>

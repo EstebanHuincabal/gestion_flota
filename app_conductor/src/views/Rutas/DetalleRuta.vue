@@ -86,15 +86,6 @@ async function confirmarIniciar() {
 
 async function confirmarFinalizar() {
   // Validaciones
-  if (!kmFin.value) {
-    errorModal.value = 'El odómetro final es obligatorio'
-    return
-  }
-  const kmFinalNum = Number(kmFin.value)
-  if (ruta.value?.km_inicio && kmFinalNum <= ruta.value.km_inicio) {
-    errorModal.value = `El km final debe ser mayor al km de inicio (${ruta.value.km_inicio.toLocaleString('es-CL')})`
-    return
-  }
   if (Number(combustibleReal.value) < 0 || Number(peajesReal.value) < 0) {
     errorModal.value = 'Los costos no pueden ser negativos'
     return
@@ -104,7 +95,6 @@ async function confirmarFinalizar() {
   errorModal.value = ''
   try {
     await rutasStore.finalizarRuta(rutaId.value, {
-      km_fin:                 kmFinalNum,
       costo_combustible_real: combustibleReal.value ? Number(combustibleReal.value) : undefined,
       costo_peajes_real:      peajesReal.value      ? Number(peajesReal.value)      : undefined,
       notas:                  notasModal.value       || undefined,
@@ -251,12 +241,13 @@ const COMBUSTIBLE = {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 flex flex-col">
+  <div class="min-h-dvh bg-gray-50 flex flex-col">
 
-    <!-- ── Toast ──────────────────────────────────────────────────────────── -->
+    <!-- ── Toast (safe-area-aware para notch / Dynamic Island) ───────────── -->
     <Transition name="toast-slide">
       <div v-if="toast.visible"
-           class="fixed top-4 left-4 right-4 z-[4000] rounded-2xl px-4 py-3 shadow-xl text-sm font-semibold flex items-center gap-2"
+           class="fixed left-4 right-4 z-[4000] rounded-2xl px-4 py-3 shadow-xl text-sm font-semibold flex items-center gap-2"
+           style="top: max(1rem, calc(env(safe-area-inset-top, 0px) + 0.5rem))"
            :class="toast.ok ? 'bg-green-500 text-white' : 'bg-red-500 text-white'">
         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
@@ -338,8 +329,14 @@ const COMBUSTIBLE = {
       </div>
 
       <!-- Contenido scrollable (offset = header + tabs) -->
-      <div class="flex-1 overflow-y-auto pb-36"
-           style="margin-top:calc(106px + max(0.75rem,env(safe-area-inset-top)))">
+      <!-- pb = nav(60px) + botón(54px) + padding(16px) + safe-area-bottom -->
+      <div
+        class="flex-1 overflow-y-auto"
+        style="
+          margin-top: calc(106px + max(0.75rem, env(safe-area-inset-top, 0px)));
+          padding-bottom: calc(var(--nav-total, 60px) + 70px);
+        "
+      >
 
         <!-- ═══ TAB: RUTA ═══════════════════════════════════════════════════ -->
         <div v-show="tab === 'ruta'">
@@ -612,7 +609,11 @@ const COMBUSTIBLE = {
       </div><!-- fin scrollable -->
 
       <!-- ── Botón de acción fijo ──────────────────────────────────────────── -->
-      <div class="fixed bottom-[64px] left-0 right-0 px-4 pb-3 z-[500]">
+      <!-- bottom = nav total (60px + safe-area-bottom) + 4px margen -->
+      <div
+        class="fixed left-0 right-0 px-4 pb-3 z-[500]"
+        style="bottom: var(--nav-total, 60px)"
+      >
 
         <!-- [pendiente] → Iniciar ruta -->
         <button
@@ -664,8 +665,10 @@ const COMBUSTIBLE = {
       <div v-if="modalIniciar" class="fixed inset-0 z-[2000]">
         <div class="absolute inset-0 bg-black/40" @click="modalIniciar = false"/>
 
-        <div class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl"
-             style="padding-bottom:calc(16px + env(safe-area-inset-bottom))">
+        <div
+          class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl"
+          style="padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px))"
+        >
 
           <!-- Handle arrastrable -->
           <div class="flex justify-center pt-4 pb-2"
@@ -717,8 +720,10 @@ const COMBUSTIBLE = {
       <div v-if="modalFinalizar" class="fixed inset-0 z-[2000]">
         <div class="absolute inset-0 bg-black/40" @click="modalFinalizar = false"/>
 
-        <div class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl overflow-y-auto"
-             style="max-height:72vh; padding-bottom:calc(16px + env(safe-area-inset-bottom))">
+        <div
+          class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl scroll-hidden"
+          style="max-height: min(72vh, 72dvh); padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px))"
+        >
 
           <div class="flex justify-center pt-4 pb-2"
                @touchstart="onDragStart" @touchend="onDragEnd">
@@ -728,22 +733,6 @@ const COMBUSTIBLE = {
           <div class="px-6 pb-4">
             <h3 class="text-lg font-bold text-gray-800 mb-0.5">Finalizar ruta</h3>
             <p class="text-sm text-gray-400 mb-5 truncate">{{ ruta?.nombre }}</p>
-
-            <!-- KM final (obligatorio) -->
-            <label class="block text-sm font-semibold text-gray-700 mb-1.5">
-              Odómetro final <span class="text-red-400 ml-0.5">*</span>
-            </label>
-            <div class="relative mb-3">
-              <input
-                v-model="kmFin"
-                type="number" inputmode="numeric" placeholder="Ej: 125430" min="0"
-                :class="['w-full px-4 py-3 pr-12 border-2 rounded-xl text-sm bg-gray-50 outline-none transition',
-                         errorModal && !kmFin
-                           ? 'border-red-300 focus:border-red-400'
-                           : 'border-gray-100 focus:border-[var(--color-acento)] focus:bg-white']"
-              />
-              <span class="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">km</span>
-            </div>
 
             <!-- Costo combustible real -->
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">Costo combustible real</label>

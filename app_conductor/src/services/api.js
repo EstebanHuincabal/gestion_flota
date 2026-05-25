@@ -15,16 +15,25 @@ export async function apiFetch(url, options = {}) {
   const { value: token } = await Preferences.get({ key: 'access_token' })
 
   const headers = {
-    'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
+  }
+
+  // Solo añadir Content-Type JSON si el body NO es FormData.
+  // Para FormData el browser lo fija automáticamente con el boundary correcto;
+  // si lo ponemos a mano el servidor no puede parsear el multipart.
+  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json'
   }
 
   let res
   try {
     res = await fetch(`${BASE_URL}${url}`, { ...options, headers })
   } catch {
-    throw new Error('Sin conexión. Verifica tu red.')
+    // Error de red puro (sin conexión, DNS, timeout…)
+    const err = new Error('Sin conexión. Verifica tu red.')
+    err.isNetworkError = true
+    throw err
   }
 
   // Token expirado → intentar refresh y reintentar una vez

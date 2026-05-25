@@ -17,7 +17,7 @@ async function handleLogout() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 pb-24">
+  <div class="min-h-dvh bg-gray-50 pb-nav">
 
     <!-- ── Header ──────────────────────────────────────────────────────────── -->
     <header class="bg-white px-4 pt-safe pb-4 border-b border-gray-100">
@@ -178,7 +178,8 @@ async function handleLogout() {
         <Transition name="sheet">
           <div
             v-if="confirmandoLogout"
-            class="w-full bg-white rounded-t-3xl p-6 pb-safe-extra"
+            class="w-full bg-white rounded-t-3xl p-6"
+            style="padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px))"
           >
             <!-- Handle -->
             <div class="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5"/>
@@ -224,13 +225,6 @@ async function handleLogout() {
 </template>
 
 <style scoped>
-.pt-safe {
-  padding-top: max(1rem, env(safe-area-inset-top));
-}
-.pb-safe-extra {
-  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
-}
-
 /* Overlay */
 .overlay-enter-active, .overlay-leave-active { transition: opacity 0.25s ease; }
 .overlay-enter-from, .overlay-leave-to       { opacity: 0; }

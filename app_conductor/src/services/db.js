@@ -11,9 +11,11 @@ const isNative = Capacitor.isNativePlatform()
 
 // Fallback en memoria para browser
 const _mem = {
-  rutas:      new Map(),   // id → { data, estado, actualizado_at }
-  pendientes: [],          // [{ id, tipo, payload, creado_at, intentos }]
-  nextId:     1,
+  rutas:        new Map(),   // id → { data, estado, actualizado_at }
+  pendientes:   [],          // [{ id, tipo, payload, creado_at, intentos }]
+  solicitudes:  new Map(),   // id → { data, estado, sincronizado }
+  nextId:       1,
+  nextSolId:    1,
 }
 
 let _db   = null
@@ -47,6 +49,12 @@ export async function init() {
         payload    TEXT NOT NULL,
         creado_at  TEXT NOT NULL,
         intentos   INTEGER DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS solicitudes (
+        id           INTEGER PRIMARY KEY,
+        data         TEXT    NOT NULL,
+        estado       TEXT,
+        sincronizado INTEGER DEFAULT 1
       );
     `)
     _listo = true
@@ -111,4 +119,46 @@ export async function eliminarPendiente(id) {
     return
   }
   await _db.run('DELETE FROM acciones_pendientes WHERE id = ?', [id])
+}
+
+// ── Solicitudes ───────────────────────────────────────────────────────────────
+
+export async function getSolicitudes() {
+  if (!_db) {
+    return [..._mem.solicitudes.values()].map(r => JSON.parse(r.data))
+  }
+  const { values } = await _db.query('SELECT data FROM solicitudes ORDER BY id DESC')
+  return (values || []).map(r => JSON.parse(r.data))
+}
+
+export async function saveSolicitudes(solicitudes) {
+  if (!_db) {
+    solicitudes.forEach(s => _mem.solicitudes.set(s.id, {
+      data:         JSON.stringify(s),
+      estado:       s.estado,
+      sincronizado: 1,
+    }))
+    return
+  }
+  for (const s of solicitudes) {
+    await _db.run(
+      'INSERT OR REPLACE INTO solicitudes (id, data, estado, sincronizado) VALUES (?, ?, ?, ?)',
+      [s.id, JSON.stringify(s), s.estado, 1],
+    )
+  }
+}
+
+export async function saveSolicitudLocal(solicitud) {
+  // Guarda una solicitud creada offline (sin id definitivo del servidor)
+  const id = solicitud.id ?? `local_${_mem.nextSolId++}`
+  const s  = { ...solicitud, id }
+  if (!_db) {
+    _mem.solicitudes.set(id, { data: JSON.stringify(s), estado: s.estado, sincronizado: 0 })
+    return s
+  }
+  await _db.run(
+    'INSERT OR REPLACE INTO solicitudes (id, data, estado, sincronizado) VALUES (?, ?, ?, ?)',
+    [id, JSON.stringify(s), s.estado, 0],
+  )
+  return s
 }

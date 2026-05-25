@@ -1,279 +1,707 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useSolicitudesStore } from '@/stores/solicitudes.js'
+import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import BottomNav from '@/components/BottomNav.vue'
-import { apiFetch } from '@/services/api.js'
-import { tiempoDesde } from '@/utils/formato.js'
 
-const router = useRouter()
+const store = useSolicitudesStore()
 
-// ── Estado ─────────────────────────────────────────────────────────────────
-const notificaciones  = ref([])
-const cargando        = ref(false)
-const errorMsg        = ref('')
-const paginaActual    = ref(1)
-const totalPaginas    = ref(1)
-const cargandoMas     = ref(false)
-const marcandoTodas   = ref(false)
-
-const noLeidas = computed(() => notificaciones.value.filter(n => !n.leida).length)
-
-// ── Carga de notificaciones ───────────────────────────────────────────────
-async function cargarNotificaciones(pagina = 1, acumular = false) {
-  if (pagina === 1) { cargando.value = true; errorMsg.value = '' }
-  else               cargandoMas.value = true
-
-  try {
-    const data = await apiFetch(`/api/notificaciones/?page=${pagina}`)
-    if (acumular) {
-      notificaciones.value = [...notificaciones.value, ...data.results]
-    } else {
-      notificaciones.value = data.results
-    }
-    paginaActual.value = pagina
-    totalPaginas.value = data.num_pages
-  } catch (e) {
-    if (!acumular) errorMsg.value = e.message === 'Sin conexión. Verifica tu red.'
-      ? 'Sin conexión. No se pueden cargar las notificaciones.'
-      : 'Error al cargar notificaciones.'
-  } finally {
-    cargando.value    = false
-    cargandoMas.value = false
-  }
-}
-
-async function cargarMas() {
-  if (cargandoMas.value || paginaActual.value >= totalPaginas.value) return
-  await cargarNotificaciones(paginaActual.value + 1, true)
-}
-
-// ── Marcar como leída (individual) ───────────────────────────────────────
-async function marcarLeida(notif) {
-  if (notif.leida) return
-  notif.leida = true   // optimista
-  try {
-    await apiFetch('/api/notificaciones/leer/', {
-      method: 'POST',
-      body: JSON.stringify({ ids: [notif.id] }),
-    })
-  } catch {
-    notif.leida = false  // revertir si falla
-  }
-}
-
-// ── Marcar todas como leídas ─────────────────────────────────────────────
-async function marcarTodas() {
-  if (!noLeidas.value || marcandoTodas.value) return
-  marcandoTodas.value = true
-  // Optimista
-  notificaciones.value.forEach(n => { n.leida = true })
-  try {
-    await apiFetch('/api/notificaciones/leer/', {
-      method: 'POST',
-      body: JSON.stringify({ todas: true }),
-    })
-  } catch {
-    // Recargar si falla
-    await cargarNotificaciones()
-  } finally {
-    marcandoTodas.value = false
-  }
-}
-
-// ── Navegar si la notificación tiene url_accion ───────────────────────────
-function abrirNotificacion(notif) {
-  marcarLeida(notif)
-  if (notif.url_accion && notif.url_accion.startsWith('/rutas/')) {
-    const id = notif.url_accion.replace('/rutas/', '').replace('/', '')
-    if (id && !isNaN(id)) router.push(`/rutas/${id}`)
-  }
-}
-
-// ── Pull to refresh ───────────────────────────────────────────────────────
-let startY = 0
-let refreshing = ref(false)
+// ── Pull to refresh ───────────────────────────────────────────────────────────
+let startY       = 0
+const refreshing = ref(false)
 
 function onTouchStart(e) { startY = e.touches[0].clientY }
 async function onTouchEnd(e) {
   const diff = e.changedTouches[0].clientY - startY
   if (diff > 80 && !refreshing.value && window.scrollY === 0) {
     refreshing.value = true
-    await cargarNotificaciones()
+    await store.cargarSolicitudes()
     refreshing.value = false
   }
 }
 
-// ── Íconos por tipo ───────────────────────────────────────────────────────
-const TIPO_CONFIG = {
-  actividad: {
-    icon: 'actividad',
-    clase: 'bg-blue-100 text-blue-600',
-  },
-  mantencion: {
-    icon: 'mantencion',
-    clase: 'bg-amber-100 text-amber-600',
-  },
-  documentos: {
-    icon: 'documentos',
-    clase: 'bg-purple-100 text-purple-600',
-  },
-  seguridad: {
-    icon: 'seguridad',
-    clase: 'bg-red-100 text-red-600',
-  },
+// ── Historial colapsable ──────────────────────────────────────────────────────
+const _histAbierto = ref(false)
+const historialAbierto = computed(() =>
+  store.resueltas.length <= 3 ? true : _histAbierto.value,
+)
+function toggleHistorial() { _histAbierto.value = !_histAbierto.value }
+
+// ── Toast ──────────────────────────────────────────────────────────────────────
+const toast = ref({ visible: false, mensaje: '', tipo: 'ok' })
+let toastTimer = null
+function mostrarToast(mensaje, tipo = 'ok') {
+  clearTimeout(toastTimer)
+  toast.value = { visible: true, mensaje, tipo }
+  toastTimer  = setTimeout(() => { toast.value.visible = false }, 3500)
 }
 
-function tipoConfig(tipo) {
-  return TIPO_CONFIG[tipo] || TIPO_CONFIG.actividad
+// ── Modal Nueva Solicitud ─────────────────────────────────────────────────────
+const modalNueva       = ref(false)
+const paso             = ref(1)
+const tipoSeleccionado = ref(null)
+const fotoDataUrl      = ref(null)
+const fotoBase64       = ref(null)
+const errorForm        = ref('')
+
+const form = ref({
+  titulo:      '',
+  descripcion: '',
+  prioridad:   'media',
+})
+
+const TIPOS = [
+  { value: 'mantencion',  label: 'Mantención',  icono: 'ti-tool',           color: '#534AB7', colorSuave: '#EEEDFE', descripcion: 'Falla mecánica o revisión necesaria' },
+  { value: 'combustible', label: 'Combustible', icono: 'ti-gas-station',    color: '#B45309', colorSuave: '#FEF3C7', descripcion: 'Solicitar recarga o reportar consumo' },
+  { value: 'incidencia',  label: 'Incidencia',  icono: 'ti-alert-triangle', color: '#A32D2D', colorSuave: '#FCEBEB', descripcion: 'Accidente, multa u otro problema' },
+  { value: 'documento',   label: 'Documento',   icono: 'ti-file-plus',      color: '#16A34A', colorSuave: '#DCFCE7', descripcion: 'Subir o renovar un documento' },
+]
+
+const tipoActual = computed(() => TIPOS.find(t => t.value === tipoSeleccionado.value))
+
+function abrirNuevaSolicitud() {
+  paso.value             = 1
+  tipoSeleccionado.value = null
+  fotoDataUrl.value      = null
+  fotoBase64.value       = null
+  errorForm.value        = ''
+  form.value             = { titulo: '', descripcion: '', prioridad: 'media' }
+  modalNueva.value       = true
 }
 
-onMounted(() => cargarNotificaciones())
+function cerrarNueva() { modalNueva.value = false }
+
+async function elegirTipo(tipo) {
+  tipoSeleccionado.value = tipo.value
+
+  // «Documento» → lanza cámara directamente y cierra el modal
+  if (tipo.value === 'documento') {
+    cerrarNueva()
+    await flujoDocumento()
+    return
+  }
+
+  // Pre-rellenos por tipo
+  if (tipo.value === 'combustible') {
+    form.value.titulo    = 'Solicitud de combustible'
+    form.value.prioridad = 'media'
+  } else if (tipo.value === 'incidencia') {
+    form.value.prioridad = 'alta'
+  } else {
+    form.value.titulo    = ''
+    form.value.prioridad = 'media'
+  }
+
+  paso.value = 2
+}
+
+// Captura de foto con Capacitor Camera
+async function tomarFoto() {
+  try {
+    const foto = await Camera.getPhoto({
+      quality:            80,
+      allowEditing:       false,
+      resultType:         CameraResultType.DataUrl,
+      source:             CameraSource.Prompt,
+      promptLabelHeader:  'Foto del problema',
+      promptLabelPhoto:   'Elegir de la galería',
+      promptLabelPicture: 'Tomar foto',
+    })
+    fotoDataUrl.value = foto.dataUrl
+    fotoBase64.value  = foto.dataUrl.split(',')[1]
+  } catch {
+    // Usuario canceló
+  }
+}
+
+function quitarFoto() {
+  fotoDataUrl.value = null
+  fotoBase64.value  = null
+}
+
+// Flujo especial para tipo "documento"
+async function flujoDocumento() {
+  try {
+    const foto = await Camera.getPhoto({
+      quality:            90,
+      allowEditing:       false,
+      resultType:         CameraResultType.DataUrl,
+      source:             CameraSource.Prompt,
+      promptLabelHeader:  'Capturar documento',
+      promptLabelPhoto:   'Elegir de la galería',
+      promptLabelPicture: 'Tomar foto del documento',
+    })
+    const b64   = foto.dataUrl.split(',')[1]
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+    const blob  = new Blob([bytes], { type: 'image/jpeg' })
+
+    const datos = {
+      tipo:        'documento',
+      titulo:      'Documento adjunto',
+      descripcion: 'Documento capturado desde la app',
+      prioridad:   'media',
+    }
+    const res = await store.crearSolicitud(datos, blob)
+    if (res.success) {
+      mostrarToast(
+        res.offline
+          ? 'Sin conexión. Se enviará cuando vuelva la señal.'
+          : 'Documento enviado correctamente',
+        res.offline ? 'offline' : 'ok',
+      )
+    } else {
+      mostrarToast('Error al enviar el documento', 'error')
+    }
+  } catch {
+    // Usuario canceló
+  }
+}
+
+// Enviar solicitud desde el formulario paso 2
+async function enviarSolicitud() {
+  errorForm.value = ''
+  const t = tipoSeleccionado.value
+  const f = form.value
+
+  if (!f.titulo || f.titulo.length < 5) {
+    errorForm.value = 'El título debe tener al menos 5 caracteres.'
+    return
+  }
+  if (t !== 'combustible' && f.descripcion.length < 10) {
+    errorForm.value = 'La descripción debe tener al menos 10 caracteres.'
+    return
+  }
+  if (t === 'incidencia' && !fotoBase64.value) {
+    errorForm.value = 'Para incidencias se requiere una foto.'
+    return
+  }
+
+  let foto = null
+  if (fotoBase64.value) {
+    const bytes = Uint8Array.from(atob(fotoBase64.value), c => c.charCodeAt(0))
+    foto        = new Blob([bytes], { type: 'image/jpeg' })
+  }
+
+  const datos = {
+    tipo:        t,
+    titulo:      f.titulo,
+    descripcion: f.descripcion,
+    prioridad:   f.prioridad,
+  }
+
+  const res = await store.crearSolicitud(datos, foto)
+
+  if (res.success) {
+    cerrarNueva()
+    mostrarToast(
+      res.offline
+        ? 'Sin conexión. Se enviará cuando vuelva la señal.'
+        : 'Solicitud enviada correctamente',
+      res.offline ? 'offline' : 'ok',
+    )
+  } else {
+    errorForm.value = res.error || 'Error al enviar la solicitud.'
+  }
+}
+
+// ── Modal Detalle Solicitud ───────────────────────────────────────────────────
+const modalDetalle     = ref(false)
+const solicitudDetalle = ref(null)
+
+function verDetalle(sol) {
+  solicitudDetalle.value = sol
+  modalDetalle.value     = true
+}
+
+// ── Helpers de UI ─────────────────────────────────────────────────────────────
+const ESTADOS = {
+  pendiente:   { label: 'Pendiente',   color: '#185FA5', bg: '#E6F1FB' },
+  en_revision: { label: 'En revisión', color: '#B45309', bg: '#FEF3C7' },
+  aprobado:    { label: 'Aprobado',    color: '#085041', bg: '#E1F5EE' },
+  rechazado:   { label: 'Rechazado',   color: '#791F1F', bg: '#FCEBEB' },
+}
+
+function badgeEstado(estado) {
+  return ESTADOS[estado] || { label: estado, color: '#555', bg: '#eee' }
+}
+
+function tipoInfo(tipo) {
+  return TIPOS.find(t => t.value === tipo) || { icono: 'ti-help', color: '#888', colorSuave: '#eee', label: tipo }
+}
+
+function tiempoDesde(isoStr) {
+  if (!isoStr) return ''
+  const diff = Date.now() - new Date(isoStr).getTime()
+  const min  = Math.floor(diff / 60000)
+  if (min < 60)  return `hace ${min} min`
+  const h    = Math.floor(min / 60)
+  if (h < 24)   return `hace ${h}h`
+  const d    = Math.floor(h / 24)
+  if (d < 30)   return `hace ${d} días`
+  const m    = Math.floor(d / 30)
+  return `hace ${m} mes${m > 1 ? 'es' : ''}`
+}
+
+function formatFecha(isoStr) {
+  if (!isoStr) return ''
+  return new Date(isoStr).toLocaleDateString('es-CL', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
+// ── Inicialización ────────────────────────────────────────────────────────────
+onMounted(async () => {
+  await store.cargarSolicitudes()
+  _histAbierto.value = store.resueltas.length <= 3
+})
 </script>
 
 <template>
   <div
-    class="min-h-screen bg-gray-50 pb-24"
+    class="min-h-dvh bg-gray-50 pb-nav"
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"
   >
 
-    <!-- ── Header ──────────────────────────────────────────────────────────── -->
-    <header class="bg-white px-4 pt-safe pb-4 border-b border-gray-100">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <h1 class="text-lg font-bold text-gray-800">Notificaciones</h1>
-          <!-- Badge no leídas -->
-          <span
-            v-if="noLeidas > 0"
-            class="px-2 py-0.5 rounded-full text-xs font-bold text-white"
-            style="background: var(--color-acento)"
-          >
-            {{ noLeidas > 99 ? '99+' : noLeidas }}
-          </span>
-        </div>
-
-        <!-- Marcar todas como leídas -->
-        <button
-          v-if="noLeidas > 0"
-          @click="marcarTodas"
-          :disabled="marcandoTodas"
-          class="flex items-center gap-1.5 text-xs font-semibold min-h-[44px] px-2 transition-colors disabled:opacity-50"
-          style="color: var(--color-acento)"
-        >
-          <span v-if="marcandoTodas" class="w-3.5 h-3.5 border border-current border-t-transparent rounded-full animate-spin"/>
-          <span>{{ marcandoTodas ? 'Marcando…' : 'Leer todas' }}</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- ── Spinner pull-to-refresh ───────────────────────────────────────── -->
+    <!-- ── Spinner pull-to-refresh ─────────────────────────────────────────── -->
     <div v-if="refreshing" class="flex justify-center pt-4">
       <span class="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-acento)] rounded-full animate-spin"/>
     </div>
 
-    <!-- ── Skeleton ───────────────────────────────────────────────────────── -->
-    <div v-if="cargando && !notificaciones.length" class="px-4 mt-4 flex flex-col gap-3">
-      <div v-for="i in 5" :key="i" class="h-20 rounded-2xl bg-gray-200 animate-pulse"/>
+    <!-- ── Header ─────────────────────────────────────────────────────────── -->
+    <header class="bg-white px-4 pt-safe pb-4 border-b border-gray-100">
+      <h1 class="text-xl font-bold text-gray-800">Solicitudes</h1>
+    </header>
+
+    <!-- ── Skeleton inicial ───────────────────────────────────────────────── -->
+    <div v-if="store.cargando && !store.solicitudes.length" class="px-4 mt-4 flex flex-col gap-3">
+      <div v-for="i in 3" :key="i" class="h-20 rounded-2xl bg-gray-200 animate-pulse"/>
     </div>
 
-    <!-- ── Error ──────────────────────────────────────────────────────────── -->
-    <div v-else-if="errorMsg && !notificaciones.length"
-         class="flex flex-col items-center gap-3 py-16 px-8">
-      <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.3" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-      </svg>
-      <p class="text-sm text-gray-500 text-center">{{ errorMsg }}</p>
-      <button
-        @click="cargarNotificaciones()"
-        class="px-5 py-2.5 rounded-xl text-sm font-semibold text-white min-h-[44px]"
-        style="background: var(--color-acento)"
-      >
-        Reintentar
-      </button>
-    </div>
+    <template v-else>
+      <div class="px-4 mt-4 flex flex-col gap-5">
 
-    <!-- ── Lista vacía ────────────────────────────────────────────────────── -->
-    <div
-      v-else-if="!cargando && !notificaciones.length"
-      class="flex flex-col items-center gap-2 py-16 text-gray-400"
-    >
-      <svg class="w-14 h-14 text-gray-200" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-      </svg>
-      <p class="text-sm font-medium">Sin notificaciones</p>
-      <p class="text-xs text-gray-400">Todo en orden por ahora.</p>
-    </div>
-
-    <!-- ── Lista de notificaciones ────────────────────────────────────────── -->
-    <div v-else class="px-4 mt-4 flex flex-col gap-2">
-      <button
-        v-for="notif in notificaciones"
-        :key="notif.id"
-        @click="abrirNotificacion(notif)"
-        class="w-full text-left bg-white rounded-2xl shadow-sm p-4 flex items-start gap-3 transition-all active:scale-[0.98] min-h-[72px]"
-        :class="{ 'ring-1 ring-[var(--color-acento)]/20': !notif.leida }"
-      >
-        <!-- Ícono tipo -->
+        <!-- ── Estado vacío ─────────────────────────────────────────────── -->
         <div
-          :class="['w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5', tipoConfig(notif.tipo).clase]"
+          v-if="!store.solicitudes.length"
+          class="flex flex-col items-center gap-3 py-16 text-gray-400"
         >
-          <!-- Actividad -->
-          <svg v-if="tipoConfig(notif.tipo).icon === 'actividad'" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-          </svg>
-          <!-- Mantención -->
-          <svg v-else-if="tipoConfig(notif.tipo).icon === 'mantencion'" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-          </svg>
-          <!-- Documentos -->
-          <svg v-else-if="tipoConfig(notif.tipo).icon === 'documentos'" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-          </svg>
-          <!-- Seguridad -->
-          <svg v-else-if="tipoConfig(notif.tipo).icon === 'seguridad'" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-          </svg>
+          <i class="ti ti-clipboard-list text-6xl text-gray-200"/>
+          <p class="text-base font-medium">No tienes solicitudes</p>
+          <p class="text-sm text-center text-gray-400">
+            Usa el botón + para reportar un problema<br>o hacer una solicitud
+          </p>
         </div>
 
-        <!-- Contenido -->
-        <div class="flex-1 min-w-0">
-          <div class="flex items-start justify-between gap-2">
-            <p class="text-sm font-semibold text-gray-800 leading-snug truncate">
-              {{ notif.titulo }}
-            </p>
-            <!-- Dot no leída -->
-            <span
-              v-if="!notif.leida"
-              class="w-2 h-2 rounded-full shrink-0 mt-1"
-              style="background: var(--color-acento)"
-            />
+        <!-- ── Solicitudes en proceso ────────────────────────────────────── -->
+        <section v-if="store.pendientes.length">
+          <h2 class="text-sm font-bold text-gray-700 mb-2">
+            En proceso
+            <span class="text-gray-400 font-normal">({{ store.pendientes.length }})</span>
+          </h2>
+
+          <div class="flex flex-col gap-2">
+            <button
+              v-for="sol in store.pendientes"
+              :key="sol.id"
+              @click="verDetalle(sol)"
+              class="w-full text-left bg-white rounded-2xl p-4 border border-gray-200
+                     hover:border-gray-300 hover:shadow-sm transition active:bg-gray-50 min-h-[44px]"
+            >
+              <div class="flex items-start gap-3">
+                <!-- Ícono tipo -->
+                <div
+                  class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                  :style="`background: ${tipoInfo(sol.tipo).colorSuave}`"
+                >
+                  <i
+                    class="ti text-base"
+                    :class="tipoInfo(sol.tipo).icono"
+                    :style="`color: ${tipoInfo(sol.tipo).color}`"
+                  />
+                </div>
+
+                <!-- Contenido -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between gap-2">
+                    <p class="text-sm font-semibold text-gray-800 truncate">{{ sol.titulo }}</p>
+                    <span
+                      class="shrink-0 text-[10px] font-semibold rounded-full px-2 py-0.5"
+                      :style="`color: ${badgeEstado(sol.estado).color}; background: ${badgeEstado(sol.estado).bg}`"
+                    >
+                      {{ badgeEstado(sol.estado).label }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400 mt-0.5">
+                    {{ tipoInfo(sol.tipo).label }} · {{ tiempoDesde(sol.created_at) }}
+                  </p>
+                  <p v-if="sol.respuesta" class="text-xs text-gray-500 mt-1 italic truncate">
+                    "{{ sol.respuesta }}"
+                  </p>
+                </div>
+              </div>
+            </button>
           </div>
-          <p class="text-xs text-gray-500 mt-0.5 line-clamp-2 leading-relaxed">
-            {{ notif.mensaje }}
-          </p>
-          <p class="text-[10px] text-gray-400 mt-1.5">
-            {{ tiempoDesde(notif.fecha) }}
-          </p>
-        </div>
-      </button>
+        </section>
 
-      <!-- Cargar más -->
-      <div v-if="paginaActual < totalPaginas" class="py-2">
-        <button
-          @click="cargarMas"
-          :disabled="cargandoMas"
-          class="w-full py-3 rounded-xl text-sm font-medium text-gray-500 bg-white shadow-sm min-h-[48px] flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          <span v-if="cargandoMas" class="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin"/>
-          <span>{{ cargandoMas ? 'Cargando…' : 'Cargar más' }}</span>
-        </button>
+        <!-- ── Historial ─────────────────────────────────────────────────── -->
+        <section v-if="store.resueltas.length">
+          <button
+            @click="toggleHistorial"
+            class="flex items-center justify-between w-full text-sm font-bold text-gray-700 mb-2 min-h-[44px]"
+          >
+            <span>Historial</span>
+            <svg
+              class="w-4 h-4 text-gray-400 transition-transform"
+              :class="{ 'rotate-180': historialAbierto }"
+              fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+
+          <Transition name="historial">
+            <div v-if="historialAbierto" class="flex flex-col gap-1.5">
+              <button
+                v-for="sol in store.resueltas"
+                :key="sol.id"
+                @click="verDetalle(sol)"
+                class="w-full text-left bg-gray-50 rounded-xl px-3 py-2.5 border border-gray-100
+                       flex items-center gap-3 min-h-[44px] active:bg-gray-100 transition"
+              >
+                <div
+                  class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  :style="`background: ${tipoInfo(sol.tipo).colorSuave}`"
+                >
+                  <i
+                    class="ti text-xs"
+                    :class="tipoInfo(sol.tipo).icono"
+                    :style="`color: ${tipoInfo(sol.tipo).color}`"
+                  />
+                </div>
+                <p class="flex-1 text-sm text-gray-600 truncate">{{ sol.titulo }}</p>
+                <span
+                  class="shrink-0 text-[10px] font-semibold rounded-full px-2 py-0.5"
+                  :style="`color: ${badgeEstado(sol.estado).color}; background: ${badgeEstado(sol.estado).bg}`"
+                >
+                  {{ badgeEstado(sol.estado).label }}
+                </span>
+                <span class="text-[10px] text-gray-400 shrink-0">{{ tiempoDesde(sol.created_at) }}</span>
+              </button>
+            </div>
+          </Transition>
+        </section>
+
       </div>
+    </template>
 
-    </div>
+    <!-- ── FAB ───────────────────────────────────────────────────────────── -->
+    <button
+      @click="abrirNuevaSolicitud"
+      class="fixed right-4 rounded-full px-5 py-3 shadow-lg flex items-center gap-2 text-white font-medium z-40"
+      :style="`bottom: calc(72px + env(safe-area-inset-bottom)); background: var(--color-acento)`"
+    >
+      <i class="ti ti-plus text-lg"/>
+      Nueva
+    </button>
 
-    <!-- ── Bottom nav ─────────────────────────────────────────────────────── -->
+    <!-- ── BottomNav ──────────────────────────────────────────────────────── -->
     <BottomNav />
+
+    <!-- ── Toast ─────────────────────────────────────────────────────────── -->
+    <Transition name="toast">
+      <div
+        v-if="toast.visible"
+        class="fixed left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-lg
+               text-sm font-medium text-white flex items-center gap-2"
+        :class="{
+          'bg-gray-800':   toast.tipo === 'ok',
+          'bg-orange-600': toast.tipo === 'offline',
+          'bg-red-600':    toast.tipo === 'error',
+        }"
+        style="bottom: calc(90px + env(safe-area-inset-bottom))"
+      >
+        <i v-if="toast.tipo === 'ok'"      class="ti ti-circle-check"/>
+        <i v-else-if="toast.tipo === 'offline'" class="ti ti-wifi-off"/>
+        <i v-else                           class="ti ti-alert-circle"/>
+        {{ toast.mensaje }}
+      </div>
+    </Transition>
+
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         MODAL: NUEVA SOLICITUD
+    ═══════════════════════════════════════════════════════════════════════════ -->
+    <Transition name="sheet">
+      <div v-if="modalNueva" class="fixed inset-0 z-50 flex flex-col justify-end">
+        <div class="absolute inset-0 bg-black/50" @click="cerrarNueva"/>
+
+        <div
+          class="relative bg-white rounded-t-2xl scroll-hidden"
+          :style="paso === 1
+            ? 'height: min(80vh, 80dvh); padding-bottom: env(safe-area-inset-bottom, 0px)'
+            : 'max-height: min(85vh, 85dvh); padding-bottom: env(safe-area-inset-bottom, 0px)'"
+        >
+          <!-- Handle -->
+          <div class="flex justify-center pt-3 pb-1 sticky top-0 bg-white z-10">
+            <div class="w-10 h-1 rounded-full bg-gray-300"/>
+          </div>
+
+          <!-- ── Paso 1: elegir tipo ─────────────────────────────────────── -->
+          <div v-if="paso === 1" class="px-4 pb-6">
+            <h2 class="text-base font-bold text-gray-800 mb-5 text-center">Nueva solicitud</h2>
+
+            <div class="grid grid-cols-2 gap-3 mb-6">
+              <button
+                v-for="tipo in TIPOS"
+                :key="tipo.value"
+                @click="elegirTipo(tipo)"
+                class="rounded-2xl p-4 text-left border border-transparent transition active:scale-95 min-h-[44px]"
+                :style="`background: ${tipo.colorSuave}`"
+              >
+                <i
+                  class="ti text-2xl block mb-2"
+                  :class="tipo.icono"
+                  :style="`color: ${tipo.color}`"
+                />
+                <p class="text-sm font-bold" :style="`color: ${tipo.color}`">{{ tipo.label }}</p>
+                <p class="text-xs mt-0.5 text-gray-500">{{ tipo.descripcion }}</p>
+              </button>
+            </div>
+
+            <button
+              @click="cerrarNueva"
+              class="w-full py-3 rounded-xl text-sm font-medium text-gray-500 bg-gray-100 min-h-[44px]"
+            >
+              Cancelar
+            </button>
+          </div>
+
+          <!-- ── Paso 2: formulario ─────────────────────────────────────── -->
+          <div v-else class="px-4 pb-6">
+            <!-- Header con volver -->
+            <div class="flex items-center gap-3 mb-5">
+              <button
+                @click="paso = 1"
+                class="p-2 -ml-1 text-gray-500 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              >
+                <i class="ti ti-arrow-left text-lg"/>
+              </button>
+              <div class="flex items-center gap-2">
+                <i
+                  class="ti text-xl"
+                  :class="tipoActual?.icono"
+                  :style="`color: ${tipoActual?.color}`"
+                />
+                <h2 class="text-base font-bold text-gray-800">{{ tipoActual?.label }}</h2>
+              </div>
+            </div>
+
+            <!-- Título -->
+            <div class="mb-4">
+              <label class="block text-xs font-semibold text-gray-600 mb-1">
+                Título <span class="text-red-400">*</span>
+              </label>
+              <input
+                v-model="form.titulo"
+                type="text"
+                placeholder="Describe brevemente el problema"
+                class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                       focus:outline-none focus:border-[var(--color-acento)] transition"
+                :disabled="tipoSeleccionado === 'combustible'"
+              />
+            </div>
+
+            <!-- Descripción -->
+            <div class="mb-4">
+              <label class="block text-xs font-semibold text-gray-600 mb-1">
+                Descripción
+                <span v-if="tipoSeleccionado !== 'combustible'" class="text-red-400">*</span>
+              </label>
+              <textarea
+                v-model="form.descripcion"
+                placeholder="Más detalles sobre el problema..."
+                rows="3"
+                class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                       focus:outline-none focus:border-[var(--color-acento)] transition resize-none"
+              />
+            </div>
+
+            <!-- Prioridad (no para combustible) -->
+            <div v-if="tipoSeleccionado !== 'combustible'" class="mb-4">
+              <label class="block text-xs font-semibold text-gray-600 mb-2">Prioridad</label>
+              <div class="flex gap-2">
+                <button
+                  v-for="p in ['baja', 'media', 'alta']"
+                  :key="p"
+                  @click="form.prioridad = p"
+                  class="flex-1 py-2 rounded-xl text-xs font-semibold border transition min-h-[44px]"
+                  :class="form.prioridad === p
+                    ? 'text-white border-transparent'
+                    : 'bg-white text-gray-500 border-gray-200'"
+                  :style="form.prioridad === p ? `background: var(--color-acento)` : ''"
+                >
+                  {{ p.charAt(0).toUpperCase() + p.slice(1) }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Foto -->
+            <div class="mb-5">
+              <label class="block text-xs font-semibold text-gray-600 mb-2">
+                Foto
+                <span v-if="tipoSeleccionado === 'incidencia'" class="text-red-400">* (requerida)</span>
+                <span v-else class="text-gray-400">(opcional)</span>
+              </label>
+
+              <div v-if="!fotoDataUrl" class="flex gap-2">
+                <button
+                  @click="tomarFoto"
+                  class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl
+                         border border-gray-200 text-sm text-gray-600 bg-white min-h-[44px] active:bg-gray-50"
+                >
+                  <i class="ti ti-camera"/>
+                  Cámara / Galería
+                </button>
+              </div>
+
+              <div v-else class="flex items-center gap-3">
+                <img
+                  :src="fotoDataUrl"
+                  class="w-20 h-20 object-cover rounded-xl border border-gray-200"
+                  alt="Vista previa"
+                />
+                <button
+                  @click="quitarFoto"
+                  class="w-8 h-8 rounded-full bg-red-100 text-red-500 flex items-center justify-center"
+                >
+                  <i class="ti ti-x text-sm"/>
+                </button>
+              </div>
+            </div>
+
+            <!-- Error formulario -->
+            <p v-if="errorForm" class="text-xs text-red-600 mb-3 flex items-center gap-1">
+              <i class="ti ti-alert-circle"/>
+              {{ errorForm }}
+            </p>
+
+            <!-- Botón enviar -->
+            <button
+              @click="enviarSolicitud"
+              :disabled="store.enviando"
+              class="w-full py-3.5 rounded-xl text-white text-sm font-semibold
+                     flex items-center justify-center gap-2 transition min-h-[44px]"
+              :style="`background: ${store.enviando ? '#9ca3af' : 'var(--color-acento)'}`"
+            >
+              <span
+                v-if="store.enviando"
+                class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"
+              />
+              {{ store.enviando ? 'Enviando...' : 'Enviar solicitud' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         MODAL: DETALLE SOLICITUD
+    ═══════════════════════════════════════════════════════════════════════════ -->
+    <Transition name="sheet">
+      <div v-if="modalDetalle && solicitudDetalle" class="fixed inset-0 z-50 flex flex-col justify-end">
+        <div class="absolute inset-0 bg-black/50" @click="modalDetalle = false"/>
+
+        <div
+          class="relative bg-white rounded-t-2xl scroll-hidden"
+          style="max-height: min(60vh, 60dvh); padding-bottom: env(safe-area-inset-bottom, 0px)"
+        >
+          <!-- Handle -->
+          <div class="flex justify-center pt-3 pb-1 sticky top-0 bg-white z-10">
+            <div class="w-10 h-1 rounded-full bg-gray-300"/>
+          </div>
+
+          <div class="px-4 pb-6">
+            <!-- Tipo + Título -->
+            <div class="flex items-center gap-3 mb-3">
+              <div
+                class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                :style="`background: ${tipoInfo(solicitudDetalle.tipo).colorSuave}`"
+              >
+                <i
+                  class="ti text-xl"
+                  :class="tipoInfo(solicitudDetalle.tipo).icono"
+                  :style="`color: ${tipoInfo(solicitudDetalle.tipo).color}`"
+                />
+              </div>
+              <div>
+                <p class="text-base font-bold text-gray-800 leading-tight">{{ solicitudDetalle.titulo }}</p>
+                <p class="text-xs text-gray-400">
+                  {{ tipoInfo(solicitudDetalle.tipo).label }}
+                  <template v-if="solicitudDetalle.prioridad && solicitudDetalle.prioridad !== 'media'">
+                    · {{ solicitudDetalle.prioridad.charAt(0).toUpperCase() + solicitudDetalle.prioridad.slice(1) }} prioridad
+                  </template>
+                </p>
+              </div>
+            </div>
+
+            <!-- Estado -->
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-xs text-gray-500">Estado:</span>
+              <span
+                class="text-[11px] font-semibold rounded-full px-2.5 py-0.5"
+                :style="`color: ${badgeEstado(solicitudDetalle.estado).color}; background: ${badgeEstado(solicitudDetalle.estado).bg}`"
+              >
+                {{ badgeEstado(solicitudDetalle.estado).label }}
+              </span>
+            </div>
+
+            <!-- Fecha -->
+            <p class="text-xs text-gray-400 mb-3">
+              Enviada: {{ tiempoDesde(solicitudDetalle.created_at) }}
+              ({{ formatFecha(solicitudDetalle.created_at) }})
+            </p>
+
+            <!-- Descripción -->
+            <div v-if="solicitudDetalle.descripcion" class="mb-3">
+              <p class="text-xs font-semibold text-gray-600 mb-1">Descripción:</p>
+              <p class="text-sm text-gray-700 italic">"{{ solicitudDetalle.descripcion }}"</p>
+            </div>
+
+            <!-- Foto -->
+            <div v-if="solicitudDetalle.foto_url" class="mb-3">
+              <img
+                :src="solicitudDetalle.foto_url"
+                class="w-20 h-20 object-cover rounded-xl border border-gray-200"
+                alt="Foto adjunta"
+              />
+            </div>
+
+            <!-- Respuesta del administrador -->
+            <div class="mb-5">
+              <p class="text-xs font-semibold text-gray-600 mb-1">Respuesta del administrador:</p>
+              <div v-if="solicitudDetalle.respuesta">
+                <p class="text-sm text-gray-700 italic">"{{ solicitudDetalle.respuesta }}"</p>
+              </div>
+              <div v-else class="flex items-center gap-2 text-gray-400">
+                <i class="ti ti-clock text-base"/>
+                <p class="text-xs">Esperando respuesta del administrador...</p>
+              </div>
+            </div>
+
+            <!-- Cerrar -->
+            <button
+              @click="modalDetalle = false"
+              class="w-full py-3 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 min-h-[44px]"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
   </div>
 </template>
@@ -282,12 +710,19 @@ onMounted(() => cargarNotificaciones())
 .pt-safe {
   padding-top: max(1rem, env(safe-area-inset-top));
 }
-
-/* Limitar mensaje a 2 líneas */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.pb-6 {
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
+
+/* Bottom sheet */
+.sheet-enter-active, .sheet-leave-active { transition: transform 0.3s ease; }
+.sheet-enter-from,   .sheet-leave-to     { transform: translateY(100%); }
+
+/* Historial colapsable */
+.historial-enter-active, .historial-leave-active { transition: all 0.25s ease; }
+.historial-enter-from,   .historial-leave-to     { opacity: 0; transform: translateY(-6px); }
+
+/* Toast */
+.toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+.toast-enter-from,   .toast-leave-to     { opacity: 0; transform: translate(-50%, 8px); }
 </style>

@@ -11,7 +11,7 @@ const router     = useRouter()
 const auth       = useAuthStore()
 const rutasStore = useRutasStore()
 
-const historialAbierto = ref(false)
+const historialAbierto = ref(true)
 
 // ── Pull to refresh ───────────────────────────────────────────────────────────
 let startY    = 0
@@ -43,7 +43,7 @@ onMounted(async () => {
 
 <template>
   <div
-    class="min-h-screen bg-gray-50 pb-24"
+    class="min-h-dvh bg-gray-50 pb-nav"
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"
   >
@@ -191,6 +191,7 @@ onMounted(async () => {
                 :key="ruta.id"
                 :ruta="ruta"
                 variante="finalizada"
+                @click="verRuta"
               />
             </div>
           </Transition>

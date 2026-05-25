@@ -8,8 +8,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
-from .models import Ruta, Rol
+from .models import Ruta, Rol, SolicitudConductor, Asignacion
 from .audit import registrar_log
+from .notificaciones import notificar_admins_empresa
 
 
 def _serializar_ruta(ruta, detallado=False):
@@ -68,6 +69,7 @@ def _serializar_ruta(ruta, detallado=False):
             'tipo_combustible': ruta.vehiculo.tipo_combustible,
             'km_actuales':     ruta.vehiculo.km_actuales,
             'consumo_l_100km': float(ruta.vehiculo.consumo_l_100km) if ruta.vehiculo.consumo_l_100km else None,
+            'en_mantencion':   ruta.vehiculo.en_mantencion,
         } if ruta.vehiculo else None,
         'conductor': {
             'id':     ruta.conductor.id,
@@ -219,3 +221,123 @@ def conductor_finalizar_ruta(request, ruta_id):
     })
 
     return Response({'ok': True, 'ruta': _serializar_ruta(ruta)})
+
+
+# ─────────────────────────────────────────
+# Serializer auxiliar de solicitudes
+# ─────────────────────────────────────────
+
+def _serializar_solicitud(s):
+    return {
+        'id':          s.id,
+        'tipo':        s.tipo,
+        'titulo':      s.titulo,
+        'descripcion': s.descripcion,
+        'estado':      s.estado,
+        'prioridad':   s.prioridad,
+        'foto_url':    s.foto.url if s.foto else None,
+        'respuesta':   s.respuesta,
+        'created_at':  s.created_at.isoformat(),
+        'updated_at':  s.updated_at.isoformat(),
+    }
+
+
+# ─────────────────────────────────────────
+# GET + POST /api/conductor/solicitudes/
+# ─────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def conductor_solicitudes(request):
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores pueden acceder a este endpoint.'}, status=403)
+
+    # ── GET ──────────────────────────────────────────────────────────────────
+    if request.method == 'GET':
+        qs = (
+            SolicitudConductor.objects
+            .filter(conductor=request.user)
+            .order_by('-created_at')
+        )
+        return Response({'solicitudes': [_serializar_solicitud(s) for s in qs]})
+
+    # ── POST ─────────────────────────────────────────────────────────────────
+    tipo        = request.data.get('tipo', '').strip()
+    titulo      = request.data.get('titulo', '').strip()
+    descripcion = request.data.get('descripcion', '').strip()
+    prioridad   = request.data.get('prioridad', 'media').strip()
+    foto        = request.FILES.get('foto')
+
+    # Validaciones básicas
+    tipos_validos      = ['mantencion', 'combustible', 'incidencia', 'documento']
+    prioridades_validas = ['baja', 'media', 'alta']
+
+    errores = {}
+    if tipo not in tipos_validos:
+        errores['tipo'] = f'Tipo inválido. Opciones: {", ".join(tipos_validos)}'
+    if not titulo or len(titulo) < 5:
+        errores['titulo'] = 'El título debe tener al menos 5 caracteres.'
+    if tipo != 'documento' and len(descripcion) < 10:
+        errores['descripcion'] = 'La descripción debe tener al menos 10 caracteres.'
+    if prioridad not in prioridades_validas:
+        prioridad = 'media'
+
+    if errores:
+        return Response(errores, status=400)
+
+    # Obtener empresa y vehículo activo del conductor
+    empresa  = request.user.empresa
+    vehiculo = None
+    asignacion = Asignacion.objects.filter(conductor=request.user, activo=True).select_related('vehiculo').first()
+    if asignacion:
+        vehiculo = asignacion.vehiculo
+
+    solicitud = SolicitudConductor.objects.create(
+        conductor=request.user,
+        empresa=empresa,
+        vehiculo=vehiculo,
+        tipo=tipo,
+        titulo=titulo,
+        descripcion=descripcion,
+        prioridad=prioridad,
+        foto=foto,
+    )
+
+    registrar_log('ACTIVIDAD', 'solicitud_creada', request, detalle={
+        'solicitud_id': solicitud.id, 'tipo': tipo, 'titulo': titulo,
+    })
+
+    # Notificar a los admins de la empresa
+    if empresa:
+        nombre_conductor = request.user.nombre or request.user.email
+        notificar_admins_empresa(
+            empresa=empresa,
+            tipo='actividad',
+            titulo=f'Nueva solicitud de {nombre_conductor}: {titulo}',
+            mensaje=descripcion or titulo,
+            url_accion='/empresa/solicitudes',
+            extra={'solicitud_id': solicitud.id, 'tipo': tipo},
+        )
+
+        # Evento WebSocket en tiempo real para el panel web
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f'solicitudes_{empresa.id}',
+                    {
+                        'type':      'nueva_solicitud',
+                        'solicitud': {
+                            'id':        solicitud.id,
+                            'tipo':      solicitud.tipo,
+                            'titulo':    solicitud.titulo,
+                            'conductor': nombre_conductor,
+                        },
+                    }
+                )
+        except Exception:
+            pass  # WS no disponible — no interrumpir el flujo
+
+    return Response({'ok': True, 'solicitud': _serializar_solicitud(solicitud)}, status=201)

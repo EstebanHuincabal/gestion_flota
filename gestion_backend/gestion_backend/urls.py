@@ -1,5 +1,7 @@
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from g_de_flota.views import (
@@ -49,6 +51,11 @@ from g_de_flota.views_rutas import (
 from g_de_flota.views_conductor import (
     conductor_rutas, conductor_detalle_ruta,
     conductor_iniciar_ruta, conductor_finalizar_ruta,
+    conductor_solicitudes,
+)
+from g_de_flota.views_solicitudes import (
+    SolicitudesListView, SolicitudesConteoView,
+    SolicitudDetailView, SolicitudAprobarView, SolicitudRechazarView,
 )
 
 router = DefaultRouter()
@@ -154,6 +161,14 @@ urlpatterns = [
     path('api/conductor/rutas/<int:ruta_id>/iniciar/',        conductor_iniciar_ruta,    name='conductor-iniciar-ruta'),
     path('api/conductor/rutas/<int:ruta_id>/finalizar/',      conductor_finalizar_ruta,  name='conductor-finalizar-ruta'),
     path('api/conductor/rutas/<int:ruta_id>/',                conductor_detalle_ruta,    name='conductor-detalle-ruta'),
+    path('api/conductor/solicitudes/',                        conductor_solicitudes,     name='conductor-solicitudes'),
+
+    # Panel web — gestión de solicitudes de conductores (USUARIO/ADMIN)
+    path('api/empresa/solicitudes/',                              SolicitudesListView.as_view(),    name='solicitudes-lista'),
+    path('api/empresa/solicitudes/conteo/',                       SolicitudesConteoView.as_view(),  name='solicitudes-conteo'),
+    path('api/empresa/solicitudes/<int:sol_id>/',                 SolicitudDetailView.as_view(),    name='solicitudes-detalle'),
+    path('api/empresa/solicitudes/<int:sol_id>/aprobar/',         SolicitudAprobarView.as_view(),   name='solicitudes-aprobar'),
+    path('api/empresa/solicitudes/<int:sol_id>/rechazar/',        SolicitudRechazarView.as_view(),  name='solicitudes-rechazar'),
 
     # Rutas y trabajos — rutas específicas ANTES de las rutas con :id
     path('api/empresa/rutas/calcular/',                RouteCalcularView.as_view(),  name='rutas-calcular'),
@@ -164,4 +179,4 @@ urlpatterns = [
     path('api/empresa/rutas/<int:ruta_id>/iniciar/',   RutaIniciarView.as_view(),    name='rutas-iniciar'),
     path('api/empresa/rutas/<int:ruta_id>/finalizar/', RutaFinalizarView.as_view(),  name='rutas-finalizar'),
     path('api/empresa/rutas/<int:ruta_id>/cancelar/',  RutaCancelarView.as_view(),   name='rutas-cancelar'),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

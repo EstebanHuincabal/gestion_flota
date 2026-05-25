@@ -1,10 +1,25 @@
 <!DOCTYPE html>
-<html lang="">
+<html lang="es">
   <head>
-    <meta charset="UTF-8">
-    <link rel="icon" href="/favicon.ico">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vite App</title>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+
+    <!--
+      viewport-fit=cover → CRÍTICO para que env(safe-area-inset-*) funcione en iOS.
+      Sin esto, el notch y el home indicator no se exponen al CSS.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+
+    <!-- Barra de estado transparente en Android (Capacitor) -->
+    <meta name="theme-color" content="#534AB7" />
+
+    <!-- Evitar zoom por doble tap en iOS -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <title>Flota Conductor</title>
   </head>
   <body>
     <div id="app"></div>

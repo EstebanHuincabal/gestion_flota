@@ -4,6 +4,16 @@
 :root {
   --color-acento:       #534AB7;
   --color-acento-suave: #EEEDFE;
+
+  /* Safe area (valores seguros por defecto cuando no hay notch) */
+  --safe-top:    env(safe-area-inset-top,    0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left,   0px);
+  --safe-right:  env(safe-area-inset-right,  0px);
+
+  /* Altura del BottomNav: contenido (60px) + safe area inferior */
+  --nav-h:     60px;
+  --nav-total: calc(var(--nav-h) + var(--safe-bottom));
 }
 
 /* ── Reset base para app móvil ───────────────────────────────────────────── */
@@ -11,6 +21,15 @@
   box-sizing: border-box;
   margin: 0;
   -webkit-tap-highlight-color: transparent;  /* sin flash azul al tocar en Android */
+}
+
+/*
+ * Viewport dinámico:
+ *   - 100dvh  → unidad que excluye la barra de dirección (Chrome/Safari modernos)
+ *   - -webkit-fill-available → fallback para iOS Safari < 15.4
+ */
+html {
+  height: -webkit-fill-available;
 }
 
 html, body, #app {
@@ -23,18 +42,61 @@ html, body, #app {
 }
 
 body {
-  overscroll-behavior: none;       /* sin rebote de scroll en iOS/Android */
-  user-select: none;               /* sin selección de texto accidental */
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;   /* fallback iOS < 15.4 */
+  overscroll-behavior: none;            /* sin rebote de scroll en iOS/Android */
+  user-select: none;
   -webkit-user-select: none;
 }
 
 input, textarea {
-  user-select: text;               /* los inputs sí permiten selección */
+  user-select: text;
   -webkit-user-select: text;
-  font-size: 16px;                 /* evita zoom automático en iOS al enfocar */
+  font-size: 16px;    /* evita zoom automático en iOS al enfocar */
   outline: none;
 }
 
 button {
   outline: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Utilidades de safe area / viewport (usadas en todas las vistas) ─────── */
+
+/* Header con notch / Dynamic Island */
+.pt-safe {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+/* Padding inferior que siempre cubre el BottomNav + home indicator */
+.pb-nav {
+  padding-bottom: var(--nav-total);
+}
+
+/* Altura de pantalla dinámica (excluye barra de dirección del browser) */
+.min-h-dvh {
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+}
+.h-dvh {
+  height: 100dvh;
+  height: -webkit-fill-available;
+}
+
+/* ── Scroll suave sin scrollbar en modales ───────────────────────────────── */
+.scroll-hidden {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.scroll-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Tap feedback ────────────────────────────────────────────────────────── */
+.tap-highlight:active {
+  opacity: 0.75;
+  transform: scale(0.97);
+  transition: transform 0.1s ease, opacity 0.1s ease;
 }

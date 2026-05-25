@@ -51,6 +51,10 @@ import Documentos from '../web/documentos/Documentos.vue'
 // Rutas y trabajos
 import Rutas from '../web/rutas/Rutas.vue'
 
+// Solicitudes de conductores (panel web)
+import SolicitudesConductores from '../web/solicitudes/SolicitudesConductores.vue'
+import SolicitudesAdmin       from '../web/solicitudes/SolicitudesAdmin.vue'
+
 const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
@@ -108,6 +112,7 @@ const routes = [
       { path: 'finanzas',     component: FinanzasSuperAdmin },
       { path: 'reportes',     component: ReportesSuperAdmin },
       { path: 'rutas',        component: Rutas },
+      { path: 'solicitudes',  component: SolicitudesAdmin },
     ],
   },
 
@@ -139,7 +144,8 @@ const routes = [
       { path: 'documentos',      component: Documentos,       meta: { permiso: 'documentos.ver' } },
       { path: 'finanzas',        component: FinanzasEmpresa,  meta: { permiso: 'finanzas.ver' } },
       { path: 'reportes',        component: ReportesEmpresa },
-      { path: 'rutas',           component: Rutas,            meta: { permiso: 'rutas.ver' } },
+      { path: 'rutas',           component: Rutas,                   meta: { permiso: 'rutas.ver' } },
+      { path: 'solicitudes',     component: SolicitudesConductores },
       { path: 'configuracion',   component: ConfiguracionPage },
     ],
   },

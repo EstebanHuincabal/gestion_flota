@@ -60,7 +60,8 @@ const emit = defineEmits(['click'])
   <button
     v-else-if="variante === 'pendiente'"
     @click="emit('click', ruta.id)"
-    class="w-full text-left rounded-2xl p-4 border border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm transition min-h-[44px]"
+    class="w-full text-left rounded-2xl p-4 border border-gray-200 bg-white
+           transition-all active:scale-[0.98] active:bg-gray-50 min-h-[44px]"
   >
     <div class="flex items-start justify-between gap-2 mb-1">
       <p class="font-semibold text-gray-800 text-sm leading-snug">{{ ruta.nombre }}</p>
@@ -85,16 +86,27 @@ const emit = defineEmits(['click'])
   </button>
 
   <!-- ── FINALIZADA ─────────────────────────────────────────────────────────── -->
-  <div
+  <button
     v-else
-    class="rounded-xl px-4 py-3 bg-gray-50 border border-gray-100 flex items-center justify-between gap-3 min-h-[44px]"
+    @click="emit('click', ruta.id)"
+    class="w-full text-left rounded-xl px-4 py-3 bg-gray-50 border border-gray-100
+           flex items-center justify-between gap-3 min-h-[44px]
+           active:bg-gray-100 active:scale-[0.99] transition-all"
   >
     <div class="min-w-0">
-      <p class="text-sm font-medium text-gray-500 truncate">{{ ruta.nombre }}</p>
-      <p class="text-xs text-gray-400">{{ formatFechaRuta(ruta.fecha_fin) }}</p>
+      <p class="text-sm font-medium text-gray-600 truncate">{{ ruta.nombre }}</p>
+      <p class="text-xs text-gray-400">
+        {{ formatFechaRuta(ruta.fecha_fin) }}
+        <span v-if="ruta.distancia_km"> · {{ ruta.distancia_km }} km</span>
+      </p>
     </div>
-    <span class="shrink-0 text-[10px] font-semibold text-gray-400 bg-gray-200 rounded-full px-2 py-0.5">
-      Finalizada
-    </span>
-  </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-[10px] font-semibold text-gray-400 bg-gray-200 rounded-full px-2 py-0.5">
+        Finalizada
+      </span>
+      <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+      </svg>
+    </div>
+  </button>
 </template>

@@ -119,12 +119,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col" style="background: var(--color-acento)">
+  <!--
+    min-h-dvh: usa 100dvh que excluye la barra de dirección del browser (iOS fix).
+    Estructura: columna flex → logo se encoge, card se queda al fondo.
+  -->
+  <div
+    class="min-h-dvh flex flex-col overflow-hidden"
+    style="background: var(--color-acento); padding-top: env(safe-area-inset-top, 0px)"
+  >
 
-    <!-- Zona superior: logo + nombre -->
-    <div class="flex flex-col items-center justify-center flex-1 gap-4 pb-6">
+    <!-- Zona superior: logo + nombre (flex-1 → ocupa el espacio disponible) -->
+    <div class="flex flex-col items-center justify-center flex-1 gap-4 py-8 px-4 min-h-0">
       <!-- Ícono camión -->
-      <div class="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center">
+      <div class="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
         <svg class="w-11 h-11 text-white" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round"
             d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12"/>
@@ -136,8 +143,14 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Card inferior (≈60% pantalla) -->
-    <div class="bg-white rounded-t-3xl px-6 pt-8 pb-10 shadow-2xl" style="min-height: 60vh">
+    <!-- Card inferior — scroll interno para pantallas muy pequeñas (iPhone SE 1st gen) -->
+    <div
+      class="bg-white rounded-t-3xl px-6 pt-8 shadow-2xl scroll-hidden shrink-0"
+      style="
+        max-height: 72vh;
+        padding-bottom: calc(2.5rem + env(safe-area-inset-bottom, 0px));
+      "
+    >
       <h2 class="text-gray-800 text-xl font-bold mb-1">Iniciar sesión</h2>
       <p class="text-gray-400 text-sm mb-6">Ingresa tus credenciales para continuar</p>
 
@@ -221,7 +234,7 @@ onMounted(async () => {
         <button
           type="submit"
           :disabled="auth.cargando"
-          class="w-full py-4 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 mt-2 transition-opacity disabled:opacity-60"
+          class="w-full py-4 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 mt-2 transition-opacity disabled:opacity-60 active:opacity-80"
           style="background: var(--color-acento); box-shadow: 0 4px 14px color-mix(in srgb, var(--color-acento) 40%, transparent)"
         >
           <span

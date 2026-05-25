@@ -37,15 +37,58 @@ async function refrescarPermisos() {
   } catch {}
 }
 
+// ── Badge de solicitudes de conductores ──────────────────────────────────────
+const solicitudesPendientes = ref(0)
+let wsSolicitudes  = null
+let pollingSol     = null
+
+async function refrescarConteoSolicitudes() {
+  try {
+    const res  = await apiFetch('/api/empresa/solicitudes/conteo/')
+    if (!res.ok) return
+    const data = await res.json()
+    solicitudesPendientes.value = data.pendientes ?? 0
+  } catch {}
+}
+
+function conectarWSSolicitudes() {
+  const usr = JSON.parse(localStorage.getItem('usuario') || '{}')
+  const empresaId = usr.empresa_id
+  const token     = localStorage.getItem('access_token')
+  if (!empresaId || !token) return
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  wsSolicitudes = new WebSocket(`${proto}://${location.host}/ws/solicitudes/${empresaId}/?token=${token}`)
+
+  wsSolicitudes.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data)
+      if (msg.tipo === 'nueva_solicitud') {
+        solicitudesPendientes.value++
+      }
+    } catch {}
+  }
+  wsSolicitudes.onclose = () => {
+    if (wsSolicitudes._manuallyClosed) return
+    setTimeout(conectarWSSolicitudes, 6000)
+  }
+}
+
 let pollingInterval = null
 
 onMounted(() => {
   refrescarPermisos()
   pollingInterval = setInterval(refrescarPermisos, 15_000)
+  // Solicitudes badge
+  refrescarConteoSolicitudes()
+  conectarWSSolicitudes()
+  pollingSol = setInterval(refrescarConteoSolicitudes, 30_000)
 })
 
 onUnmounted(() => {
   clearInterval(pollingInterval)
+  clearInterval(pollingSol)
+  if (wsSolicitudes) { wsSolicitudes._manuallyClosed = true; wsSolicitudes.close() }
 })
 
 const navItems = [
@@ -99,6 +142,14 @@ const navItems = [
     path: '/empresa/rutas',
     permiso: 'rutas.ver',
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>`,
+  },
+  {
+    label: 'Solicitudes',
+    path: '/empresa/solicitudes',
+    permiso: null,
+    badge: true,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>`,
   },
   {
     label: 'Finanzas',
@@ -180,10 +231,20 @@ const cerrarSesion = () => {
           :class="['nav-item', { active: isActive(item.path) }]"
           :title="collapsed ? item.label : ''"
         >
-          <span class="nav-icon">
+          <span class="nav-icon" style="position:relative">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+            <!-- Badge de solicitudes pendientes -->
+            <span
+              v-if="item.badge && solicitudesPendientes > 0"
+              class="nav-badge"
+            >{{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}</span>
           </span>
           <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
+          <!-- Badge visible también cuando está expandido -->
+          <span
+            v-if="!collapsed && item.badge && solicitudesPendientes > 0 && !isActive(item.path)"
+            class="nav-badge-inline"
+          >{{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}</span>
           <span v-if="!collapsed && isActive(item.path)" class="active-bar"/>
         </router-link>
       </nav>
@@ -324,4 +385,22 @@ const cerrarSesion = () => {
 .topbar-logout:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
 .topbar-logout svg { width: 16px; height: 16px; }
 .page-content { flex: 1; overflow-y: auto; }
+
+/* Badge de solicitudes en el sidebar */
+.nav-badge {
+  position: absolute; top: -5px; right: -6px;
+  min-width: 16px; height: 16px; border-radius: 9999px;
+  background: #EF4444; color: #fff;
+  font-size: 0.6rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 3px; line-height: 1; border: 1.5px solid transparent;
+  pointer-events: none;
+}
+.nav-badge-inline {
+  margin-left: auto; min-width: 20px; height: 18px;
+  border-radius: 9999px; background: #EF4444; color: #fff;
+  font-size: 0.65rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 5px; pointer-events: none;
+}
 </style>

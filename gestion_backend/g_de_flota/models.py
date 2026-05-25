@@ -851,3 +851,63 @@ class PeajeRuta(models.Model):
 
     def __str__(self):
         return f"{self.peaje.nombre} en {self.ruta.nombre}"
+
+
+# ─────────────────────────────────────────
+# Solicitudes de Conductores
+# ─────────────────────────────────────────
+
+class SolicitudConductor(models.Model):
+    TIPOS = [
+        ('mantencion',  'Mantención'),
+        ('combustible', 'Combustible'),
+        ('incidencia',  'Incidencia'),
+        ('documento',   'Documento'),
+    ]
+    ESTADOS = [
+        ('pendiente',   'Pendiente'),
+        ('en_revision', 'En revisión'),
+        ('aprobado',    'Aprobado'),
+        ('rechazado',   'Rechazado'),
+    ]
+    PRIORIDADES = [
+        ('alta',  'Alta'),
+        ('media', 'Media'),
+        ('baja',  'Baja'),
+    ]
+
+    empresa        = models.ForeignKey(
+        Empresa, on_delete=models.CASCADE,
+        related_name='solicitudes_conductores', null=True, blank=True,
+    )
+    conductor      = models.ForeignKey(
+        Usuario, on_delete=models.CASCADE,
+        related_name='solicitudes_conductor',
+        limit_choices_to={'rol': Rol.CONDUCTOR},
+    )
+    vehiculo       = models.ForeignKey(
+        Vehiculo, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='solicitudes_vehiculo',
+    )
+    tipo           = models.CharField(max_length=20, choices=TIPOS)
+    titulo         = models.CharField(max_length=200)
+    descripcion    = models.TextField(blank=True, default='')
+    estado         = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
+    prioridad      = models.CharField(max_length=10, choices=PRIORIDADES, default='media')
+    foto           = models.FileField(upload_to='solicitudes/%Y/%m/', null=True, blank=True)
+    respuesta      = models.TextField(blank=True, default='')
+    respondido_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='solicitudes_respondidas',
+    )
+    respondido_at  = models.DateTimeField(null=True, blank=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering     = ['-created_at']
+        verbose_name = 'Solicitud de Conductor'
+        verbose_name_plural = 'Solicitudes de Conductores'
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} — {self.conductor} — {self.get_estado_display()}"

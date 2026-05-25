@@ -11,6 +11,7 @@ from .models import (
     GastoOperativo, PresupuestoMensual, Documento,
     Peaje, ConfiguracionRuta,
     Ruta, Parada, PeajeRuta,
+    SolicitudConductor,
 )
 
 # ─────────────────────────────────────────
@@ -223,3 +224,28 @@ class PeajeRutaAdmin(admin.ModelAdmin):
     list_display  = ('ruta', 'peaje', 'tarifa')
     list_filter   = ('peaje__categoria',)
     search_fields = ('ruta__nombre', 'peaje__nombre')
+
+
+# ─────────────────────────────────────────
+# Solicitudes de Conductores
+# ─────────────────────────────────────────
+
+@admin.register(SolicitudConductor)
+class SolicitudConductorAdmin(admin.ModelAdmin):
+    list_display   = ('id', 'conductor', 'tipo', 'titulo', 'estado', 'prioridad', 'created_at')
+    list_filter    = ('tipo', 'estado', 'prioridad')
+    search_fields  = ('titulo', 'descripcion', 'conductor__email')
+    readonly_fields = ('created_at', 'updated_at')
+    list_select_related = ('conductor',)
+    fieldsets = (
+        ('Solicitud', {
+            'fields': ('conductor', 'tipo', 'titulo', 'descripcion', 'prioridad', 'foto'),
+        }),
+        ('Gestión', {
+            'fields': ('estado', 'respuesta'),
+        }),
+        ('Fechas', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )

@@ -4,7 +4,7 @@ from rest_framework import serializers
 from .models import (
     Empresa, Usuario, Rol, Permiso, normalizar_rut, REGIONES_CHILE,
     Flota, Vehiculo, Asignacion, PlanSuscripcion, CambioPlan, LogAuditoria,
-    Mantencion, Documento
+    Mantencion, Documento, SolicitudConductor, descifrar,
 )
 
 
@@ -1040,3 +1040,63 @@ class PreferenciasNotificacionSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         return [v for v in value if v in self.CATEGORIAS_VALIDAS]
+
+
+# ─────────────────────────────────────────
+# Solicitudes de Conductores
+# ─────────────────────────────────────────
+
+class SolicitudConductorSerializer(serializers.ModelSerializer):
+    conductor_nombre    = serializers.SerializerMethodField()
+    conductor_iniciales = serializers.SerializerMethodField()
+    vehiculo_patente    = serializers.CharField(source='vehiculo.patente', read_only=True, default=None)
+    tipo_display        = serializers.CharField(source='get_tipo_display',     read_only=True)
+    estado_display      = serializers.CharField(source='get_estado_display',   read_only=True)
+    prioridad_display   = serializers.CharField(source='get_prioridad_display', read_only=True)
+    respondido_por_nombre = serializers.SerializerMethodField()
+    tiene_foto          = serializers.SerializerMethodField()
+    foto_url            = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = SolicitudConductor
+        fields = [
+            'id', 'tipo', 'tipo_display', 'titulo', 'descripcion',
+            'prioridad', 'prioridad_display', 'estado', 'estado_display',
+            'foto_url', 'tiene_foto', 'respuesta',
+            'conductor', 'conductor_nombre', 'conductor_iniciales',
+            'vehiculo', 'vehiculo_patente',
+            'respondido_por', 'respondido_por_nombre', 'respondido_at',
+            'created_at', 'updated_at',
+        ]
+
+    def _nombre_usuario(self, usuario):
+        if not usuario:
+            return None
+        try:
+            return descifrar(usuario.nombre_cifrado)
+        except Exception:
+            return usuario.email
+
+    def get_conductor_nombre(self, obj):
+        return self._nombre_usuario(obj.conductor)
+
+    def get_conductor_iniciales(self, obj):
+        nombre = self.get_conductor_nombre(obj) or ''
+        partes = nombre.split()
+        if len(partes) >= 2:
+            return f"{partes[0][0]}{partes[-1][0]}".upper()
+        return nombre[:2].upper() if nombre else '?'
+
+    def get_respondido_por_nombre(self, obj):
+        return self._nombre_usuario(obj.respondido_por)
+
+    def get_tiene_foto(self, obj):
+        return bool(obj.foto)
+
+    def get_foto_url(self, obj):
+        if not obj.foto:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.foto.url)
+        return obj.foto.url

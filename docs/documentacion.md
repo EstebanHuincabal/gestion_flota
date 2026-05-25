@@ -18,6 +18,7 @@
 9. [Módulos del sistema](#9-módulos-del-sistema)
     - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
     - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
+    - 9.15 [Solicitudes de Conductores (USUARIO + SUPERADMIN)](#915-solicitudes-de-conductores-panel-web)
 10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
 11. [Modelo de datos](#11-modelo-de-datos)
 12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
@@ -45,7 +46,7 @@ Un usuario **Superadmin** opera a nivel global: administra las empresas cliente,
 | **Rutas y Trabajos** | Planificación de rutas con mapa Leaflet, cálculo OSRM, detección de peajes y liquidación automática de costos |
 | **Notificaciones** | Alertas in-app en tiempo real (WebSocket) + preferencias de canal |
 | **Permisos** | Una capa basada en el plan: módulos visibles y acciones disponibles se definen a nivel de plan de suscripción |
-| **App Conductores** | Aplicación móvil (Vue 3 + Capacitor 8) para conductores: consulta de rutas asignadas, inicio/finalización con km y costos reales, mapa Leaflet, soporte offline con SQLite |
+| **App Conductores** | Aplicación móvil (Vue 3 + Capacitor 8) para conductores: consulta de rutas asignadas, inicio/finalización con km y costos reales, mapa Leaflet, solicitudes de mantención/combustible/incidencia/documento con foto, soporte offline con SQLite |
 
 ---
 
@@ -155,6 +156,8 @@ gestion_flota/
 │   │       ├── rutas/            # Rutas y trabajos
 │   │       │   ├── Rutas.vue     # Vista principal con tabla, panel y modales
 │   │       │   └── MapaRuta.vue  # Componente Leaflet reutilizable
+│   │       ├── solicitudes/      # Solicitudes de conductores (panel web)
+│   │       │   └── SolicitudesConductores.vue  # Tabla + modales + badge WS
 │   │       └── usuarios/
 │   └── package.json
 │
@@ -204,6 +207,7 @@ gestion_flota/
     │   ├── views_config.py       # Perfil y configuración
     │   ├── views_rutas.py        # Endpoints de rutas y trabajos (panel web)
     │   ├── views_conductor.py    # Endpoints exclusivos app móvil conductores
+    │   ├── views_solicitudes.py  # Endpoints panel web: gestión solicitudes de conductores
     │   ├── ruta_calculator.py    # Motor de cálculo (OSRM, peajes, costos)
     │   ├── audit.py              # registrar_log() + _parse_navegador/so() + _diff_campos()
     │   ├── serializers.py        # Serializadores DRF (LogAuditoria incluye navegador/so)
@@ -632,6 +636,20 @@ Cada peaje tiene su propio `radio_metros` (400–1000 m según la ruta) para evi
 
 Aplicación Vue 3 + Capacitor 8 orientada exclusivamente al rol `CONDUCTOR`. Accede al mismo backend Django mediante JWT, con soporte **offline-first** usando `@capacitor-community/sqlite`.
 
+#### Compatibilidad cross-device (optimizado Mayo 2026)
+
+La app está optimizada para todos los tamaños de pantalla y modelos de teléfono:
+
+| Problema | Solución aplicada |
+|---|---|
+| `100vh` incluye la barra de dirección en iOS Safari | `100dvh` + fallback `-webkit-fill-available` en `main.css` |
+| Notch, Dynamic Island y home indicator | `viewport-fit=cover` en `index.html` + `env(safe-area-inset-*)` en todos los elementos fijos |
+| `pb-24` (96px fijo) no cubre el home indicator | Variable CSS `--nav-total: calc(60px + env(safe-area-inset-bottom))` usada con `.pb-nav` |
+| Toast en DetalleRuta quedaba detrás del notch | `top: max(1rem, env(safe-area-inset-top) + 0.5rem)` |
+| Botón "Iniciar/Finalizar ruta" quedaba debajo del BottomNav en iPhone X+ | `bottom: var(--nav-total)` en lugar de `bottom: 64px` fijo |
+| Modales con `height: 80vh` desbordaban en pantallas pequeñas | `min(80vh, 80dvh)` que respeta la altura dinámica |
+| Login con `min-height: 60vh` cortaba en iPhone SE | Card con `max-height: 72vh` y scroll interno |
+
 #### Pantallas
 
 | Pantalla | Ruta | Descripción |
@@ -639,7 +657,7 @@ Aplicación Vue 3 + Capacitor 8 orientada exclusivamente al rol `CONDUCTOR`. Acc
 | `Login.vue` | `/login` | Autenticación por RUT chileno + contraseña. Validación módulo 11 en el cliente. |
 | `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. |
 | `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Costos / Detalles). Mapa Leaflet (carga dinámica desde CDN). Lista combinada de paradas + peajes. Bottom-sheet modales con validación para iniciar y finalizar ruta. Toast de confirmación. |
-| `ListaSolicitudes.vue` | `/solicitudes` | Notificaciones del conductor desde `/api/notificaciones/`. Paginación, pull-to-refresh, marcar leídas (individual y todas), íconos por tipo (actividad / mantención / documentos / seguridad). |
+| `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. |
 | `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. Botón "Cerrar sesión" con bottom-sheet de confirmación. |
 
 #### Componentes
@@ -655,7 +673,7 @@ Aplicación Vue 3 + Capacitor 8 orientada exclusivamente al rol `CONDUCTOR`. Acc
 | Servicio | Archivo | Descripción |
 |---|---|---|
 | API HTTP | `services/api.js` | `apiFetch()` con auto-refresh JWT en 401. Tokens en `@capacitor/preferences`. |
-| Base de datos local | `services/db.js` | SQLite en dispositivo nativo; Map en memoria en navegador. Guarda rutas y acciones pendientes. |
+| Base de datos local | `services/db.js` | SQLite en dispositivo nativo; Map en memoria en navegador. Guarda rutas, solicitudes y acciones pendientes. |
 | Sincronización | `services/sync.js` | Detecta reconexión (`@capacitor/network`) y envía acciones encoladas durante el modo offline. |
 
 #### Autenticación con RUT chileno
@@ -679,12 +697,84 @@ Aplicación Vue 3 + Capacitor 8 orientada exclusivamente al rol `CONDUCTOR`. Acc
 | `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, peajes, vehículo con `km_actuales` y `consumo_l_100km` |
 | `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo |
 | `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin`, costos reales, notas y actualiza `km_actuales` |
+| `GET` | `/api/conductor/solicitudes/` | Lista las solicitudes del conductor autenticado, ordenadas por fecha descendente |
+| `POST` | `/api/conductor/solicitudes/` | Crea una solicitud. Acepta `multipart/form-data` si hay foto, JSON si no. Campos: `tipo`, `titulo`, `descripcion`, `prioridad`, `foto` (opcional) |
 | `GET` | `/api/notificaciones/` | Notificaciones del conductor paginadas (20/página); filtros `leida`, `tipo` |
 | `POST` | `/api/notificaciones/leer/` | Marca notificaciones como leídas (`ids: []` o `todas: true`) |
 
 **Backend:** `views_conductor.py`  
 **Puerto de desarrollo:** `http://localhost:5174`  
 **CORS configurado:** `http://localhost:5174`, `capacitor://localhost`, `http://localhost`
+
+---
+
+### 9.15 Solicitudes de Conductores (panel web)
+
+Módulo del panel web que gestiona las solicitudes enviadas por los conductores desde la app móvil. Existen dos vistas según el rol del usuario.
+
+#### Vista USUARIO — `SolicitudesConductores.vue`
+
+Accesible en `/empresa/solicitudes`. Muestra las solicitudes de la propia empresa del usuario.
+
+- **KPI cards** superiores: Pendientes · En revisión · Aprobadas hoy · Total mes
+- **Filtros combinados:** buscar por título, estado, tipo, rango de fechas
+- **Tabla paginada** (20 registros/página): Conductor · Tipo · Título · Prioridad · Estado · Vehículo · Fecha · Acciones
+- **Acciones inline:** ver detalle (👁), aprobar (✓), rechazar (✕)
+- **Modal de detalle:** badges de estado/prioridad, grid de info, descripción, respuesta, foto adjunta, botones de acción directa
+- **Modal de rechazo:** campo de motivo con validación mínimo 10 caracteres
+- **Badge en tiempo real** en el sidebar de `EmpresaLayout.vue`: conteo de pendientes vía WebSocket; polling de 30 s como respaldo
+- **Toasts:** confirmación visual de cada acción
+
+#### Vista SUPERADMIN — `SolicitudesAdmin.vue`
+
+Accesible en `/solicitudes`. Permite al Superadmin revisar y gestionar las solicitudes de **cualquier empresa** de la plataforma.
+
+- **Selector de empresa** en la parte superior:
+  - Dropdown buscable con las empresas del sistema (cargadas de `/api/empresas/`)
+  - Búsqueda local por nombre
+  - Avatar con inicial de la empresa, nombre y RUT
+  - Botón de limpieza (✕) para cambiar de empresa
+  - Al seleccionar empresa: guarda `empresaActiva` en sessionStorage y conecta WebSocket
+- **Estado vacío:** cuando no hay empresa seleccionada se muestra un estado placeholder orientativo
+- **Mismo conjunto de KPIs, filtros, tabla, modales y toasts** que la vista USUARIO
+- **WebSocket por empresa:** al cambiar la empresa seleccionada se desconecta el WS anterior y se conecta uno nuevo a `ws/solicitudes/{nuevaEmpresa_id}/`
+- **Badge en sidebar** de `Base.vue`: ítem "Solicitudes" muestra el conteo de pendientes de la empresa activa; se actualiza vía evento `solicitudes-admin-badge` (disparado por la vista) y por polling cada 60 s como respaldo
+
+#### Acciones disponibles (ambas vistas)
+
+| Acción | Endpoint | Descripción |
+|---|---|---|
+| Marcar "En revisión" | `PUT /api/empresa/solicitudes/:id/` | Cambia estado a `en_revision` |
+| Aprobar | `PUT /api/empresa/solicitudes/:id/aprobar/` | Cambia a `aprobado`, crea entidades derivadas (Mantención/Documento según tipo), notifica al conductor |
+| Rechazar | `PUT /api/empresa/solicitudes/:id/rechazar/` | Cambia a `rechazado`, requiere motivo ≥10 chars, notifica al conductor |
+
+> Para SUPERADMIN todos los endpoints reciben el parámetro `?empresa_id=X` que es leído por `_get_empresa()` en `views_solicitudes.py`.
+
+#### Creación automática de entidades al aprobar
+
+| Tipo de solicitud | Entidad creada |
+|---|---|
+| `mantencion` | `Mantencion` en estado `pendiente` con el título/descripción de la solicitud |
+| `documento` | `Documento` tipo `revision_tecnica` con el archivo foto adjunto si existe |
+| `combustible` / `incidencia` | Sin entidad derivada (solo cambio de estado + notificación) |
+
+#### WebSocket en tiempo real
+
+Ambas vistas se conectan a `ws://host/ws/solicitudes/{empresa_id}/?token=<access_token>`.  
+Al recibir `nueva_solicitud`, incrementa el conteo de pendientes y recarga la tabla.  
+Si el WebSocket cae, reconecta automáticamente cada 5 s.
+
+#### Permiso de plan
+
+| Código | Categoría | Planes |
+|---|---|---|
+| `solicitudes.ver` | solicitudes | básico · pro · enterprise |
+
+Migración: `0040_solicitudes_permisos.py`
+
+**Backend:** `views_solicitudes.py` · `consumers.SolicitudesConsumer`  
+**Modelo:** `SolicitudConductor`  
+**Rutas WS:** `ws/solicitudes/<empresa_id>/`
 
 ---
 
@@ -886,10 +976,27 @@ Authorization: Bearer <access_token>
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `GET` | `/api/conductor/rutas/` | Rutas asignadas al conductor (pendiente / activo / finalizado) |
+| `GET` | `/api/conductor/rutas/<id>/` | Detalle completo: paradas, peajes, vehículo |
 | `POST` | `/api/conductor/rutas/<id>/iniciar/` | Inicia la ruta — registra `km_inicio` y `fecha_inicio` |
 | `POST` | `/api/conductor/rutas/<id>/finalizar/` | Finaliza la ruta — registra `km_fin`, costos reales y notas |
+| `GET` | `/api/conductor/solicitudes/` | Lista solicitudes del conductor, ordenadas por fecha desc |
+| `POST` | `/api/conductor/solicitudes/` | Crea solicitud — `multipart/form-data` si incluye foto, JSON si no |
 
 **Backend:** `views_conductor.py`
+
+### Solicitudes de Conductores (panel web — USUARIO)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/empresa/solicitudes/` | Lista paginada con filtros: `estado`, `tipo`, `conductor_id`, `fecha_desde`, `fecha_hasta`, `buscar`, `page`, `page_size`. Incluye `resumen` con contadores |
+| `GET` | `/api/empresa/solicitudes/conteo/` | Retorna `{ pendientes: N }` — lightweight para badge del sidebar |
+| `GET` | `/api/empresa/solicitudes/<id>/` | Detalle de una solicitud con datos del conductor, vehículo y respondido_por |
+| `PUT` | `/api/empresa/solicitudes/<id>/` | Cambia estado a `en_revision` |
+| `PUT` | `/api/empresa/solicitudes/<id>/aprobar/` | Aprueba la solicitud; crea `Mantencion` o `Documento` automáticamente; notifica al conductor |
+| `PUT` | `/api/empresa/solicitudes/<id>/rechazar/` | Rechaza la solicitud; requiere `respuesta` ≥10 caracteres; notifica al conductor |
+
+**Backend:** `views_solicitudes.py` · `SolicitudConductorSerializer`  
+**Autenticación:** `IsAuthenticated` (USUARIO ve solo su empresa; SUPERADMIN pasa `?empresa_id=`)
 
 ### Notificaciones
 
@@ -953,6 +1060,7 @@ PlanSuscripcion ──< Permiso (M2M)
                 └──< Documento (empresa)
 
 Usuario (CONDUCTOR) ──< Documento (docs_c)
+                    └──< SolicitudConductor
 ```
 
 ### Modelos principales
@@ -983,6 +1091,7 @@ Usuario (CONDUCTOR) ──< Documento (docs_c)
 | `Ruta` | Ruta planificada con conductor, vehículo, estado, costos estimados y reales |
 | `Parada` | Punto de parada de una ruta (origen, intermedia, destino) con coordenadas |
 | `PeajeRuta` | Peaje detectado en una ruta específica con la tarifa aplicada |
+| `SolicitudConductor` | Solicitud creada por un conductor: tipo (`mantencion`, `combustible`, `incidencia`, `documento`), título, descripción, prioridad (`baja`, `media`, `alta`), estado (`pendiente`, `en_revision`, `aprobado`, `rechazado`), foto opcional (ImageField), respuesta del administrador |
 
 ---
 
