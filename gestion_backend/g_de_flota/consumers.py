@@ -82,6 +82,64 @@ class SolicitudesConsumer(AsyncWebsocketConsumer):
             'solicitud': event['solicitud'],
         }))
 
+
+class ConductorConsumer(AsyncWebsocketConsumer):
+    """
+    Canal WebSocket para la app móvil de conductores.
+
+    Cada conductor se suscribe a su propio grupo `conductor_{user_id}` y recibe:
+      - solicitud_actualizada: cuando un admin aprueba o rechaza una de sus solicitudes.
+
+    Autenticación: JWT en query param ?token=<access_token>
+    """
+
+    async def connect(self):
+        qs        = parse_qs(self.scope['query_string'].decode())
+        token_str = qs.get('token', [None])[0]
+
+        if not token_str:
+            await self.close(code=4001)
+            return
+
+        try:
+            validated = UntypedToken(token_str)
+            user_id   = validated['user_id']
+        except (InvalidToken, TokenError):
+            await self.close(code=4001)
+            return
+
+        # Verificar que el usuario tiene rol CONDUCTOR
+        ok = await self._verificar_conductor(user_id)
+        if not ok:
+            await self.close(code=4003)
+            return
+
+        self.group_name = f'conductor_{user_id}'
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def solicitud_actualizada(self, event):
+        """Notifica al conductor que el estado de una de sus solicitudes cambió."""
+        await self.send(text_data=json.dumps({
+            'type':         'solicitud_actualizada',
+            'solicitud_id': event['solicitud_id'],
+            'estado':       event['estado'],
+            'respuesta':    event.get('respuesta', ''),
+        }))
+
+    @database_sync_to_async
+    def _verificar_conductor(self, user_id):
+        from .models import Usuario, Rol
+        try:
+            u = Usuario.objects.get(pk=user_id)
+            return u.rol == Rol.CONDUCTOR
+        except Usuario.DoesNotExist:
+            return False
+
     @database_sync_to_async
     def _verificar_empresa(self, user_id, empresa_id):
         """Devuelve True si el usuario pertenece a la empresa o es SUPERADMIN."""

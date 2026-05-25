@@ -1,6 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+
+const router = useRouter()
 
 // ── Estado principal ────────────────────────────────────────────────────────
 const solicitudes   = ref([])
@@ -178,15 +181,26 @@ function aprobar(sol) {
 }
 
 async function confirmarProgramacion() {
-  await _ejecutarAprobacion(modalProgramar.value, {
+  const mantencionId = await _ejecutarAprobacion(modalProgramar.value, {
     fecha_programada:   programar.value.fecha     || undefined,
     taller:             programar.value.taller    || undefined,
     presupuesto:        programar.value.presupuesto ? Number(programar.value.presupuesto) : undefined,
     suspender_vehiculo: programar.value.suspender,
   })
   modalProgramar.value = null
+
+  // Redirigir al formulario de mantención creada automáticamente
+  if (mantencionId) {
+    const usuario = JSON.parse(localStorage.getItem('usuario') || '{}')
+    const base    = usuario.rol === 'SUPERADMIN' ? '' : '/empresa'
+    router.push(`${base}/mantenciones/${mantencionId}/editar`)
+  }
 }
 
+/**
+ * Ejecuta la aprobación de una solicitud.
+ * @returns {number|null} mantencion_id si se creó una mantención, null si no.
+ */
 async function _ejecutarAprobacion(sol, extra = {}) {
   guardando.value   = true
   errorAccion.value = ''
@@ -201,8 +215,10 @@ async function _ejecutarAprobacion(sol, extra = {}) {
     toast('Solicitud aprobada ✓', 'ok')
     cerrarModalDetalle()
     await cargar()
+    return data.mantencion_id || null
   } catch (e) {
     errorAccion.value = e.message
+    return null
   } finally {
     guardando.value = false
   }

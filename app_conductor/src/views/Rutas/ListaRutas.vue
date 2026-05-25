@@ -1,15 +1,17 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore }  from '@/stores/auth.js'
-import { useRutasStore } from '@/stores/rutas.js'
+import { useAuthStore }       from '@/stores/auth.js'
+import { useRutasStore }      from '@/stores/rutas.js'
+import { useMantencionesStore } from '@/stores/mantenciones.js'
 import BottomNav  from '@/components/BottomNav.vue'
 import RutaCard   from '@/components/RutaCard.vue'
 import { iniciales, tiempoDesde } from '@/utils/formato.js'
 
-const router     = useRouter()
-const auth       = useAuthStore()
-const rutasStore = useRutasStore()
+const router       = useRouter()
+const auth         = useAuthStore()
+const rutasStore   = useRutasStore()
+const mantenStore  = useMantencionesStore()
 
 const historialAbierto = ref(true)
 
@@ -38,6 +40,7 @@ function verRuta(id) {
 onMounted(async () => {
   await rutasStore.init()
   await rutasStore.cargarRutas()
+  await mantenStore.cargarMantenciones()
 })
 </script>
 
@@ -51,6 +54,38 @@ onMounted(async () => {
     <!-- ── Spinner pull-to-refresh ─────────────────────────────────────────── -->
     <div v-if="refreshing" class="flex justify-center pt-4">
       <span class="w-6 h-6 border-2 border-gray-200 border-t-[var(--color-acento)] rounded-full animate-spin"/>
+    </div>
+
+    <!-- ── Banner: vehículo en mantención ───────────────────────────────────── -->
+    <div
+      v-if="mantenStore.vehiculoEnMantencion"
+      class="mx-4 mt-4 flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-3 cursor-pointer active:opacity-80"
+      @click="router.push('/mantencion')"
+    >
+      <span class="text-xl shrink-0">🔴</span>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-bold text-red-700 leading-tight">Vehículo fuera de servicio</p>
+        <p class="text-xs text-red-500 truncate">Tu vehículo está detenido por una mantención activa</p>
+      </div>
+      <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
+    </div>
+
+    <!-- ── Banner: mantención próxima (≤ 3 días) sin bloqueo ────────────────── -->
+    <div
+      v-else-if="mantenStore.hayUrgente"
+      class="mx-4 mt-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 cursor-pointer active:opacity-80"
+      @click="router.push('/mantencion')"
+    >
+      <span class="text-xl shrink-0">⚠️</span>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-bold text-amber-700 leading-tight">Mantención próxima</p>
+        <p class="text-xs text-amber-600 truncate">Tienes una mantención programada en los próximos días</p>
+      </div>
+      <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
     </div>
 
     <!-- ── Header ─────────────────────────────────────────────────────────── -->

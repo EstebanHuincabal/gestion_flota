@@ -88,6 +88,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 MEDIA_URL  = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# ── Firebase Cloud Messaging (push notifications) ─────────────────────────────
+# Descarga tu serviceAccountKey.json desde Firebase Console →
+# Configuración del proyecto → Cuentas de servicio → Generar nueva clave privada
+# y guárdalo en: gestion_backend/serviceAccountKey.json
+FIREBASE_CREDENTIALS = BASE_DIR / 'serviceAccountKey.json'
+
 CORS_ALLOWED_ORIGINS = [
     # Sistema web
     "http://localhost:7183",

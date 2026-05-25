@@ -370,6 +370,11 @@ class Vehiculo(models.Model):
     km_actuales      = models.IntegerField(default=0)
     activo           = models.BooleanField(default=True)
     consumo_l_100km  = models.DecimalField(max_digits=5, decimal_places=2, default=10.0)
+    en_mantencion    = models.BooleanField(
+        default=False,
+        verbose_name='En mantención',
+        help_text='True mientras el vehículo está fuera de servicio por una mantención activa.',
+    )
 
     def __str__(self):
         return f"{self.patente} — {self.marca} {self.modelo}"
@@ -871,9 +876,9 @@ class SolicitudConductor(models.Model):
         ('rechazado',   'Rechazado'),
     ]
     PRIORIDADES = [
-        ('alta',  'Alta'),
-        ('media', 'Media'),
         ('baja',  'Baja'),
+        ('media', 'Media'),
+        ('alta',  'Alta'),
     ]
 
     empresa        = models.ForeignKey(

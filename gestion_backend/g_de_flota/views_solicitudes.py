@@ -19,6 +19,30 @@ from .audit import registrar_log
 from .notificaciones import notificar
 
 
+def _emitir_cambio_estado_conductor(solicitud):
+    """
+    Envía evento WebSocket `solicitud_actualizada` al conductor de forma
+    que la app móvil pueda actualizar el estado en tiempo real sin polling.
+    Nunca lanza excepción — falla silenciosamente.
+    """
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                f'conductor_{solicitud.conductor_id}',
+                {
+                    'type':         'solicitud_actualizada',
+                    'solicitud_id': solicitud.id,
+                    'estado':       solicitud.estado,
+                    'respuesta':    solicitud.respuesta or '',
+                },
+            )
+    except Exception:
+        pass
+
+
 def _get_empresa(request):
     """Devuelve la Empresa del usuario o None. Compatible con empresa_id query-param para SUPERADMIN."""
     if request.user.rol == Rol.SUPERADMIN:
@@ -70,7 +94,7 @@ def _crear_entidad_automatica(solicitud, request_user, extra=None):
     extra = extra or {}
 
     if solicitud.tipo == 'mantencion' and solicitud.vehiculo:
-        Mantencion.objects.create(
+        mantencion = Mantencion.objects.create(
             vehiculo=solicitud.vehiculo,
             tipo_mantencion=solicitud.titulo,
             descripcion=solicitud.descripcion,
@@ -83,6 +107,7 @@ def _crear_entidad_automatica(solicitud, request_user, extra=None):
         if extra.get('suspender_vehiculo'):
             solicitud.vehiculo.en_mantencion = True
             solicitud.vehiculo.save(update_fields=['en_mantencion'])
+        return mantencion
 
     elif solicitud.tipo == 'documento' and solicitud.vehiculo:
         Documento.objects.create(
@@ -265,17 +290,47 @@ class SolicitudAprobarView(APIView):
                 extra['presupuesto'] = None
             extra['suspender_vehiculo'] = bool(request.data.get('suspender_vehiculo', False))
 
-        _crear_entidad_automatica(sol, request.user, extra)
+        entidad   = _crear_entidad_automatica(sol, request.user, extra)
         _notificar_conductor(sol, aprobado=True, extra=extra)
+        _emitir_cambio_estado_conductor(sol)   # tiempo real → app conductores
+
+        # Push notification al conductor si hay token registrado
+        from .firebase_push import enviar_push
+        if sol.tipo == 'mantencion':
+            partes = []
+            if extra.get('fecha_programada'):
+                partes.append(f"para el {extra['fecha_programada']}")
+            if extra.get('taller'):
+                partes.append(f"en {extra['taller']}")
+            detalle_push = ('Mantención programada ' + ' '.join(partes)).strip() if partes else 'Revisa los detalles en la app.'
+            enviar_push(
+                sol.conductor,
+                titulo='Mantención aprobada 🔧',
+                cuerpo=detalle_push,
+                data={'tipo': 'mantencion_aprobada', 'solicitud_id': str(sol.id)},
+            )
+        else:
+            enviar_push(
+                sol.conductor,
+                titulo='Solicitud aprobada ✓',
+                cuerpo=sol.respuesta or 'Tu solicitud fue aprobada.',
+                data={'tipo': 'solicitud_aprobada', 'solicitud_id': str(sol.id)},
+            )
+
         registrar_log('ACTIVIDAD', 'solicitud_aprobada', request, detalle={
             'solicitud_id': sol.id, 'tipo': sol.tipo, 'titulo': sol.titulo,
             **({'fecha_programada': extra.get('fecha_programada'), 'taller': extra.get('taller')} if sol.tipo == 'mantencion' else {}),
         })
 
-        return Response({
+        resp = {
             'ok': True,
             'solicitud': SolicitudConductorSerializer(sol, context={'request': request}).data,
-        })
+        }
+        # Si se creó una mantención, incluir su id para redirigir al formulario
+        if entidad and sol.tipo == 'mantencion':
+            resp['mantencion_id'] = entidad.id
+
+        return Response(resp)
 
 
 # ─────────────────────────────────────────
@@ -310,6 +365,16 @@ class SolicitudRechazarView(APIView):
         sol.save()
 
         _notificar_conductor(sol, aprobado=False)
+        _emitir_cambio_estado_conductor(sol)   # tiempo real → app conductores
+
+        from .firebase_push import enviar_push
+        enviar_push(
+            sol.conductor,
+            titulo='Solicitud rechazada',
+            cuerpo=respuesta[:100],
+            data={'tipo': 'solicitud_rechazada', 'solicitud_id': str(sol.id)},
+        )
+
         registrar_log('ACTIVIDAD', 'solicitud_rechazada', request, detalle={
             'solicitud_id': sol.id, 'tipo': sol.tipo, 'titulo': sol.titulo,
         })

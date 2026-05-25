@@ -1,12 +1,15 @@
 <script setup>
 import { useRouter, useRoute } from 'vue-router'
+import { useMantencionesStore } from '@/stores/mantenciones.js'
 
-const router = useRouter()
-const route  = useRoute()
+const router    = useRouter()
+const route     = useRoute()
+const mantenStore = useMantencionesStore()
 
 const items = [
   { to: '/rutas',       label: 'Rutas',       icon: 'rutas'       },
   { to: '/solicitudes', label: 'Solicitudes',  icon: 'solicitudes' },
+  { to: '/mantencion',  label: 'Mantención',   icon: 'mantencion'  },
   { to: '/ajustes',     label: 'Ajustes',      icon: 'ajustes'     },
 ]
 
@@ -52,10 +55,29 @@ const esActivo = (to) => route.path.startsWith(to)
           <path stroke-linecap="round" stroke-linejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
         </svg>
 
+        <!-- Ícono Mantención (llave inglesa) con badge si hay urgente -->
+        <span v-if="item.icon === 'mantencion'" class="relative">
+          <svg class="w-[22px] h-[22px]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+          <!-- Badge rojo si hay mantención urgente o vehículo bloqueado -->
+          <span
+            v-if="mantenStore.hayUrgente"
+            class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full border border-white
+                   flex items-center justify-center text-[8px] text-white font-bold leading-none"
+          >!</span>
+          <!-- Badge azul con cantidad si hay activas pero sin urgencia -->
+          <span
+            v-else-if="mantenStore.totalActivas > 0"
+            class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-[var(--color-acento)] rounded-full border border-white
+                   flex items-center justify-center text-[8px] text-white font-bold leading-none"
+          >{{ mantenStore.totalActivas }}</span>
+        </span>
+
         <!-- Ícono Ajustes -->
         <svg v-if="item.icon === 'ajustes'" class="w-[22px] h-[22px]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
         </svg>
 
         <span

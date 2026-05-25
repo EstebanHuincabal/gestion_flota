@@ -59,19 +59,19 @@ El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
 │   Panel Web (Navegador)  │  │  App Conductores (móvil) │
 │  Vue 3 · Chart.js        │  │  Vue 3 · Capacitor 8     │
 │  http://localhost:7183   │  │  http://localhost:5174   │
-└────────────┬────────────┘  └────────────┬────────────┘
-             │ HTTP/JSON (JWT Bearer)       │ HTTP/JSON (JWT Bearer)
-             │ WebSocket (ws://)            │
-┌────────────▼─────────────────────────────▼────────────┐
-│                Backend (Django 5 / ASGI)               │
-│      Django REST Framework · SimpleJWT · Channels      │
-│                 http://localhost:8000                  │
-└────────────────────────┬───────────────────────────────┘
-                         │ ORM
-┌────────────────────────▼───────────────────────────────┐
-│                    Base de datos                        │
-│                  SQLite (desarrollo)                    │
-└─────────────────────────────────────────────────────────┘
+└────────────┬────────────┘  └──────┬──────────┬────────┘
+             │ HTTP/JSON (JWT)       │ HTTP/JSON │ WebSocket
+             │ WebSocket (ws://)     │ + WS      │ ws/conductor/
+┌────────────▼───────────────────────▼───────────▼───────┐
+│                Backend (Django 5 / ASGI)                │
+│   Django REST Framework · SimpleJWT · Channels          │
+│                 http://localhost:8000                   │
+└────────────────────────┬───────────────────────┬────────┘
+                         │ ORM                    │ Firebase Admin SDK
+┌────────────────────────▼───────┐   ┌────────────▼────────────────────┐
+│           Base de datos         │   │   Firebase Cloud Messaging (FCM) │
+│         SQLite (desarrollo)     │   │   Push notifications → dispositivos│
+└─────────────────────────────────┘   └──────────────────────────────────┘
 ```
 
 ### Tecnologías
@@ -87,6 +87,7 @@ El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
 | cryptography (Fernet) | — | Cifrado simétrico de datos sensibles |
 | openpyxl | — | Exportación de reportes a XLSX |
 | python-dotenv | — | Gestión de variables de entorno |
+| firebase-admin | 7.4.x | Envío de notificaciones push mediante Firebase Cloud Messaging |
 
 **Frontend web**
 
@@ -108,6 +109,7 @@ El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
 | @capacitor/preferences | — | Almacenamiento seguro de tokens (Keychain/EncryptedSharedPreferences) |
 | @capacitor-community/sqlite | — | Base de datos local para modo offline |
 | @capacitor/network | — | Detección de conectividad |
+| @capacitor/push-notifications | — | Registro de token FCM y recepción de notificaciones push nativas |
 | Leaflet.js | — | Mapas interactivos con paradas y polilínea |
 
 ---
@@ -168,11 +170,14 @@ gestion_flota/
 │   │   │   └── index.js          # Rutas + guard de autenticación
 │   │   ├── stores/
 │   │   │   ├── auth.js           # Sesión: login con RUT, tokens en Preferences
-│   │   │   └── rutas.js          # Estado de rutas + offline optimista
+│   │   │   ├── rutas.js          # Estado de rutas + offline optimista
+│   │   │   ├── solicitudes.js    # Estado de solicitudes + WebSocket + tipos permitidos por plan
+│   │   │   └── mantenciones.js   # Mantenciones del vehículo asignado (urgente, bloqueado)
 │   │   ├── services/
 │   │   │   ├── api.js            # Cliente HTTP con auto-refresh JWT
 │   │   │   ├── db.js             # SQLite (nativo) / Map en memoria (navegador)
-│   │   │   └── sync.js           # Sincronización offline → online
+│   │   │   ├── sync.js           # Sincronización offline → online
+│   │   │   └── websocket.js      # Singleton WebSocket con backoff exponencial (WS conductor)
 │   │   ├── views/
 │   │   │   ├── Login.vue         # Login con RUT chileno + validación módulo 11
 │   │   │   ├── Rutas/
@@ -180,12 +185,14 @@ gestion_flota/
 │   │   │   │   └── DetalleRuta.vue  # Mapa Leaflet + acción iniciar/finalizar
 │   │   │   ├── Solicitudes/
 │   │   │   │   └── ListaSolicitudes.vue
+│   │   │   ├── Mantenciones/
+│   │   │   │   └── MiMantencion.vue  # Mantenciones pendientes/en proceso del vehículo
 │   │   │   ├── Ajustes/
 │   │   │   │   └── Ajustes.vue
 │   │   │   └── Onboarding/
 │   │   │       └── SubirDocumentos.vue
 │   │   ├── components/
-│   │   │   ├── BottomNav.vue     # Barra de navegación inferior (3 tabs)
+│   │   │   ├── BottomNav.vue     # Barra de navegación inferior (4 tabs: Rutas/Solicitudes/Mantención/Ajustes)
 │   │   │   └── RutaCard.vue      # Tarjeta de ruta (variantes: activa/pendiente/finalizada)
 │   │   ├── utils/
 │   │   │   └── formato.js        # formatCLP, formatDuracion, formatFechaRuta, iniciales
@@ -197,8 +204,9 @@ gestion_flota/
 └── gestion_backend/              # Backend Django
     ├── manage.py
     ├── requirements.txt
+    ├── serviceAccountKey.json    # Credenciales Firebase Admin SDK (no commitear — local/server)
     ├── g_de_flota/               # App principal
-    │   ├── models.py             # Modelos ORM
+    │   ├── models.py             # Modelos ORM (incluye Vehiculo.en_mantencion)
     │   ├── views.py              # Endpoints principales (incluye login con vehiculo_asignado)
     │   ├── views_gastos.py       # Endpoints de finanzas
     │   ├── views_reportes.py     # Endpoints de reportes
@@ -206,8 +214,11 @@ gestion_flota/
     │   ├── views_planes.py       # Endpoints de planes
     │   ├── views_config.py       # Perfil y configuración
     │   ├── views_rutas.py        # Endpoints de rutas y trabajos (panel web)
-    │   ├── views_conductor.py    # Endpoints exclusivos app móvil conductores
-    │   ├── views_solicitudes.py  # Endpoints panel web: gestión solicitudes de conductores
+    │   ├── views_conductor.py    # Endpoints exclusivos app móvil conductores (rutas, solicitudes, mantenciones, push-token)
+    │   ├── views_solicitudes.py  # Endpoints panel web: gestión solicitudes + push FCM + WS conductor
+    │   ├── firebase_push.py      # Envío push FCM (inicialización lazy, falla silenciosamente si no configurado)
+    │   ├── consumers.py          # WS consumers: NotificacionesConsumer, SolicitudesConsumer, ConductorConsumer
+    │   ├── routing.py            # Rutas WebSocket (ws/solicitudes/, ws/conductor/)
     │   ├── ruta_calculator.py    # Motor de cálculo (OSRM, peajes, costos)
     │   ├── audit.py              # registrar_log() + _parse_navegador/so() + _diff_campos()
     │   ├── serializers.py        # Serializadores DRF (LogAuditoria incluye navegador/so)
@@ -217,8 +228,8 @@ gestion_flota/
     │       └── commands/
     │           └── seed_peajes.py  # Carga inicial de peajes de Chile
     └── gestion_backend/
-        ├── settings.py           # load_dotenv desde raíz del monorepo
-        ├── urls.py               # Router principal (82+ endpoints)
+        ├── settings.py           # load_dotenv desde raíz del monorepo; FIREBASE_CREDENTIALS
+        ├── urls.py               # Router principal (84+ endpoints)
         ├── asgi.py               # Configuración ASGI / Channels
         └── wsgi.py
 ```
@@ -454,6 +465,22 @@ Además de los límites cuantitativos, cada plan define:
 
 Todos los usuarios de una empresa comparten los mismos módulos y permisos — ambos determinados exclusivamente por el plan. No existe configuración de permisos por usuario individual.
 
+#### Permisos de solicitudes de conductores (por tipo)
+
+Desde la migración `0042`, cada tipo de solicitud de conductor tiene su propio permiso granular:
+
+| Código de permiso | Tipo de solicitud |
+|---|---|
+| `solicitudes.mantencion` | Solicitar mantención del vehículo |
+| `solicitudes.combustible` | Solicitar combustible |
+| `solicitudes.incidencia` | Reportar incidencia o accidente |
+| `solicitudes.documento` | Subir o renovar documentos |
+
+Por defecto todos los planes tienen los cuatro tipos habilitados. El Superadmin puede quitar permisos específicos de un plan desde el panel de administración Django. Cuando un tipo no está en el plan:
+- El backend rechaza el POST con `403` y `codigo: "plan_sin_permiso"`.
+- La app móvil muestra el tipo en gris con candado y el texto "No disponible en tu plan".
+- Se muestra un aviso informativo indicando que el administrador de la empresa puede gestionar el plan.
+
 ### Asignación de plan
 
 El Superadmin asigna o cambia el plan de una empresa directamente desde los formularios de creación y edición de empresa. Cada cambio queda registrado en `CambioPlan` con el motivo, el usuario responsable y los planes anterior y posterior.
@@ -657,14 +684,15 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | `Login.vue` | `/login` | Autenticación por RUT chileno + contraseña. Validación módulo 11 en el cliente. |
 | `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. |
 | `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Costos / Detalles). Mapa Leaflet (carga dinámica desde CDN). Lista combinada de paradas + peajes. Bottom-sheet modales con validación para iniciar y finalizar ruta. Toast de confirmación. |
-| `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. |
+| `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
+| `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. |
 | `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. Botón "Cerrar sesión" con bottom-sheet de confirmación. |
 
 #### Componentes
 
 | Componente | Descripción |
 |---|---|
-| `BottomNav.vue` | Barra inferior fija con 3 tabs: Rutas, Solicitudes, Ajustes |
+| `BottomNav.vue` | Barra inferior fija con 4 tabs: Rutas · Solicitudes · Mantención · Ajustes. Badge rojo `!` en Mantención si hay mantención urgente o vehículo bloqueado; badge azul con cantidad si hay mantenciones activas sin urgencia. |
 | `RutaCard.vue` | Tarjeta de ruta con tres variantes: `activa` (borde verde, pulso), `pendiente` (indigo), `finalizada` (gris compacta) |
 | `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino/peaje). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
 
@@ -675,6 +703,7 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | API HTTP | `services/api.js` | `apiFetch()` con auto-refresh JWT en 401. Tokens en `@capacitor/preferences`. |
 | Base de datos local | `services/db.js` | SQLite en dispositivo nativo; Map en memoria en navegador. Guarda rutas, solicitudes y acciones pendientes. |
 | Sincronización | `services/sync.js` | Detecta reconexión (`@capacitor/network`) y envía acciones encoladas durante el modo offline. |
+| WebSocket | `services/websocket.js` | Singleton que mantiene conexión persistente a `ws/conductor/`. Reconexión automática con backoff exponencial (máx. 30 s). Notifica al store cuando cambia el estado de una solicitud. |
 
 #### Autenticación con RUT chileno
 
@@ -682,6 +711,20 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 2. El frontend normaliza a `12345678-9` (igual que `normalizar_rut()` del backend).
 3. Valida dígito verificador con algoritmo módulo 11 antes de llamar a la API.
 4. Si `primer_login = true`, redirige a la pantalla de onboarding; si no, a la lista de rutas.
+
+#### Actualizaciones en tiempo real (WebSocket)
+
+La app conecta automáticamente a `ws://<backend>/ws/conductor/?token=<JWT>` al cargar las solicitudes. El backend (Django Channels, `ConductorConsumer`) envía eventos cuando un administrador aprueba o rechaza una solicitud:
+
+```json
+{ "type": "solicitud_actualizada", "solicitud_id": 42, "estado": "aprobado", "respuesta": "..." }
+```
+
+El store actualiza la solicitud en el array reactivo de forma inmediata, lo que provoca:
+- La tarjeta de la solicitud se resalta brevemente (borde índigo).
+- Un toast informa al conductor: *"✓ Tu solicitud fue aprobada"* o *"✗ Tu solicitud fue rechazada"*.
+
+La conexión se reconecta automáticamente si se cae (backoff 1 s → 2 s → 4 s → … máx. 30 s). Al cerrar sesión, el WebSocket se desconecta limpiamente.
 
 #### Modo offline
 
@@ -697,14 +740,34 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, peajes, vehículo con `km_actuales` y `consumo_l_100km` |
 | `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo |
 | `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin`, costos reales, notas y actualiza `km_actuales` |
-| `GET` | `/api/conductor/solicitudes/` | Lista las solicitudes del conductor autenticado, ordenadas por fecha descendente |
-| `POST` | `/api/conductor/solicitudes/` | Crea una solicitud. Acepta `multipart/form-data` si hay foto, JSON si no. Campos: `tipo`, `titulo`, `descripcion`, `prioridad`, `foto` (opcional) |
+| `GET` | `/api/conductor/solicitudes/` | Lista las solicitudes del conductor + campo `tipos_permitidos` (lista de tipos habilitados por el plan de la empresa) |
+| `POST` | `/api/conductor/solicitudes/` | Crea una solicitud. Acepta `multipart/form-data` si hay foto, JSON si no. Campos: `tipo`, `titulo`, `descripcion`, `prioridad`, `foto` (opcional). Retorna `403` con `codigo: "plan_sin_permiso"` si el tipo no está habilitado por el plan |
+| `GET` | `/api/conductor/mantenciones/` | Mantenciones pendientes/en proceso del vehículo asignado. Incluye `dias_restantes`, `urgente` (bool), `vehiculo_en_mantencion` |
+| `POST` | `/api/conductor/push-token/` | Registra o actualiza el token FCM del dispositivo. Body: `{ "token": "..." }` |
 | `GET` | `/api/notificaciones/` | Notificaciones del conductor paginadas (20/página); filtros `leida`, `tipo` |
 | `POST` | `/api/notificaciones/leer/` | Marca notificaciones como leídas (`ids: []` o `todas: true`) |
 
 **Backend:** `views_conductor.py`  
 **Puerto de desarrollo:** `http://localhost:5174`  
 **CORS configurado:** `http://localhost:5174`, `capacitor://localhost`, `http://localhost`
+
+#### Push Notifications (Firebase Cloud Messaging)
+
+El backend usa `firebase-admin` para enviar notificaciones push a dispositivos iOS y Android.
+
+**Configuración (una sola vez):**
+1. Crear proyecto en [Firebase Console](https://console.firebase.google.com)
+2. Agregar app Android/iOS → descargar `google-services.json` / `GoogleService-Info.plist` al proyecto Capacitor
+3. Configuración del proyecto → Cuentas de servicio → Generar nueva clave privada → guardar como `gestion_backend/serviceAccountKey.json`
+4. Instalar dependencia: `pip install firebase-admin`
+
+**Flujo:**
+1. Al abrir la app, `App.vue` solicita permiso de notificaciones y obtiene el token FCM.
+2. El token se registra en `POST /api/conductor/push-token/` y se guarda en `usuario.notif_prefs['push_token']`.
+3. Cuando un admin aprueba o rechaza una solicitud, `firebase_push.enviar_push()` envía la notificación al token del conductor.
+4. Si la app está en primer plano → toast visual en pantalla. Si está en segundo plano/cerrada → notificación del sistema.
+
+**Módulo:** `g_de_flota/firebase_push.py` — falla silenciosamente si Firebase no está configurado.
 
 ---
 

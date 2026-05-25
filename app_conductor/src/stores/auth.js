@@ -70,6 +70,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** Cerrar sesión y redirigir al login */
   async function logout() {
+    // Desconectar WebSocket antes de limpiar la sesión
+    try {
+      const { wsService } = await import('../services/websocket.js')
+      wsService.disconnect()
+    } catch {}
+
     await limpiarSesion()
     usuario.value = null
     // Importación dinámica para evitar dependencia circular con router

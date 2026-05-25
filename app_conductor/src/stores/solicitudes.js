@@ -3,18 +3,41 @@
  *
  * Sincroniza con GET/POST /api/conductor/solicitudes/
  * Con soporte offline: encola la acción y agrega optimistamente al estado local.
+ *
+ * tipos_permitidos: lista de tipos habilitados por el plan de la empresa.
+ * Si el plan no incluye un tipo, el conductor no puede crear solicitudes de ese tipo.
+ *
+ * Tiempo real: conecta al WebSocket `ws/conductor/` para recibir cambios de
+ * estado (aprobado / rechazado) sin necesidad de hacer polling.
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { apiFetch } from '@/services/api.js'
+import { wsService } from '@/services/websocket.js'
 import { encolarAccion, getSolicitudes, saveSolicitudes, saveSolicitudLocal } from '@/services/db.js'
+
+// Todos los tipos posibles — se usan como fallback cuando no hay respuesta del servidor
+const TODOS_LOS_TIPOS = ['mantencion', 'combustible', 'incidencia', 'documento']
 
 export const useSolicitudesStore = defineStore('solicitudes', () => {
   // ── Estado ─────────────────────────────────────────────────────────────────
-  const solicitudes = ref([])
-  const cargando    = ref(false)
-  const error       = ref(null)
-  const enviando    = ref(false)
+  const solicitudes     = ref([])
+  const cargando        = ref(false)
+  const error           = ref(null)
+  const enviando        = ref(false)
+  /**
+   * Tipos de solicitud habilitados por el plan de la empresa.
+   * null = aún no cargados (mostrar todos mientras tanto).
+   * []   = sin permiso para ningún tipo.
+   */
+  const tiposPermitidos = ref(null)
+
+  /**
+   * Indica si llegó un cambio de estado via WebSocket que aún no ha visto
+   * el usuario (para animar la tarjeta actualizada).
+   * Contiene el id de la solicitud recién actualizada, o null.
+   */
+  const actualizadaId = ref(null)
 
   // ── Getters ────────────────────────────────────────────────────────────────
   const pendientes = computed(() =>
@@ -25,6 +48,47 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
     solicitudes.value.filter(s => s.estado === 'aprobado' || s.estado === 'rechazado'),
   )
 
+  /** Devuelve true si el tipo dado está habilitado por el plan */
+  function esTipoPermitido(tipo) {
+    if (tiposPermitidos.value === null) return true   // cargando → no bloquear
+    return tiposPermitidos.value.includes(tipo)
+  }
+
+  // ── WebSocket — tiempo real ────────────────────────────────────────────────
+
+  let _wsUnsub = null   // función para cancelar el handler registrado
+
+  function _iniciarWs() {
+    // Evitar registrar múltiples handlers si se llama varias veces
+    if (_wsUnsub) _wsUnsub()
+
+    _wsUnsub = wsService.on('solicitud_actualizada', (data) => {
+      const idx = solicitudes.value.findIndex(s => s.id === data.solicitud_id)
+      if (idx !== -1) {
+        // Actualización inmutable en el array reactivo
+        solicitudes.value[idx] = {
+          ...solicitudes.value[idx],
+          estado:    data.estado,
+          respuesta: data.respuesta ?? solicitudes.value[idx].respuesta,
+        }
+        // Marcar para animar la tarjeta
+        actualizadaId.value = data.solicitud_id
+        setTimeout(() => { actualizadaId.value = null }, 3000)
+      }
+    })
+
+    // Conectar WebSocket (no hace nada si ya está activo)
+    wsService.connect()
+  }
+
+  function detenerWs() {
+    if (_wsUnsub) {
+      _wsUnsub()
+      _wsUnsub = null
+    }
+    wsService.disconnect()
+  }
+
   // ── Acciones ───────────────────────────────────────────────────────────────
 
   async function cargarSolicitudes() {
@@ -33,14 +97,24 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
     try {
       const data = await apiFetch('/api/conductor/solicitudes/')
       solicitudes.value = data.solicitudes || []
+      // El backend incluye tipos_permitidos en la respuesta GET
+      if (Array.isArray(data.tipos_permitidos)) {
+        tiposPermitidos.value = data.tipos_permitidos
+      } else {
+        tiposPermitidos.value = TODOS_LOS_TIPOS
+      }
       await saveSolicitudes(solicitudes.value)
     } catch (e) {
       // Offline o error de red → cargar desde SQLite
       const guardadas = await getSolicitudes()
       if (guardadas.length) solicitudes.value = guardadas
+      // Sin respuesta del servidor → permitir todos (no bloquear offline)
+      if (tiposPermitidos.value === null) tiposPermitidos.value = TODOS_LOS_TIPOS
       error.value = e?.message || 'Sin conexión'
     } finally {
       cargando.value = false
+      // Iniciar WebSocket después de la primera carga (con o sin error)
+      _iniciarWs()
     }
   }
 
@@ -114,9 +188,13 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
     cargando,
     error,
     enviando,
+    tiposPermitidos,
+    actualizadaId,
     pendientes,
     resueltas,
+    esTipoPermitido,
     cargarSolicitudes,
     crearSolicitud,
+    detenerWs,
   }
 })

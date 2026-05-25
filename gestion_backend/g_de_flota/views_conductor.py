@@ -8,9 +8,42 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
-from .models import Ruta, Rol, SolicitudConductor, Asignacion
+from .models import Ruta, Rol, SolicitudConductor, Asignacion, Mantencion
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
+
+
+# ─────────────────────────────────────────
+# Helpers de plan / permisos
+# ─────────────────────────────────────────
+
+# Todos los tipos posibles de solicitud
+TODOS_LOS_TIPOS = ['mantencion', 'combustible', 'incidencia', 'documento']
+
+
+def _tipos_permitidos_por_plan(empresa) -> list[str]:
+    """
+    Devuelve la lista de tipos de solicitud habilitados según el plan de la empresa.
+
+    - Si la empresa no tiene plan asignado → se permiten todos los tipos
+      (comportamiento conservador para no romper empresas sin plan).
+    - Si el plan no tiene ningún permiso de solicitudes → se bloquean todos
+      (significa que el admin quitó explícitamente los permisos).
+    """
+    if not empresa or not empresa.plan_id:
+        return TODOS_LOS_TIPOS
+
+    codigos_plan = set(
+        empresa.plan.permisos.values_list('codigo', flat=True)
+    )
+
+    permitidos = [
+        tipo for tipo in TODOS_LOS_TIPOS
+        if f'solicitudes.{tipo}' in codigos_plan
+    ]
+
+    # Si el plan no tiene NINGÚN permiso de solicitudes, devolver lista vacía
+    return permitidos
 
 
 def _serializar_ruta(ruta, detallado=False):
@@ -252,6 +285,9 @@ def conductor_solicitudes(request):
     if request.user.rol != Rol.CONDUCTOR:
         return Response({'error': 'Solo conductores pueden acceder a este endpoint.'}, status=403)
 
+    empresa          = request.user.empresa
+    tipos_permitidos = _tipos_permitidos_por_plan(empresa)
+
     # ── GET ──────────────────────────────────────────────────────────────────
     if request.method == 'GET':
         qs = (
@@ -259,7 +295,10 @@ def conductor_solicitudes(request):
             .filter(conductor=request.user)
             .order_by('-created_at')
         )
-        return Response({'solicitudes': [_serializar_solicitud(s) for s in qs]})
+        return Response({
+            'solicitudes':     [_serializar_solicitud(s) for s in qs],
+            'tipos_permitidos': tipos_permitidos,
+        })
 
     # ── POST ─────────────────────────────────────────────────────────────────
     tipo        = request.data.get('tipo', '').strip()
@@ -269,12 +308,25 @@ def conductor_solicitudes(request):
     foto        = request.FILES.get('foto')
 
     # Validaciones básicas
-    tipos_validos      = ['mantencion', 'combustible', 'incidencia', 'documento']
     prioridades_validas = ['baja', 'media', 'alta']
 
     errores = {}
-    if tipo not in tipos_validos:
-        errores['tipo'] = f'Tipo inválido. Opciones: {", ".join(tipos_validos)}'
+    if tipo not in TODOS_LOS_TIPOS:
+        errores['tipo'] = f'Tipo inválido. Opciones: {", ".join(TODOS_LOS_TIPOS)}'
+    elif tipo not in tipos_permitidos:
+        # El tipo es válido pero el plan de la empresa no lo incluye
+        nombre_plan = empresa.plan.get_nombre_display() if empresa and empresa.plan else 'actual'
+        return Response(
+            {
+                'error': (
+                    f'Tu plan "{nombre_plan}" no incluye solicitudes de tipo '
+                    f'"{tipo}". Contacta al administrador de tu empresa para más información.'
+                ),
+                'codigo': 'plan_sin_permiso',
+                'tipo': tipo,
+            },
+            status=403,
+        )
     if not titulo or len(titulo) < 5:
         errores['titulo'] = 'El título debe tener al menos 5 caracteres.'
     if tipo != 'documento' and len(descripcion) < 10:
@@ -341,3 +393,99 @@ def conductor_solicitudes(request):
             pass  # WS no disponible — no interrumpir el flujo
 
     return Response({'ok': True, 'solicitud': _serializar_solicitud(solicitud)}, status=201)
+
+
+# ─────────────────────────────────────────
+# GET /api/conductor/mantenciones/
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def conductor_mantenciones(request):
+    """
+    Devuelve las mantenciones del vehículo actualmente asignado al conductor.
+    Solo estados pendiente y en_proceso (las que le incumben directamente).
+    Incluye también si el vehículo está bloqueado por mantención activa.
+    """
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    asignacion = Asignacion.objects.filter(
+        conductor=request.user, activo=True
+    ).select_related('vehiculo').first()
+
+    if not asignacion:
+        return Response({
+            'mantenciones':        [],
+            'vehiculo_en_mantencion': False,
+            'vehiculo':            None,
+        })
+
+    vehiculo = asignacion.vehiculo
+
+    qs = Mantencion.objects.filter(
+        vehiculo=vehiculo,
+        estado__in=['pendiente', 'en_proceso'],
+    ).order_by('fecha_programada', '-id')
+
+    from django.utils import timezone
+    hoy = timezone.now().date()
+
+    def _dias(fecha_programada):
+        if not fecha_programada:
+            return None
+        delta = (fecha_programada - hoy).days
+        return delta
+
+    mantenciones = [
+        {
+            'id':               m.id,
+            'tipo':             m.tipo_mantencion,
+            'descripcion':      m.descripcion,
+            'estado':           m.estado,
+            'fecha_programada': m.fecha_programada.isoformat() if m.fecha_programada else None,
+            'taller':           m.taller_proveedor,
+            'presupuesto':      float(m.presupuesto) if m.presupuesto else None,
+            'dias_restantes':   _dias(m.fecha_programada),
+            'urgente':          (_dias(m.fecha_programada) is not None and _dias(m.fecha_programada) <= 3),
+        }
+        for m in qs
+    ]
+
+    return Response({
+        'mantenciones':           mantenciones,
+        'vehiculo_en_mantencion': vehiculo.en_mantencion,
+        'vehiculo': {
+            'id':      vehiculo.id,
+            'patente': vehiculo.patente,
+            'marca':   vehiculo.marca,
+            'modelo':  vehiculo.modelo,
+        },
+    })
+
+
+# ─────────────────────────────────────────
+# POST /api/conductor/push-token/
+# ─────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def conductor_push_token(request):
+    """
+    Registra o actualiza el token FCM del dispositivo del conductor.
+    La app llama a este endpoint al iniciar sesión y cuando FCM renueva el token.
+    Body: { "token": "<fcm_token>" }
+    """
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    token = request.data.get('token', '').strip()
+    if not token:
+        return Response({'error': 'Token requerido.'}, status=400)
+
+    prefs = request.user.notif_prefs or {}
+    prefs['push_token'] = token
+    request.user.notif_prefs = prefs
+    request.user.save(update_fields=['notif_prefs'])
+
+    return Response({'ok': True})

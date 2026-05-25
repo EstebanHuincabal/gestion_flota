@@ -1,10 +1,24 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useSolicitudesStore } from '@/stores/solicitudes.js'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import BottomNav from '@/components/BottomNav.vue'
 
 const store = useSolicitudesStore()
+
+// ── Notificación tiempo real ──────────────────────────────────────────────────
+// Cuando llega un evento WebSocket, mostramos un toast informativo
+watch(() => store.actualizadaId, (id) => {
+  if (!id) return
+  const sol = store.solicitudes.find(s => s.id === id)
+  if (!sol) return
+  const msgs = {
+    aprobado:  '✓ Tu solicitud fue aprobada',
+    rechazado: '✗ Tu solicitud fue rechazada',
+  }
+  mostrarToast(msgs[sol.estado] || 'Tu solicitud fue actualizada',
+    sol.estado === 'aprobado' ? 'ok' : 'error')
+})
 
 // ── Pull to refresh ───────────────────────────────────────────────────────────
 let startY       = 0
@@ -59,6 +73,11 @@ const TIPOS = [
 
 const tipoActual = computed(() => TIPOS.find(t => t.value === tipoSeleccionado.value))
 
+// Comprueba si un tipo está habilitado por el plan de la empresa
+function tipoHabilitado(tipo) {
+  return store.esTipoPermitido(tipo.value)
+}
+
 function abrirNuevaSolicitud() {
   paso.value             = 1
   tipoSeleccionado.value = null
@@ -72,6 +91,9 @@ function abrirNuevaSolicitud() {
 function cerrarNueva() { modalNueva.value = false }
 
 async function elegirTipo(tipo) {
+  // Ignorar si el tipo no está permitido por el plan
+  if (!tipoHabilitado(tipo)) return
+
   tipoSeleccionado.value = tipo.value
 
   // «Documento» → lanza cámara directamente y cierra el modal
@@ -306,8 +328,10 @@ onMounted(async () => {
               v-for="sol in store.pendientes"
               :key="sol.id"
               @click="verDetalle(sol)"
-              class="w-full text-left bg-white rounded-2xl p-4 border border-gray-200
-                     hover:border-gray-300 hover:shadow-sm transition active:bg-gray-50 min-h-[44px]"
+              class="w-full text-left rounded-2xl p-4 border transition active:bg-gray-50 min-h-[44px]"
+              :class="store.actualizadaId === sol.id
+                ? 'bg-indigo-50 border-indigo-300 shadow-sm ring-2 ring-indigo-200'
+                : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'"
             >
               <div class="flex items-start gap-3">
                 <!-- Ícono tipo -->
@@ -457,17 +481,48 @@ onMounted(async () => {
                 v-for="tipo in TIPOS"
                 :key="tipo.value"
                 @click="elegirTipo(tipo)"
-                class="rounded-2xl p-4 text-left border border-transparent transition active:scale-95 min-h-[44px]"
-                :style="`background: ${tipo.colorSuave}`"
+                class="rounded-2xl p-4 text-left border transition relative min-h-[44px]"
+                :class="tipoHabilitado(tipo)
+                  ? 'border-transparent active:scale-95'
+                  : 'border-transparent opacity-50 cursor-not-allowed'"
+                :style="`background: ${tipoHabilitado(tipo) ? tipo.colorSuave : '#F3F4F6'}`"
+                :disabled="!tipoHabilitado(tipo)"
               >
+                <!-- Candado para tipos bloqueados por el plan -->
+                <span
+                  v-if="!tipoHabilitado(tipo)"
+                  class="absolute top-2 right-2 w-5 h-5 rounded-full bg-gray-300 flex items-center justify-center"
+                >
+                  <i class="ti ti-lock text-[10px] text-gray-500"/>
+                </span>
+
                 <i
                   class="ti text-2xl block mb-2"
                   :class="tipo.icono"
-                  :style="`color: ${tipo.color}`"
+                  :style="`color: ${tipoHabilitado(tipo) ? tipo.color : '#9CA3AF'}`"
                 />
-                <p class="text-sm font-bold" :style="`color: ${tipo.color}`">{{ tipo.label }}</p>
-                <p class="text-xs mt-0.5 text-gray-500">{{ tipo.descripcion }}</p>
+                <p
+                  class="text-sm font-bold"
+                  :style="`color: ${tipoHabilitado(tipo) ? tipo.color : '#9CA3AF'}`"
+                >
+                  {{ tipo.label }}
+                </p>
+                <p class="text-xs mt-0.5" :class="tipoHabilitado(tipo) ? 'text-gray-500' : 'text-gray-400'">
+                  {{ tipoHabilitado(tipo) ? tipo.descripcion : 'No disponible en tu plan' }}
+                </p>
               </button>
+            </div>
+
+            <!-- Aviso si hay tipos bloqueados -->
+            <div
+              v-if="store.tiposPermitidos !== null && store.tiposPermitidos.length < TIPOS.length"
+              class="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-4"
+            >
+              <i class="ti ti-info-circle text-amber-500 text-base shrink-0 mt-0.5"/>
+              <p class="text-xs text-amber-700 leading-snug">
+                Algunos tipos de solicitud no están disponibles en el plan de tu empresa.
+                Contacta al administrador para más información.
+              </p>
             </div>
 
             <button
