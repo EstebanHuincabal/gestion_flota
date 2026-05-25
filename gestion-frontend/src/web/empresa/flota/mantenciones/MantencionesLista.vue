@@ -57,13 +57,19 @@ const filtroVehiculo = ref('')
 const confirmState   = ref({ visible: false, id: null })
 const modalRealizar  = ref({ visible: false, item: null })
 const formRealizar   = ref({ fecha_realizada: '', kilometraje_realizado: '', costo: 0 })
+const fotoComprobante = ref(null)          // File seleccionado para subir
+const fotoPreview     = ref(null)          // Data URL para vista previa
 const erroresModal   = ref({})
 const guardandoR     = ref(false)
 
 const mantencionesFiltradas = computed(() =>
   mantenciones.value
-    .filter(m => m.estado !== 'realizada' && m.estado !== 'cancelada')
-    .filter(m => !filtroEstado.value   || m.estado === filtroEstado.value)
+    .filter(m => m.estado === 'pendiente' || m.estado === 'en_proceso' || (m.estado === 'realizada' && !m.confirmado_conductor))
+    .filter(m => {
+      if (!filtroEstado.value) return true
+      if (filtroEstado.value === 'realizada_pendiente') return m.estado === 'realizada' && !m.confirmado_conductor
+      return m.estado === filtroEstado.value
+    })
     .filter(m => !filtroVehiculo.value || String(m.vehiculo_id) === filtroVehiculo.value)
 )
 
@@ -93,13 +99,24 @@ const marcarEnProceso = async (m) => {
 
 const abrirCompletar = (m) => {
   if (!tienePermiso('mantenciones.editar')) { toast.agregar('Sin permisos', 'error'); return }
-  erroresModal.value = {}
-  formRealizar.value = {
+  erroresModal.value  = {}
+  fotoComprobante.value = null
+  fotoPreview.value     = null
+  formRealizar.value  = {
     fecha_realizada:       new Date().toISOString().split('T')[0],
     kilometraje_realizado: m.kilometraje_programado || '',
     costo:                 m.presupuesto || 0,
   }
   modalRealizar.value = { visible: true, item: m }
+}
+
+const onFotoSeleccionada = (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  fotoComprobante.value = file
+  const reader = new FileReader()
+  reader.onload = (ev) => { fotoPreview.value = ev.target.result }
+  reader.readAsDataURL(file)
 }
 
 const confirmarCompletar = async () => {
@@ -127,12 +144,27 @@ const confirmarCompletar = async () => {
 
   guardandoR.value = true
   const { id } = modalRealizar.value.item
-  const payload = { estado: 'realizada', ...formRealizar.value }
-  if (!payload.kilometraje_realizado) payload.kilometraje_realizado = null
-  const res = await apiFetchEmpresa(`/api/empresa/mantenciones/${id}/`, { method: 'PUT', body: payload })
+
+  // Usar FormData para poder adjuntar la foto
+  const fd = new FormData()
+  fd.append('estado', 'realizada')
+  fd.append('fecha_realizada', formRealizar.value.fecha_realizada)
+  fd.append('costo', formRealizar.value.costo)
+  if (formRealizar.value.kilometraje_realizado)
+    fd.append('kilometraje_realizado', formRealizar.value.kilometraje_realizado)
+  if (fotoComprobante.value)
+    fd.append('foto_comprobante', fotoComprobante.value)
+
+  // apiFetch detecta FormData y NO serializa a JSON ni pone Content-Type manualmente
+  const res = await apiFetchEmpresa(`/api/empresa/mantenciones/${id}/`, {
+    method: 'PUT',
+    body:   fd,
+  })
   guardandoR.value = false
   if (res.ok) {
     modalRealizar.value.visible = false
+    fotoComprobante.value = null
+    fotoPreview.value     = null
     toast.agregar('Mantención completada', 'success')
     await cargar()
   } else {
@@ -282,6 +314,7 @@ onMounted(async () => {
           <option value="">Todos los estados</option>
           <option value="pendiente">Pendiente</option>
           <option value="en_proceso">En Proceso</option>
+          <option value="realizada_pendiente">Realizada — sin confirmar conductor</option>
         </select>
         <select v-model="filtroVehiculo" class="input select-sm">
           <option value="">Todos los vehículos</option>
@@ -298,8 +331,9 @@ onMounted(async () => {
               <th>Tipo / Descripción</th>
               <th>Programada para</th>
               <th>Taller / Proveedor</th>
-              <th>Presupuesto</th>
+              <th>Presupuesto / Costo</th>
               <th>Estado</th>
+              <th>Completado por</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -319,9 +353,45 @@ onMounted(async () => {
                 <span v-if="!m.fecha_programada && !m.kilometraje_programado" class="text-muted">—</span>
               </td>
               <td class="text-muted">{{ m.taller_proveedor || '—' }}</td>
-              <td class="text-muted">{{ m.presupuesto ? '$' + Number(m.presupuesto).toLocaleString('es-CL') : '—' }}</td>
+              <!-- Presupuesto estimado + costo final si ya fue realizada -->
+              <td>
+                <span v-if="m.costo && Number(m.costo) > 0" class="font-medium text-gray-800">
+                  ${{ Number(m.costo).toLocaleString('es-CL') }}
+                  <span class="text-xs text-muted block font-normal">Costo final</span>
+                </span>
+                <span v-else-if="m.presupuesto" class="text-muted">
+                  ${{ Number(m.presupuesto).toLocaleString('es-CL') }}
+                  <span class="text-xs text-muted block">Presupuesto</span>
+                </span>
+                <span v-else class="text-muted">—</span>
+              </td>
               <td>
                 <span :class="['badge', badgeClase(m.estado)]">{{ m.estado_display }}</span>
+              </td>
+              <!-- Quién completó la mantención -->
+              <td>
+                <template v-if="m.confirmado_conductor && m.estado === 'realizada'">
+                  <span class="badge badge-success" title="El conductor marcó esta mantención como realizada">
+                    ✓ Conductor
+                  </span>
+                  <span v-if="m.fecha_confirmacion" class="text-xs text-muted block mt-0.5">
+                    {{ formatFecha(m.fecha_confirmacion.split('T')[0]) }}
+                  </span>
+                  <!-- Link a foto comprobante -->
+                  <a
+                    v-if="m.foto_comprobante_url"
+                    :href="m.foto_comprobante_url"
+                    target="_blank"
+                    class="link-foto"
+                    title="Ver foto comprobante"
+                  >📷 Ver comprobante</a>
+                </template>
+                <span
+                  v-else-if="m.estado === 'realizada'"
+                  class="badge badge-info"
+                  title="Realizada por admin (override)"
+                >Admin</span>
+                <span v-else class="text-muted">—</span>
               </td>
               <td>
                 <div class="acciones">
@@ -382,7 +452,7 @@ onMounted(async () => {
                 <input v-model="formRealizar.kilometraje_realizado" type="number" class="input" min="0" placeholder="Opcional"/>
               </div>
               <div class="form-group">
-                <label class="label">Costo Real ($) <span class="req">*</span></label>
+                <label class="label">Costo Final ($) <span class="req">*</span></label>
                 <input v-model="formRealizar.costo" type="number" class="input" min="1"/>
                 <p v-if="erroresModal.costo" class="modal-error">{{ erroresModal.costo }}</p>
                 <p v-else-if="modalRealizar.item?.presupuesto" class="modal-hint">
@@ -390,9 +460,34 @@ onMounted(async () => {
                 </p>
               </div>
             </div>
+
+            <!-- Foto comprobante -->
+            <div class="form-group">
+              <label class="label">Foto comprobante <span class="label-opt">(opcional)</span></label>
+              <p class="modal-hint mb-1">Adjunta una foto del recibo o del trabajo realizado para que el conductor pueda verla.</p>
+
+              <!-- Preview -->
+              <div v-if="fotoPreview" class="foto-preview-wrap">
+                <img :src="fotoPreview" alt="Vista previa" class="foto-preview"/>
+                <button type="button" class="foto-quitar" @click="fotoComprobante = null; fotoPreview = null">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
+
+              <!-- Input file -->
+              <label v-else class="foto-drop">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="foto-icon">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                <span class="foto-texto">Subir foto</span>
+                <input type="file" accept="image/*" @change="onFotoSeleccionada" class="hidden-file"/>
+              </label>
+            </div>
+
             <div class="modal-actions mt-6">
               <button type="button" class="btn-secondary" @click="modalRealizar.visible = false">Cancelar</button>
               <button type="submit" class="btn-success" :disabled="guardandoR">
+                <span v-if="guardandoR" class="spinner-inline"/>
                 {{ guardandoR ? 'Guardando...' : 'Marcar Completada' }}
               </button>
             </div>
@@ -511,4 +606,22 @@ onMounted(async () => {
 .btn-success { padding: 0.6rem 1.25rem; background: linear-gradient(135deg,#10B981,#059669); color: #fff; font-size: 0.875rem; font-weight: 600; border: none; border-radius: 10px; cursor: pointer; transition: opacity 0.15s; }
 .btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
 .modal-hint { font-size: 0.75rem; color: #6B7280; margin: 0.25rem 0 0; }
+.mb-1 { margin-bottom: 0.25rem; }
+
+/* Foto comprobante */
+.label-opt { font-weight: 400; color: #9CA3AF; font-size: 0.8125rem; }
+.foto-drop { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; border: 2px dashed #D1D5DB; border-radius: 10px; padding: 1.25rem; cursor: pointer; transition: border-color 0.15s; }
+.foto-drop:hover { border-color: #4F46E5; }
+.foto-icon { width: 32px; height: 32px; color: #9CA3AF; }
+.foto-texto { font-size: 0.8125rem; color: #6B7280; }
+.hidden-file { display: none; }
+.foto-preview-wrap { position: relative; display: inline-block; }
+.foto-preview { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; border: 1px solid #E5E7EB; }
+.foto-quitar { position: absolute; top: 0.5rem; right: 0.5rem; width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.55); border: none; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.foto-quitar svg { width: 14px; height: 14px; }
+.spinner-inline { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
+.link-foto { display: inline-block; font-size: 0.7rem; color: #4F46E5; text-decoration: none; margin-top: 0.25rem; }
+.link-foto:hover { text-decoration: underline; }
+.mt-0\.5 { margin-top: 0.125rem; }
+.badge-info { background: #DBEAFE; color: #1E40AF; }
 </style>

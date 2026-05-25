@@ -6,6 +6,32 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from channels.db import database_sync_to_async
 
 
+# ── Helpers de verificación compartidos ──────────────────────────────────────
+
+@database_sync_to_async
+def _verificar_empresa_db(user_id, empresa_id):
+    """True si el usuario pertenece a la empresa dada o es SUPERADMIN."""
+    from .models import Usuario, Rol
+    try:
+        u = Usuario.objects.get(pk=user_id)
+        if u.rol == Rol.SUPERADMIN:
+            return True
+        return str(u.empresa_id) == str(empresa_id)
+    except Usuario.DoesNotExist:
+        return False
+
+
+@database_sync_to_async
+def _verificar_conductor_db(user_id):
+    """True si el usuario tiene rol CONDUCTOR."""
+    from .models import Usuario, Rol
+    try:
+        u = Usuario.objects.get(pk=user_id)
+        return u.rol == Rol.CONDUCTOR
+    except Usuario.DoesNotExist:
+        return False
+
+
 class NotificacionesConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
@@ -63,7 +89,7 @@ class SolicitudesConsumer(AsyncWebsocketConsumer):
 
         # Verificar que el usuario pertenece a la empresa del canal
         empresa_id = self.scope['url_route']['kwargs'].get('empresa_id')
-        ok         = await self._verificar_empresa(user_id, empresa_id)
+        ok         = await _verificar_empresa_db(user_id, empresa_id)
         if not ok:
             await self.close(code=4003)
             return
@@ -109,7 +135,7 @@ class ConductorConsumer(AsyncWebsocketConsumer):
             return
 
         # Verificar que el usuario tiene rol CONDUCTOR
-        ok = await self._verificar_conductor(user_id)
+        ok = await _verificar_conductor_db(user_id)
         if not ok:
             await self.close(code=4003)
             return
@@ -131,23 +157,3 @@ class ConductorConsumer(AsyncWebsocketConsumer):
             'respuesta':    event.get('respuesta', ''),
         }))
 
-    @database_sync_to_async
-    def _verificar_conductor(self, user_id):
-        from .models import Usuario, Rol
-        try:
-            u = Usuario.objects.get(pk=user_id)
-            return u.rol == Rol.CONDUCTOR
-        except Usuario.DoesNotExist:
-            return False
-
-    @database_sync_to_async
-    def _verificar_empresa(self, user_id, empresa_id):
-        """Devuelve True si el usuario pertenece a la empresa o es SUPERADMIN."""
-        from .models import Usuario, Rol
-        try:
-            u = Usuario.objects.get(pk=user_id)
-            if u.rol == Rol.SUPERADMIN:
-                return True
-            return str(u.empresa_id) == str(empresa_id)
-        except Usuario.DoesNotExist:
-            return False

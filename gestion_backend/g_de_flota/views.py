@@ -25,6 +25,7 @@ from .models import (
 from .views_planes import verificar_limite_plan, verificar_modulo_plan
 from .audit import registrar_log, _diff_campos, _snap
 from .notificaciones import notificar, notificar_admins_empresa
+from .firebase_push import enviar_push
 from .serializers import (
     EmpresaSerializer,
     PermisoSerializer,
@@ -1088,6 +1089,18 @@ def usuario_toggle_block(request, pk):
     registrar_log('ACTIVIDAD', accion_log, request,
                   detalle={'usuario_email': usuario.email, 'usuario_id': pk})
 
+    # Notificar al usuario afectado
+    if usuario.is_blocked:
+        notificar(usuario, TipoNotificacion.SEGURIDAD,
+                  "Tu cuenta ha sido bloqueada",
+                  "Un administrador bloqueó tu cuenta. Contacta al soporte si crees que es un error.",
+                  url_accion='')
+    else:
+        notificar(usuario, TipoNotificacion.SEGURIDAD,
+                  "Tu cuenta ha sido desbloqueada",
+                  "Un administrador desbloqueó tu cuenta. Ya puedes iniciar sesión.",
+                  url_accion='')
+
     estado = "bloqueado" if usuario.is_blocked else "desbloqueado"
     return Response({"message": f"Usuario {estado} exitosamente.", "is_blocked": usuario.is_blocked})
 
@@ -1648,6 +1661,19 @@ def mantenciones_lista_crear(request):
             'tipo':     tipo_mantencion,
             'fecha':    str(fecha_programada or ''),
         })
+        # Notificar al conductor asignado al vehículo
+        _asig_c = Asignacion.objects.filter(vehiculo=vehiculo, activo=True).select_related('conductor').first()
+        if _asig_c:
+            _cond = _asig_c.conductor
+            _fecha_txt = f" el {fecha_programada}" if fecha_programada else ""
+            notificar(_cond, TipoNotificacion.ACTIVIDAD,
+                      "Nueva mantención programada",
+                      f"Se programó '{tipo_mantencion}' para tu vehículo {vehiculo.patente}{_fecha_txt}.",
+                      url_accion='/mantencion')
+            enviar_push(_cond,
+                        titulo='Nueva mantención programada 🔧',
+                        cuerpo=f"{tipo_mantencion} — {vehiculo.patente}{_fecha_txt}",
+                        data={'tipo': 'mantencion_programada', 'mantencion_id': str(mantencion.id)})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1704,17 +1730,49 @@ def mantenciones_detalle(request, pk):
 
         _campos_mant = ['descripcion', 'fecha_programada', 'kilometraje_programado', 'costo', 'notas']
         _antes_mant  = _snap(mantencion, _campos_mant)
-        serializer   = MantencionSerializer(mantencion, data=data, partial=True)
+
+        # Foto comprobante: llega en request.FILES si es multipart
+        foto = request.FILES.get('foto_comprobante')
+
+        serializer   = MantencionSerializer(mantencion, data=data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
+            # Guardar foto por separado (el serializer no incluye ImageField en escritura)
+            if foto:
+                mantencion.foto_comprobante = foto
+                mantencion.save(update_fields=['foto_comprobante'])
             mantencion.refresh_from_db()
+
+            # Sincronizar flag en_mantencion del vehículo según el nuevo estado
             if nuevo_estado != estado_actual:
+                vehiculo = mantencion.vehiculo
+                if nuevo_estado == 'en_proceso':
+                    vehiculo.en_mantencion = True
+                    vehiculo.save(update_fields=['en_mantencion'])
+                elif nuevo_estado in ('realizada', 'cancelada'):
+                    vehiculo.en_mantencion = False
+                    vehiculo.save(update_fields=['en_mantencion'])
+
                 registrar_log('ACTIVIDAD', 'mantencion_estado_cambiado', request, detalle={
                     'vehiculo':      mantencion.vehiculo.patente,
                     'tipo':          mantencion.tipo_mantencion,
                     'estado_previo': estado_actual,
                     'estado_nuevo':  nuevo_estado,
                 })
+                # Notificar al conductor asignado al vehículo
+                _asig_e = Asignacion.objects.filter(vehiculo=vehiculo, activo=True).select_related('conductor').first()
+                if _asig_e:
+                    _labels = {
+                        'en_proceso': ('Mantención en proceso', 'La mantención fue iniciada.'),
+                        'realizada':  ('Mantención completada', 'La mantención fue marcada como realizada.'),
+                        'cancelada':  ('Mantención cancelada',  'La mantención fue cancelada por un administrador.'),
+                    }
+                    if nuevo_estado in _labels:
+                        _tit, _msg_base = _labels[nuevo_estado]
+                        _msg = f"'{mantencion.tipo_mantencion}' — {vehiculo.patente}. {_msg_base}"
+                        notificar(_asig_e.conductor, TipoNotificacion.ACTIVIDAD, _tit, _msg, url_accion='/mantencion')
+                        enviar_push(_asig_e.conductor, titulo=_tit, cuerpo=_msg,
+                                    data={'tipo': 'mantencion_estado', 'mantencion_id': str(mantencion.id), 'estado': nuevo_estado})
             else:
                 registrar_log('ACTIVIDAD', 'mantencion_editada', request, detalle={
                     'vehiculo': mantencion.vehiculo.patente,
@@ -1727,6 +1785,14 @@ def mantenciones_detalle(request, pk):
     if request.method == 'DELETE':
         if not tiene_permiso(request.user, 'mantenciones.eliminar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        # Notificar al conductor antes de eliminar
+        _asig_d = Asignacion.objects.filter(vehiculo=mantencion.vehiculo, activo=True).select_related('conductor').first()
+        if _asig_d:
+            _msg_del = f"La mantención '{mantencion.tipo_mantencion}' de {mantencion.vehiculo.patente} fue eliminada por un administrador."
+            notificar(_asig_d.conductor, TipoNotificacion.ACTIVIDAD, "Mantención eliminada", _msg_del, url_accion='/mantencion')
+            enviar_push(_asig_d.conductor, titulo='Mantención eliminada',
+                        cuerpo=f"{mantencion.tipo_mantencion} — {mantencion.vehiculo.patente}",
+                        data={'tipo': 'mantencion_eliminada'})
         registrar_log('ACTIVIDAD', 'mantencion_eliminada', request, detalle={
             'vehiculo': mantencion.vehiculo.patente,
             'tipo':     mantencion.tipo_mantencion,

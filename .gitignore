@@ -7,7 +7,13 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-db.sqlite3
+
+# Base de datos
+*.sqlite3
+*.db
+
+# Migraciones de Django (se regeneran con makemigrations)
+*/migrations/0*.py
 
 # Entornos virtuales
 venv/

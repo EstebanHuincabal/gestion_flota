@@ -8,9 +8,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
-from .models import Ruta, Rol, SolicitudConductor, Asignacion, Mantencion
+from .models import Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
+from .firebase_push import enviar_push
 
 
 # ─────────────────────────────────────────
@@ -203,6 +204,14 @@ def conductor_iniciar_ruta(request, ruta_id):
     registrar_log('ACTIVIDAD', 'ruta_iniciada', request, detalle={
         'ruta_id': ruta.id, 'ruta_nombre': ruta.nombre, 'km_inicio': ruta.km_inicio
     })
+    # Notificar a los admins de la empresa
+    _empresa_ri = request.user.empresa
+    if _empresa_ri:
+        _nombre_c = request.user.nombre or request.user.email
+        notificar_admins_empresa(_empresa_ri, 'actividad',
+                                 f"Ruta iniciada por {_nombre_c}",
+                                 f"{_nombre_c} inició la ruta '{ruta.nombre}'.",
+                                 url_accion='/empresa/rutas')
 
     return Response({'ok': True, 'ruta': _serializar_ruta(ruta)})
 
@@ -252,6 +261,15 @@ def conductor_finalizar_ruta(request, ruta_id):
         'ruta_id': ruta.id, 'ruta_nombre': ruta.nombre,
         'km_fin': ruta.km_fin, 'costo_total_real': ruta.costo_total_real,
     })
+    # Notificar a los admins de la empresa
+    _empresa_rf = request.user.empresa
+    if _empresa_rf:
+        _nombre_cf = request.user.nombre or request.user.email
+        _km_txt    = f" — {ruta.km_reales} km recorridos" if ruta.km_reales else ""
+        notificar_admins_empresa(_empresa_rf, 'actividad',
+                                 f"Ruta finalizada por {_nombre_cf}",
+                                 f"{_nombre_cf} finalizó la ruta '{ruta.nombre}'{_km_txt}.",
+                                 url_accion='/empresa/rutas')
 
     return Response({'ok': True, 'ruta': _serializar_ruta(ruta)})
 
@@ -396,6 +414,45 @@ def conductor_solicitudes(request):
 
 
 # ─────────────────────────────────────────
+# Helpers de mantenciones
+# ─────────────────────────────────────────
+
+def _serializar_mantencion(m, request=None):
+    """Serializa una Mantencion al dict que consume la app móvil."""
+    from django.utils import timezone
+    hoy = timezone.now().date()
+
+    dias_restantes = None
+    if m.fecha_programada:
+        dias_restantes = (m.fecha_programada - hoy).days
+
+    # URL absoluta de la foto (si existe)
+    foto_url = None
+    if m.foto_comprobante:
+        if request:
+            foto_url = request.build_absolute_uri(m.foto_comprobante.url)
+        else:
+            foto_url = m.foto_comprobante.url
+
+    return {
+        'id':                    m.id,
+        'tipo':                  m.tipo_mantencion,
+        'descripcion':           m.descripcion,
+        'estado':                m.estado,
+        'fecha_programada':      m.fecha_programada.isoformat() if m.fecha_programada and not isinstance(m.fecha_programada, str) else (m.fecha_programada or None),
+        'fecha_realizada':       m.fecha_realizada.isoformat()  if m.fecha_realizada  and not isinstance(m.fecha_realizada,  str) else (m.fecha_realizada  or None),
+        'taller':                m.taller_proveedor,
+        'presupuesto':           float(m.presupuesto) if m.presupuesto else None,
+        'costo_real':            float(m.costo)       if m.costo       else None,
+        'dias_restantes':        dias_restantes,
+        'urgente':               (dias_restantes is not None and dias_restantes <= 3 and m.estado != 'realizada'),
+        'foto_comprobante_url':  foto_url,
+        'confirmado_conductor':  m.confirmado_conductor,
+        'fecha_confirmacion':    m.fecha_confirmacion.isoformat() if m.fecha_confirmacion else None,
+    }
+
+
+# ─────────────────────────────────────────
 # GET /api/conductor/mantenciones/
 # ─────────────────────────────────────────
 
@@ -403,8 +460,9 @@ def conductor_solicitudes(request):
 @permission_classes([IsAuthenticated])
 def conductor_mantenciones(request):
     """
-    Devuelve las mantenciones del vehículo actualmente asignado al conductor.
-    Solo estados pendiente y en_proceso (las que le incumben directamente).
+    Devuelve las mantenciones del vehículo asignado al conductor:
+      - pendiente / en_proceso: mantenciones activas
+      - realizada sin confirmar: el conductor todavía debe dar su conformidad
     Incluye también si el vehículo está bloqueado por mantención activa.
     """
     if request.user.rol != Rol.CONDUCTOR:
@@ -416,41 +474,20 @@ def conductor_mantenciones(request):
 
     if not asignacion:
         return Response({
-            'mantenciones':        [],
+            'mantenciones':           [],
             'vehiculo_en_mantencion': False,
-            'vehiculo':            None,
+            'vehiculo':               None,
         })
 
     vehiculo = asignacion.vehiculo
 
+    # Solo mantenciones activas que el conductor puede ver / actuar
     qs = Mantencion.objects.filter(
         vehiculo=vehiculo,
         estado__in=['pendiente', 'en_proceso'],
     ).order_by('fecha_programada', '-id')
 
-    from django.utils import timezone
-    hoy = timezone.now().date()
-
-    def _dias(fecha_programada):
-        if not fecha_programada:
-            return None
-        delta = (fecha_programada - hoy).days
-        return delta
-
-    mantenciones = [
-        {
-            'id':               m.id,
-            'tipo':             m.tipo_mantencion,
-            'descripcion':      m.descripcion,
-            'estado':           m.estado,
-            'fecha_programada': m.fecha_programada.isoformat() if m.fecha_programada else None,
-            'taller':           m.taller_proveedor,
-            'presupuesto':      float(m.presupuesto) if m.presupuesto else None,
-            'dias_restantes':   _dias(m.fecha_programada),
-            'urgente':          (_dias(m.fecha_programada) is not None and _dias(m.fecha_programada) <= 3),
-        }
-        for m in qs
-    ]
+    mantenciones = [_serializar_mantencion(m, request) for m in qs]
 
     return Response({
         'mantenciones':           mantenciones,
@@ -462,6 +499,263 @@ def conductor_mantenciones(request):
             'modelo':  vehiculo.modelo,
         },
     })
+
+
+# ─────────────────────────────────────────
+# GET /api/conductor/mantenciones/historial/
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def conductor_historial_mantenciones(request):
+    """
+    Devuelve las mantenciones realizadas del vehículo asignado al conductor,
+    ordenadas de más reciente a más antigua.
+    Query params:
+      page      — número de página (default 1)
+      page_size — registros por página (default 20, máx 100)
+    """
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    asignacion = Asignacion.objects.filter(
+        conductor=request.user, activo=True
+    ).select_related('vehiculo').first()
+
+    if not asignacion:
+        return Response({'historial': [], 'total': 0, 'vehiculo': None})
+
+    vehiculo = asignacion.vehiculo
+
+    try:
+        page      = max(1, int(request.query_params.get('page', 1)))
+        page_size = min(100, max(1, int(request.query_params.get('page_size', 20))))
+    except (ValueError, TypeError):
+        page, page_size = 1, 20
+
+    qs = Mantencion.objects.filter(
+        vehiculo=vehiculo,
+        estado='realizada',
+    ).order_by('-fecha_realizada', '-id')
+
+    total  = qs.count()
+    offset = (page - 1) * page_size
+    items  = [_serializar_mantencion(m, request) for m in qs[offset:offset + page_size]]
+
+    return Response({
+        'historial': items,
+        'total':     total,
+        'page':      page,
+        'page_size': page_size,
+        'has_more':  offset + page_size < total,
+        'vehiculo': {
+            'id':      vehiculo.id,
+            'patente': vehiculo.patente,
+            'marca':   vehiculo.marca,
+            'modelo':  vehiculo.modelo,
+        },
+    })
+
+
+# ─────────────────────────────────────────
+# GET /api/conductor/mantenciones/:id/
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def conductor_mantencion_detalle(request, mantencion_id):
+    """
+    Detalle completo de una mantención del vehículo asignado al conductor.
+    """
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    asignacion = Asignacion.objects.filter(
+        conductor=request.user, activo=True
+    ).select_related('vehiculo').first()
+
+    if not asignacion:
+        return Response({'error': 'Sin vehículo asignado.'}, status=404)
+
+    try:
+        mantencion = Mantencion.objects.get(pk=mantencion_id, vehiculo=asignacion.vehiculo)
+    except Mantencion.DoesNotExist:
+        return Response({'error': 'Mantención no encontrada.'}, status=404)
+
+    return Response(_serializar_mantencion(mantencion, request))
+
+
+# ─────────────────────────────────────────
+# POST /api/conductor/mantenciones/:id/iniciar/
+# ─────────────────────────────────────────
+
+def _get_mantencion_conductor(request, mantencion_id):
+    """
+    Helper: verifica rol CONDUCTOR, asignación activa y que la mantención
+    pertenece al vehículo asignado. Devuelve (mantencion, asignacion) o lanza Response.
+    """
+    if request.user.rol != Rol.CONDUCTOR:
+        return None, None, Response({'error': 'Solo conductores.'}, status=403)
+
+    asignacion = Asignacion.objects.filter(
+        conductor=request.user, activo=True
+    ).select_related('vehiculo').first()
+
+    if not asignacion:
+        return None, None, Response({'error': 'Sin vehículo asignado.'}, status=404)
+
+    try:
+        mantencion = Mantencion.objects.select_related('vehiculo__flota__empresa').get(
+            pk=mantencion_id, vehiculo=asignacion.vehiculo
+        )
+    except Mantencion.DoesNotExist:
+        return None, None, Response({'error': 'Mantención no encontrada.'}, status=404)
+
+    return mantencion, asignacion, None
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def conductor_iniciar_mantencion(request, mantencion_id):
+    """
+    El conductor inicia una mantención: pendiente → en_proceso.
+    Bloquea el vehículo (en_mantencion=True).
+    """
+    mantencion, asignacion, err = _get_mantencion_conductor(request, mantencion_id)
+    if err:
+        return err
+
+    if mantencion.estado != 'pendiente':
+        return Response({'error': 'Solo puedes iniciar mantenciones en estado pendiente.'}, status=400)
+
+    mantencion.estado = 'en_proceso'
+    mantencion.save(update_fields=['estado'])
+
+    vehiculo = asignacion.vehiculo
+    vehiculo.en_mantencion = True
+    vehiculo.save(update_fields=['en_mantencion'])
+
+    registrar_log('ACTIVIDAD', 'mantencion_iniciada_conductor', request, detalle={
+        'mantencion_id': mantencion.id,
+        'tipo':          mantencion.tipo_mantencion,
+        'vehiculo':      vehiculo.patente,
+    })
+    # Notificar a los admins de la empresa
+    _empresa_mi = vehiculo.flota.empresa if vehiculo.flota else None
+    if _empresa_mi:
+        _nombre_mi = request.user.nombre or request.user.email
+        notificar_admins_empresa(_empresa_mi, 'actividad',
+                                 f"Mantención iniciada por {_nombre_mi}",
+                                 f"{_nombre_mi} inició '{mantencion.tipo_mantencion}' del vehículo {vehiculo.patente}.",
+                                 url_accion='/empresa/mantenciones')
+
+    return Response({'ok': True, 'mantencion': _serializar_mantencion(mantencion, request)})
+
+
+# ─────────────────────────────────────────
+# POST /api/conductor/mantenciones/:id/completar/
+# ─────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def conductor_completar_mantencion(request, mantencion_id):
+    """
+    El conductor marca la mantención como realizada.
+    Body (multipart/form-data):
+      costo_final       (Decimal, obligatorio)
+      foto_comprobante  (File,    opcional)
+      fecha_realizada   (Date,    default=hoy)
+      notas             (str,     opcional)
+
+    Efectos:
+      - Mantencion: estado→realizada, costo, foto, fecha_realizada, confirmado_conductor=True
+      - Vehiculo: en_mantencion=False
+      - Crea GastoOperativo de categoría 'mantencion' automáticamente
+    """
+    mantencion, asignacion, err = _get_mantencion_conductor(request, mantencion_id)
+    if err:
+        return err
+
+    if mantencion.estado not in ('pendiente', 'en_proceso'):
+        return Response({'error': 'Solo puedes completar mantenciones pendientes o en proceso.'}, status=400)
+
+    # Validar costo
+    costo_raw = request.data.get('costo_final') or request.data.get('costo', '')
+    try:
+        costo = float(str(costo_raw).strip())
+        if costo <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return Response({'error': 'El costo final debe ser mayor a 0.'}, status=400)
+
+    # Fecha realizada — convertir siempre a objeto date para que
+    # _serializar_mantencion pueda llamar .isoformat() sin errores
+    from datetime import date as _date
+    _fecha_str = request.data.get('fecha_realizada') or timezone.now().date().isoformat()
+    if str(_fecha_str) > timezone.now().date().isoformat():
+        return Response({'error': 'La fecha realizada no puede ser una fecha futura.'}, status=400)
+    try:
+        fecha_realizada = _date.fromisoformat(str(_fecha_str))
+    except (ValueError, TypeError):
+        fecha_realizada = timezone.now().date()
+
+    notas = request.data.get('notas', '').strip()
+    foto  = request.FILES.get('foto_comprobante')
+
+    # ── Actualizar la mantención ──────────────────────────────────────────────
+    mantencion.estado               = 'realizada'
+    mantencion.costo                = costo
+    mantencion.fecha_realizada      = fecha_realizada
+    mantencion.confirmado_conductor = True
+    mantencion.fecha_confirmacion   = timezone.now()
+    if foto:
+        mantencion.foto_comprobante = foto
+    update_fields = ['estado', 'costo', 'fecha_realizada', 'confirmado_conductor', 'fecha_confirmacion']
+    if foto:
+        update_fields.append('foto_comprobante')
+    mantencion.save(update_fields=update_fields)
+
+    # ── Desbloquear el vehículo ───────────────────────────────────────────────
+    vehiculo = asignacion.vehiculo
+    vehiculo.en_mantencion = False
+    vehiculo.save(update_fields=['en_mantencion'])
+
+    # ── Crear GastoOperativo automáticamente ─────────────────────────────────
+    empresa = vehiculo.flota.empresa if vehiculo.flota else None
+    gasto   = None
+    if empresa:
+        gasto = GastoOperativo.objects.create(
+            empresa       = empresa,
+            vehiculo      = vehiculo,
+            conductor     = request.user,
+            categoria     = 'mantencion',
+            descripcion   = f'Mantención: {mantencion.tipo_mantencion} — {vehiculo.patente}',
+            monto         = int(costo),
+            fecha         = fecha_realizada,
+            comprobante   = mantencion.foto_comprobante if mantencion.foto_comprobante else None,
+            registrado_por= request.user,
+        )
+
+    registrar_log('ACTIVIDAD', 'mantencion_completada_conductor', request, detalle={
+        'mantencion_id': mantencion.id,
+        'tipo':          mantencion.tipo_mantencion,
+        'vehiculo':      vehiculo.patente,
+        'costo':         costo,
+        'gasto_id':      gasto.id if gasto else None,
+    })
+    # Notificar a los admins de la empresa
+    if empresa:
+        _nombre_mc = request.user.nombre or request.user.email
+        notificar_admins_empresa(empresa, 'actividad',
+                                 f"Mantención completada por {_nombre_mc}",
+                                 f"{_nombre_mc} completó '{mantencion.tipo_mantencion}' del vehículo {vehiculo.patente}. Costo: ${int(costo):,}.",
+                                 url_accion='/empresa/mantenciones')
+
+    return Response({
+        'ok':         True,
+        'mantencion': _serializar_mantencion(mantencion, request),
+        'gasto_id':   gasto.id if gasto else None,
+    }, status=200)
 
 
 # ─────────────────────────────────────────

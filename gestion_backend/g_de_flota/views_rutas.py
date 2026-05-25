@@ -6,9 +6,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .audit import registrar_log
+from .notificaciones import notificar, notificar_admins_empresa
+from .firebase_push import enviar_push
 from .models import (
     ConfiguracionRuta, Empresa, GastoOperativo, Parada, Peaje,
-    PeajeRuta, Rol, Ruta, Usuario, Vehiculo,
+    PeajeRuta, Rol, Ruta, TipoNotificacion, Usuario, Vehiculo,
 )
 from .ruta_calculator import (
     calcular_costos, calcular_ruta_osrm, calcular_ruta_fallback,
@@ -343,6 +345,17 @@ class RutasListView(APIView):
 
         registrar_log('ACTIVIDAD', 'ruta_creada', request,
                       detalle={'ruta_id': ruta.id, 'nombre': ruta.nombre})
+        # Notificar al conductor asignado
+        if ruta.conductor:
+            _fecha_ruta = f" para el {ruta.fecha_programada}" if ruta.fecha_programada else ""
+            notificar(ruta.conductor, TipoNotificacion.ACTIVIDAD,
+                      "Nueva ruta asignada",
+                      f"Se te asignó la ruta '{ruta.nombre}'{_fecha_ruta}.",
+                      url_accion='/rutas')
+            enviar_push(ruta.conductor,
+                        titulo='Nueva ruta asignada 🚛',
+                        cuerpo=f"{ruta.nombre}{_fecha_ruta}",
+                        data={'tipo': 'ruta_asignada', 'ruta_id': str(ruta.id)})
 
         resp = _ruta_dict(ruta, detalle=True)
         if aviso:
@@ -459,6 +472,16 @@ class RutaIniciarView(APIView):
 
         registrar_log('ACTIVIDAD', 'ruta_iniciada', request,
                       detalle={'ruta_id': ruta.id, 'km_inicio': ruta.km_inicio})
+        # Notificar al conductor asignado
+        if ruta.conductor:
+            notificar(ruta.conductor, TipoNotificacion.ACTIVIDAD,
+                      "Tu ruta ha comenzado",
+                      f"La ruta '{ruta.nombre}' fue marcada como iniciada.",
+                      url_accion='/rutas')
+            enviar_push(ruta.conductor,
+                        titulo='Ruta iniciada 🚛',
+                        cuerpo=f"La ruta '{ruta.nombre}' ha comenzado.",
+                        data={'tipo': 'ruta_iniciada', 'ruta_id': str(ruta.id)})
         return Response(_ruta_dict(ruta, detalle=True))
 
 
@@ -519,6 +542,17 @@ class RutaFinalizarView(APIView):
             'km_reales': ruta.km_reales,
             'costo_total_real': ruta.costo_total_real,
         })
+        # Notificar al conductor asignado
+        if ruta.conductor:
+            _km_txt = f" — {ruta.km_reales} km recorridos" if ruta.km_reales else ""
+            notificar(ruta.conductor, TipoNotificacion.ACTIVIDAD,
+                      "Ruta finalizada",
+                      f"La ruta '{ruta.nombre}' fue marcada como finalizada{_km_txt}.",
+                      url_accion='/rutas')
+            enviar_push(ruta.conductor,
+                        titulo='Ruta finalizada ✓',
+                        cuerpo=f"'{ruta.nombre}' completada{_km_txt}.",
+                        data={'tipo': 'ruta_finalizada', 'ruta_id': str(ruta.id)})
         return Response(_ruta_dict(ruta, detalle=True))
 
 
@@ -545,6 +579,17 @@ class RutaCancelarView(APIView):
 
         registrar_log('ACTIVIDAD', 'ruta_cancelada', request,
                       detalle={'ruta_id': ruta.id, 'motivo': motivo})
+        # Notificar al conductor asignado
+        if ruta.conductor:
+            _motivo_txt = f" Motivo: {motivo}" if motivo else ""
+            notificar(ruta.conductor, TipoNotificacion.ACTIVIDAD,
+                      "Ruta cancelada",
+                      f"La ruta '{ruta.nombre}' fue cancelada.{_motivo_txt}",
+                      url_accion='/rutas')
+            enviar_push(ruta.conductor,
+                        titulo='Ruta cancelada',
+                        cuerpo=f"'{ruta.nombre}' fue cancelada.{_motivo_txt}",
+                        data={'tipo': 'ruta_cancelada', 'ruta_id': str(ruta.id)})
         return Response(_ruta_dict(ruta))
 
 

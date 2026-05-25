@@ -685,7 +685,7 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. |
 | `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Costos / Detalles). Mapa Leaflet (carga dinámica desde CDN). Lista combinada de paradas + peajes. Bottom-sheet modales con validación para iniciar y finalizar ruta. Toast de confirmación. |
 | `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
-| `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. |
+| `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. Al tocar una tarjeta se abre `ModalDetalleMantencion` con la acción correspondiente al estado. Toast de feedback tras iniciar o completar. |
 | `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. Botón "Cerrar sesión" con bottom-sheet de confirmación. |
 
 #### Componentes
@@ -695,6 +695,8 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | `BottomNav.vue` | Barra inferior fija con 4 tabs: Rutas · Solicitudes · Mantención · Ajustes. Badge rojo `!` en Mantención si hay mantención urgente o vehículo bloqueado; badge azul con cantidad si hay mantenciones activas sin urgencia. |
 | `RutaCard.vue` | Tarjeta de ruta con tres variantes: `activa` (borde verde, pulso), `pendiente` (indigo), `finalizada` (gris compacta) |
 | `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino/peaje). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
+| `ModalDetalleMantencion.vue` | Bottom-sheet con el detalle completo de una mantención y las acciones disponibles por estado: **pendiente** → mini-confirm + botón azul "Iniciar mantención"; **en_proceso** → botón verde "Marcar como realizada" que abre `ModalCompletarMantencion`; **realizada** → solo lectura (precio, foto, quién la completó). |
+| `ModalCompletarMantencion.vue` | Bottom-sheet formulario para registrar la finalización de una mantención: costo final en CLP (con formato automático), fecha de realización, foto del recibo (captura de cámara con `capture="environment"`, opcional) y notas. Envía `multipart/FormData` al endpoint `/completar/`. |
 
 #### Servicios
 
@@ -742,10 +744,40 @@ La conexión se reconecta automáticamente si se cae (backoff 1 s → 2 s → 4 
 | `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin`, costos reales, notas y actualiza `km_actuales` |
 | `GET` | `/api/conductor/solicitudes/` | Lista las solicitudes del conductor + campo `tipos_permitidos` (lista de tipos habilitados por el plan de la empresa) |
 | `POST` | `/api/conductor/solicitudes/` | Crea una solicitud. Acepta `multipart/form-data` si hay foto, JSON si no. Campos: `tipo`, `titulo`, `descripcion`, `prioridad`, `foto` (opcional). Retorna `403` con `codigo: "plan_sin_permiso"` si el tipo no está habilitado por el plan |
-| `GET` | `/api/conductor/mantenciones/` | Mantenciones pendientes/en proceso del vehículo asignado. Incluye `dias_restantes`, `urgente` (bool), `vehiculo_en_mantencion` |
+| `GET` | `/api/conductor/mantenciones/` | Mantenciones `pendiente` y `en_proceso` del vehículo asignado. Incluye `dias_restantes`, `urgente` (bool), `vehiculo_en_mantencion`. Las `realizadas` ya no se muestran aquí. |
+| `GET` | `/api/conductor/mantenciones/:id/` | Detalle completo de una mantención (incluye `foto_comprobante_url` con URL absoluta). |
+| `POST` | `/api/conductor/mantenciones/:id/iniciar/` | Transición `pendiente → en_proceso`. Setea `vehiculo.en_mantencion = True`. |
+| `POST` | `/api/conductor/mantenciones/:id/completar/` | Transición `en_proceso → realizada`. Acepta `multipart/form-data`: `costo_final` (requerido), `foto_comprobante` (opcional), `fecha_realizada` (opcional), `notas` (opcional). Crea automáticamente un `GastoOperativo` en finanzas (categoría `mantencion`). Setea `vehiculo.en_mantencion = False`. |
 | `POST` | `/api/conductor/push-token/` | Registra o actualiza el token FCM del dispositivo. Body: `{ "token": "..." }` |
 | `GET` | `/api/notificaciones/` | Notificaciones del conductor paginadas (20/página); filtros `leida`, `tipo` |
 | `POST` | `/api/notificaciones/leer/` | Marca notificaciones como leídas (`ids: []` o `todas: true`) |
+
+#### Flujo de mantenciones (conductor → finanzas)
+
+```
+Admin (panel web)
+  └─ Crea mantención en estado "pendiente"
+         │
+Conductor (app)
+  └─ Ve la mantención en MiMantencion.vue
+  └─ Toca → ModalDetalleMantencion → botón "Iniciar mantención"
+         │  POST /api/conductor/mantenciones/:id/iniciar/
+         │  vehiculo.en_mantencion = True
+         │
+  └─ Hace el servicio en el taller
+         │
+  └─ Toca → ModalDetalleMantencion → botón "Marcar como realizada"
+         │  → abre ModalCompletarMantencion (costo + foto + fecha + notas)
+         │  POST /api/conductor/mantenciones/:id/completar/ (multipart/form-data)
+         │  mantencion.estado = "realizada"
+         │  mantencion.confirmado_conductor = True
+         │  mantencion.fecha_confirmacion = now()
+         │  vehiculo.en_mantencion = False
+         └─ Crea GastoOperativo (categoria="mantencion", monto=costo_final)
+                                  └─ aparece en módulo de Finanzas del panel web
+```
+
+El admin puede anular o cambiar el estado manualmente desde el panel web en cualquier momento; los botones de acción del panel **no se eliminaron** (override administrativo). Los campos `Mantencion.confirmado_conductor` (Bool) y `Mantencion.fecha_confirmacion` (DateTime) registran si fue el conductor quien completó el ciclo.
 
 **Backend:** `views_conductor.py`  
 **Puerto de desarrollo:** `http://localhost:5174`  

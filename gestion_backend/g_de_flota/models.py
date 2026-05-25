@@ -434,6 +434,23 @@ class Mantencion(models.Model):
     estado                 = models.CharField(max_length=50, choices=EstadoMantencion.choices, default=EstadoMantencion.PENDIENTE)
     costo                  = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
+    # ── Comprobante y confirmación del conductor ───────────────────────────────
+    foto_comprobante       = models.ImageField(
+        upload_to='mantenciones/comprobantes/',
+        null=True, blank=True,
+        verbose_name='Foto comprobante',
+        help_text='Foto del recibo o trabajo realizado, subida al completar la mantención.',
+    )
+    confirmado_conductor   = models.BooleanField(
+        default=False,
+        verbose_name='Confirmado por conductor',
+        help_text='True cuando el conductor acepta el servicio y el precio final.',
+    )
+    fecha_confirmacion     = models.DateTimeField(
+        null=True, blank=True,
+        verbose_name='Fecha de confirmación',
+    )
+
 
 class TipoLog(models.TextChoices):
     SEGURIDAD = 'SEGURIDAD', 'Seguridad'

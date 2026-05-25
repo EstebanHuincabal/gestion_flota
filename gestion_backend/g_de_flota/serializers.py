@@ -366,13 +366,16 @@ class ConductorListSerializer(serializers.ModelSerializer):
         return None
 
 class MantencionSerializer(serializers.ModelSerializer):
-    vehiculo_id          = serializers.PrimaryKeyRelatedField(
-                               queryset=Vehiculo.objects.all(),
-                               source='vehiculo'
-                           )
-    vehiculo_patente     = serializers.CharField(source='vehiculo.patente', read_only=True)
-    vehiculo_descripcion = serializers.SerializerMethodField()
-    estado_display       = serializers.CharField(source='get_estado_display', read_only=True)
+    vehiculo_id           = serializers.PrimaryKeyRelatedField(
+                                queryset=Vehiculo.objects.all(),
+                                source='vehiculo'
+                            )
+    vehiculo_patente      = serializers.CharField(source='vehiculo.patente', read_only=True)
+    vehiculo_descripcion  = serializers.SerializerMethodField()
+    estado_display        = serializers.CharField(source='get_estado_display', read_only=True)
+    foto_comprobante_url  = serializers.SerializerMethodField()
+    confirmado_conductor  = serializers.BooleanField(read_only=True)
+    fecha_confirmacion    = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Mantencion
@@ -382,10 +385,19 @@ class MantencionSerializer(serializers.ModelSerializer):
             'fecha_programada', 'kilometraje_programado',
             'fecha_realizada', 'kilometraje_realizado',
             'estado', 'estado_display', 'costo',
+            'foto_comprobante_url', 'confirmado_conductor', 'fecha_confirmacion',
         ]
 
     def get_vehiculo_descripcion(self, obj):
         return f"{obj.vehiculo.marca} {obj.vehiculo.modelo}".strip()
+
+    def get_foto_comprobante_url(self, obj):
+        if not obj.foto_comprobante:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.foto_comprobante.url)
+        return obj.foto_comprobante.url
 
 class AsignacionHistorialSerializer(serializers.ModelSerializer):
     vehiculo_patente = serializers.CharField(source='vehiculo.patente', read_only=True)

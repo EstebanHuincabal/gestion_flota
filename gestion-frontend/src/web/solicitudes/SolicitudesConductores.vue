@@ -173,8 +173,10 @@ async function marcarEnRevision(sol) {
 // Aprobar: si es mantencion abre modal de programación; si no, aprueba directo
 function aprobar(sol) {
   if (sol.tipo === 'mantencion') {
-    programar.value  = { fecha: '', taller: '', presupuesto: '', suspender: false }
+    programar.value      = { fecha: '', taller: '', presupuesto: '', suspender: false }
+    errorAccion.value    = ''
     modalProgramar.value = sol
+    modalDetalle.value   = null   // cerrar modal detalle si estaba abierto
     return
   }
   _ejecutarAprobacion(sol, {})
@@ -574,6 +576,77 @@ watch(filtroBuscar, () => {
       </div>
     </Teleport>
 
+    <!-- ── Modal Programar Mantención ──────────────────────────────────────── -->
+    <Teleport to="body">
+      <div v-if="modalProgramar" class="overlay" @click.self="modalProgramar = null">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h2>🔧 Aprobar mantención</h2>
+            <button class="modal-close" @click="modalProgramar = null">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="rechazo-info">
+              <strong>{{ modalProgramar.titulo }}</strong>
+              <span v-if="modalProgramar.conductor_nombre" style="color:#6B7280">
+                — {{ modalProgramar.conductor_nombre }}
+              </span>
+            </p>
+
+            <div class="form-group">
+              <label class="form-label">
+                Fecha programada
+                <span class="opt-label">(opcional)</span>
+              </label>
+              <input v-model="programar.fecha" type="date" class="form-input" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                Taller / Mecánico
+                <span class="opt-label">(opcional)</span>
+              </label>
+              <input
+                v-model="programar.taller"
+                type="text"
+                class="form-input"
+                placeholder="Ej: Taller Mecánico Rodríguez"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                Presupuesto estimado
+                <span class="opt-label">(opcional)</span>
+              </label>
+              <input
+                v-model="programar.presupuesto"
+                type="number"
+                min="0"
+                step="1"
+                class="form-input"
+                placeholder="0"
+              />
+            </div>
+
+            <label class="check-label">
+              <input v-model="programar.suspender" type="checkbox" class="check-input" />
+              <span>Suspender vehículo (marcarlo como en mantención)</span>
+            </label>
+
+            <div v-if="errorAccion" class="error-inline">{{ errorAccion }}</div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary" @click="modalProgramar = null" :disabled="guardando">
+              Cancelar
+            </button>
+            <button class="btn-ok-full" @click="confirmarProgramacion" :disabled="guardando">
+              {{ guardando ? 'Aprobando…' : '✓ Confirmar aprobación' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- ── Toasts ─────────────────────────────────────────────────────────── -->
     <Teleport to="body">
       <div class="toast-stack">
@@ -753,10 +826,23 @@ watch(filtroBuscar, () => {
 .btn-nok-full:hover { background: #B91C1C; }
 .btn-nok-full:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Rechazo */
+/* Rechazo y formularios de modales */
 .rechazo-info { font-size: 0.875rem; color: #374151; margin: 0; }
 .form-label   { font-size: 0.8125rem; font-weight: 600; color: #374151; }
 .required     { color: #DC2626; }
+.opt-label    { font-weight: 400; color: #9CA3AF; }
+.form-group   { display: flex; flex-direction: column; gap: 0.375rem; }
+.form-input {
+  padding: 0.5rem 0.75rem; border: 1px solid #E5E7EB; border-radius: 8px;
+  font-size: 0.875rem; font-family: inherit; outline: none; background: #fff;
+  transition: border-color 0.15s; color: #374151; width: 100%;
+}
+.form-input:focus { border-color: #6366F1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.check-label {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.875rem; color: #374151; cursor: pointer;
+}
+.check-input { width: 16px; height: 16px; accent-color: #4F46E5; cursor: pointer; }
 .form-textarea {
   width: 100%; padding: 0.625rem 0.75rem; border: 1px solid #E5E7EB; border-radius: 8px;
   font-size: 0.875rem; font-family: inherit; resize: vertical; outline: none;

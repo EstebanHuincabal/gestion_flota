@@ -51,7 +51,11 @@ from g_de_flota.views_rutas import (
 from g_de_flota.views_conductor import (
     conductor_rutas, conductor_detalle_ruta,
     conductor_iniciar_ruta, conductor_finalizar_ruta,
-    conductor_solicitudes, conductor_mantenciones, conductor_push_token,
+    conductor_solicitudes,
+    conductor_mantenciones, conductor_historial_mantenciones,
+    conductor_mantencion_detalle,
+    conductor_iniciar_mantencion, conductor_completar_mantencion,
+    conductor_push_token,
 )
 from g_de_flota.views_solicitudes import (
     SolicitudesListView, SolicitudesConteoView,
@@ -162,8 +166,12 @@ urlpatterns = [
     path('api/conductor/rutas/<int:ruta_id>/finalizar/',      conductor_finalizar_ruta,  name='conductor-finalizar-ruta'),
     path('api/conductor/rutas/<int:ruta_id>/',                conductor_detalle_ruta,    name='conductor-detalle-ruta'),
     path('api/conductor/solicitudes/',                        conductor_solicitudes,     name='conductor-solicitudes'),
-    path('api/conductor/mantenciones/',                       conductor_mantenciones,    name='conductor-mantenciones'),
-    path('api/conductor/push-token/',                         conductor_push_token,      name='conductor-push-token'),
+    path('api/conductor/mantenciones/',                               conductor_mantenciones,            name='conductor-mantenciones'),
+    path('api/conductor/mantenciones/historial/',                     conductor_historial_mantenciones,  name='conductor-mantenciones-historial'),
+    path('api/conductor/mantenciones/<int:mantencion_id>/',           conductor_mantencion_detalle,      name='conductor-mantencion-detalle'),
+    path('api/conductor/mantenciones/<int:mantencion_id>/iniciar/',   conductor_iniciar_mantencion,    name='conductor-mantencion-iniciar'),
+    path('api/conductor/mantenciones/<int:mantencion_id>/completar/', conductor_completar_mantencion,  name='conductor-mantencion-completar'),
+    path('api/conductor/push-token/',                                 conductor_push_token,            name='conductor-push-token'),
 
     # Panel web — gestión de solicitudes de conductores (USUARIO/ADMIN)
     path('api/empresa/solicitudes/',                              SolicitudesListView.as_view(),    name='solicitudes-lista'),

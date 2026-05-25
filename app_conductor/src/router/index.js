@@ -51,6 +51,12 @@ const routes = [
     meta: { requiereAuth: true },
   },
   {
+    path: '/mantencion/historial',
+    name: 'historial-mantencion',
+    component: () => import('@/views/Mantenciones/HistorialMantenciones.vue'),
+    meta: { requiereAuth: true },
+  },
+  {
     path: '/ajustes',
     name: 'ajustes',
     component: () => import('@/views/Ajustes/Ajustes.vue'),
