@@ -117,29 +117,24 @@ onMounted(() => cargar(true))
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"
   >
-    <!-- Header con botón volver -->
-    <header class="bg-white border-b border-gray-100 px-4 pt-safe pb-3 sticky top-0 z-10">
-      <div class="flex items-center gap-3">
-        <button
-          class="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 text-gray-600 active:opacity-70"
-          @click="router.back()"
-        >
+    <!-- Header con gradiente y botón volver -->
+    <header class="hist-header">
+      <div class="hist-header-pattern" aria-hidden="true"/>
+      <div class="hist-header-inner">
+        <button class="hist-back-btn" @click="router.back()" aria-label="Volver">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/>
           </svg>
         </button>
-        <div class="min-w-0">
-          <h1 class="text-base font-bold text-gray-800 leading-tight">Historial de mantenciones</h1>
-          <p v-if="vehiculo" class="text-xs text-gray-400 mt-0.5">
+        <div class="flex-1 min-w-0">
+          <p class="hist-subtitle">Vehículo</p>
+          <h1 class="hist-title">Historial de mantenciones</h1>
+          <p v-if="vehiculo" class="hist-vehicle">
             {{ vehiculo.patente }} · {{ vehiculo.marca }} {{ vehiculo.modelo }}
           </p>
         </div>
-        <!-- Contador total -->
-        <span
-          v-if="total > 0"
-          class="ml-auto text-xs font-semibold bg-gray-100 text-gray-500 rounded-full px-2.5 py-1 shrink-0"
-        >
-          {{ total }} registro{{ total !== 1 ? 's' : '' }}
+        <span v-if="total > 0" class="hist-badge">
+          {{ total }}
         </span>
       </div>
     </header>
@@ -156,7 +151,7 @@ onMounted(() => cargar(true))
 
     <!-- Skeleton carga inicial -->
     <div v-if="cargando && !historial.length" class="px-4 mt-4 flex flex-col gap-3">
-      <div v-for="i in 4" :key="i" class="h-24 rounded-2xl bg-gray-200 animate-pulse"/>
+      <div v-for="i in 4" :key="i" class="h-24 hist-skeleton"/>
     </div>
 
     <!-- Estado vacío -->
@@ -164,95 +159,85 @@ onMounted(() => cargar(true))
       v-else-if="!cargando && !historial.length && !error"
       class="flex flex-col items-center gap-3 py-20 text-gray-400 px-6"
     >
-      <svg class="w-14 h-14 text-gray-200" fill="none" stroke="currentColor" stroke-width="1.3" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-      </svg>
-      <p class="text-base font-medium text-gray-500">Sin historial aún</p>
+      <div class="hist-empty-icon">
+        <svg class="w-8 h-8" style="color: var(--color-acento)" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+      </div>
+      <p class="text-base font-semibold text-gray-600">Sin historial aún</p>
       <p class="text-sm text-center leading-relaxed">
         Aquí aparecerán las mantenciones realizadas<br>a tu vehículo.
       </p>
     </div>
 
-    <!-- Lista -->
-    <div v-else class="px-4 mt-4 flex flex-col gap-3 pb-6">
-      <article
-        v-for="m in historial"
+    <!-- ── Timeline ────────────────────────────────────────────────────── -->
+    <div v-else class="timeline-wrap pb-6">
+      <div
+        v-for="(m, idx) in historial"
         :key="m.id"
-        class="bg-white rounded-2xl border border-gray-200 p-4 cursor-pointer active:opacity-75 shadow-sm"
+        class="timeline-item"
         @click="verDetalle(m)"
       >
-        <!-- Fila superior: tipo + fecha -->
-        <div class="flex items-start justify-between gap-2 mb-3">
-          <div class="flex items-center gap-2 min-w-0">
-            <span class="text-xl shrink-0">🔧</span>
-            <p class="text-sm font-bold text-gray-800 leading-tight truncate">{{ m.tipo }}</p>
+        <!-- Eje del timeline -->
+        <div class="timeline-axis">
+          <div class="timeline-dot">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+            </svg>
           </div>
-          <p class="text-xs text-gray-400 shrink-0 mt-0.5">{{ fmtFecha(m.fecha_realizada) }}</p>
+          <div v-if="idx < historial.length - 1" class="timeline-line"/>
         </div>
 
-        <!-- Costo final + badge quién completó -->
-        <div class="flex items-center justify-between gap-2">
-          <div>
-            <p class="text-xs text-gray-400 font-medium mb-0.5">Costo final</p>
-            <p class="text-lg font-extrabold text-gray-900 leading-tight">{{ fmtPrecio(m.costo_real) }}</p>
+        <!-- Tarjeta -->
+        <div class="timeline-card">
+          <!-- Fecha encabezado -->
+          <p class="timeline-date">{{ fmtFecha(m.fecha_realizada) }}</p>
+
+          <!-- Contenido principal -->
+          <div class="flex items-start justify-between gap-3 mb-2">
+            <p class="text-sm font-bold text-gray-800 leading-tight flex-1">{{ m.tipo }}</p>
+            <p class="text-base font-extrabold text-gray-900 shrink-0">{{ fmtPrecio(m.costo_real) }}</p>
           </div>
-          <div class="flex flex-col items-end gap-1.5">
-            <!-- Quién completó -->
-            <span
-              v-if="m.confirmado_conductor"
-              class="inline-flex items-center gap-1 text-[10px] font-semibold bg-green-50 text-green-700 rounded-full px-2 py-0.5"
-            >
+
+          <!-- Chips inferiores -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <span v-if="m.confirmado_conductor" class="tl-chip tl-chip--green">
               <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
               </svg>
               Completada por ti
             </span>
-            <span v-else class="inline-flex items-center gap-1 text-[10px] font-semibold bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">
-              👤 Por administrador
+            <span v-else class="tl-chip tl-chip--gray">👤 Por administrador</span>
+
+            <span v-if="m.taller" class="tl-chip tl-chip--gray">
+              🏪 {{ m.taller }}
             </span>
-            <!-- Diferencia vs presupuesto -->
+
             <span
               v-if="diffPresupuesto(m) !== null"
-              :class="diffPresupuesto(m) > 0
-                ? 'bg-red-50 text-red-600'
-                : diffPresupuesto(m) < 0
-                  ? 'bg-green-50 text-green-700'
-                  : 'bg-gray-100 text-gray-500'"
-              class="text-[10px] font-semibold rounded-full px-2 py-0.5"
+              :class="diffPresupuesto(m) > 0 ? 'tl-chip--red' : diffPresupuesto(m) < 0 ? 'tl-chip--green' : 'tl-chip--gray'"
+              class="tl-chip"
             >
               {{ diffPresupuesto(m) > 0 ? '▲' : diffPresupuesto(m) < 0 ? '▼' : '=' }}
-              {{ diffPresupuesto(m) > 0 ? '+' : '' }}{{ fmtPrecio(Math.abs(diffPresupuesto(m))) }}
-              vs presupuesto
+              {{ fmtPrecio(Math.abs(diffPresupuesto(m))) }}
             </span>
           </div>
-        </div>
 
-        <!-- Miniatura foto + taller -->
-        <div class="flex items-center gap-2 mt-3">
+          <!-- Foto miniatura -->
           <img
             v-if="m.foto_comprobante_url"
             :src="m.foto_comprobante_url"
             alt="Comprobante"
-            class="w-12 h-12 object-cover rounded-xl border border-gray-100 shrink-0"
+            class="w-full h-20 object-cover rounded-xl border border-gray-100 mt-3"
           />
-          <div class="min-w-0">
-            <p v-if="m.taller" class="text-xs text-gray-500 truncate">
-              🏪 {{ m.taller }}
-            </p>
-            <p v-if="m.descripcion" class="text-xs text-gray-400 italic truncate mt-0.5">
-              "{{ m.descripcion }}"
-            </p>
-          </div>
-          <svg class="w-4 h-4 text-gray-300 ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-          </svg>
         </div>
-      </article>
+      </div>
 
       <!-- Cargar más -->
       <button
         v-if="hasMore"
-        class="w-full py-3 text-sm font-semibold text-[var(--color-acento)] bg-white border border-gray-200 rounded-2xl active:opacity-70 mt-1"
+        class="w-full mx-4 py-3 text-sm font-semibold text-[var(--color-acento)] bg-white border border-gray-200 rounded-2xl active:opacity-70 mt-1"
+        style="max-width: calc(100% - 2rem)"
         :disabled="cargandoMas"
         @click="cargarMas"
       >
@@ -367,8 +352,115 @@ onMounted(() => cargar(true))
 </template>
 
 <style scoped>
-.pt-safe  { padding-top: max(1rem, env(safe-area-inset-top)); }
-.pb-safe-bottom { padding-bottom: max(1.5rem, env(safe-area-inset-bottom) + 1rem); }
+/* ── Header historial ──────────────────────────────────────────────────── */
+.hist-header {
+  position: relative; overflow: hidden;
+  background: var(--gradient-hero);
+  padding: max(1rem, env(safe-area-inset-top)) 1rem 1rem;
+}
+.hist-header-pattern {
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle at 85% 20%, rgba(255,255,255,0.09) 0%, transparent 50%);
+}
+.hist-header-inner {
+  position: relative;
+  display: flex; align-items: center; gap: 0.75rem;
+}
+.hist-back-btn {
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%;
+  background: rgba(255,255,255,0.18); border: none; color: white;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.hist-back-btn:active { background: rgba(255,255,255,0.30); }
+.hist-subtitle {
+  font-size: 0.6875rem; font-weight: 600; color: rgba(255,255,255,0.65);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.1rem;
+}
+.hist-title {
+  font-size: 1.125rem; font-weight: 800; color: white; line-height: 1.2;
+}
+.hist-vehicle {
+  font-size: 0.6875rem; color: rgba(255,255,255,0.65); margin-top: 0.2rem;
+}
+.hist-badge {
+  margin-left: auto; flex-shrink: 0;
+  background: rgba(255,255,255,0.20); border: 1px solid rgba(255,255,255,0.3);
+  color: white; font-size: 0.75rem; font-weight: 700;
+  border-radius: 999px; padding: 0.2rem 0.75rem;
+}
+
+/* ── Skeleton ──────────────────────────────────────────────────────────── */
+.hist-skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 1rem;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Empty ─────────────────────────────────────────────────────────────── */
+.hist-empty-icon {
+  width: 72px; height: 72px; border-radius: 24px;
+  background: var(--color-acento-suave);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 0.25rem;
+}
+
+/* ── Timeline ──────────────────────────────────────────────────────────── */
+.timeline-wrap { padding: 1rem 1rem 0; }
+.timeline-item {
+  display: flex; gap: 0.75rem;
+  cursor: pointer;
+}
+.timeline-item:active .timeline-card { opacity: 0.75; }
+
+.timeline-axis {
+  display: flex; flex-direction: column; align-items: center;
+  flex-shrink: 0; padding-top: 0.25rem;
+  width: 28px;
+}
+.timeline-dot {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--color-acento-suave);
+  border: 2px solid var(--color-acento);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-acento); flex-shrink: 0; z-index: 1;
+}
+.timeline-line {
+  flex: 1; width: 2px;
+  background: linear-gradient(to bottom, var(--color-acento) 0%, #E5E7EB 100%);
+  opacity: 0.25;
+  margin: 0.25rem 0;
+  min-height: 1rem;
+}
+
+.timeline-card {
+  flex: 1; min-width: 0;
+  background: white; border-radius: 1rem;
+  border: 1px solid #F3F4F6;
+  box-shadow: var(--shadow-xs);
+  padding: 0.875rem 1rem;
+  margin-bottom: 0.875rem;
+  transition: opacity 0.1s;
+}
+.timeline-date {
+  font-size: 0.6875rem; font-weight: 600;
+  color: var(--color-acento); margin-bottom: 0.4rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+/* Chips del timeline */
+.tl-chip {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  font-size: 0.6875rem; font-weight: 600;
+  border-radius: 999px; padding: 0.15rem 0.5rem;
+}
+.tl-chip--green { background: #ECFDF5; color: #059669; }
+.tl-chip--gray  { background: #F3F4F6; color: #6B7280; }
+.tl-chip--red   { background: #FEF2F2; color: #DC2626; }
 
 /* Overlay detalle */
 .overlay-det {

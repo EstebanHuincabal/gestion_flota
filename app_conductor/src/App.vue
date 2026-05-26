@@ -1,18 +1,12 @@
 <script setup>
 import { onMounted } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
-import { Preferences } from '@capacitor/preferences'
 import { Capacitor } from '@capacitor/core'
+import { useThemeStore } from '@/stores/theme.js'
 
-const router = useRouter()
+const router     = useRouter()
+const themeStore = useThemeStore()
 
-// ── Tema guardado ─────────────────────────────────────────────────────────────
-async function aplicarTema() {
-  try {
-    const { value: acento } = await Preferences.get({ key: 'color_acento' })
-    if (acento) document.documentElement.style.setProperty('--color-acento', acento)
-  } catch { /* Sin tema guardado — se usa el CSS por defecto */ }
-}
 
 // ── Push Notifications (solo dispositivos nativos) ────────────────────────────
 async function inicializarPush() {
@@ -113,7 +107,7 @@ function mostrarToastPush(titulo, cuerpo, data = {}) {
 }
 
 onMounted(async () => {
-  await aplicarTema()
+  await themeStore.cargarTema()   // ← carga y aplica el tema guardado del conductor
   await inicializarPush()
 })
 </script>

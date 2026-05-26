@@ -292,8 +292,23 @@ onMounted(async () => {
     </div>
 
     <!-- ── Header ─────────────────────────────────────────────────────────── -->
-    <header class="bg-white px-4 pt-safe pb-4 border-b border-gray-100">
-      <h1 class="text-xl font-bold text-gray-800">Solicitudes</h1>
+    <header class="sol-header">
+      <div class="sol-header-pattern" aria-hidden="true"/>
+      <div class="sol-header-content">
+        <div>
+          <p class="sol-header-subtitle">Mis solicitudes</p>
+          <h1 class="sol-header-title">Centro de solicitudes</h1>
+        </div>
+        <!-- Resumen chips -->
+        <div class="sol-summary-chips">
+          <span v-if="store.pendientes.length" class="chip chip--accent">
+            {{ store.pendientes.length }} activa{{ store.pendientes.length !== 1 ? 's' : '' }}
+          </span>
+          <span v-if="store.resueltas.length" class="chip chip--muted">
+            {{ store.resueltas.length }} resuelta{{ store.resueltas.length !== 1 ? 's' : '' }}
+          </span>
+        </div>
+      </div>
     </header>
 
     <!-- ── Skeleton inicial ───────────────────────────────────────────────── -->
@@ -309,19 +324,21 @@ onMounted(async () => {
           v-if="!store.solicitudes.length"
           class="flex flex-col items-center gap-3 py-16 text-gray-400"
         >
-          <i class="ti ti-clipboard-list text-6xl text-gray-200"/>
-          <p class="text-base font-medium">No tienes solicitudes</p>
+          <div class="w-16 h-16 rounded-2xl flex items-center justify-center" style="background: var(--color-acento-suave)">
+            <i class="ti ti-clipboard-list text-3xl" style="color: var(--color-acento)"/>
+          </div>
+          <p class="text-base font-semibold text-gray-600">Sin solicitudes aún</p>
           <p class="text-sm text-center text-gray-400">
-            Usa el botón + para reportar un problema<br>o hacer una solicitud
+            Toca el botón <strong>+ Nueva</strong> para reportar<br>un problema o hacer una solicitud
           </p>
         </div>
 
         <!-- ── Solicitudes en proceso ────────────────────────────────────── -->
         <section v-if="store.pendientes.length">
-          <h2 class="text-sm font-bold text-gray-700 mb-2">
-            En proceso
-            <span class="text-gray-400 font-normal">({{ store.pendientes.length }})</span>
-          </h2>
+          <div class="flex items-center justify-between mb-2">
+            <p class="sol-section-label">En proceso</p>
+            <span class="chip chip--accent">{{ store.pendientes.length }}</span>
+          </div>
 
           <div class="flex flex-col gap-2">
             <button
@@ -373,9 +390,9 @@ onMounted(async () => {
         <section v-if="store.resueltas.length">
           <button
             @click="toggleHistorial"
-            class="flex items-center justify-between w-full text-sm font-bold text-gray-700 mb-2 min-h-[44px]"
+            class="flex items-center justify-between w-full mb-2 min-h-[44px]"
           >
-            <span>Historial</span>
+            <p class="sol-section-label" style="margin-bottom:0">Historial</p>
             <svg
               class="w-4 h-4 text-gray-400 transition-transform"
               :class="{ 'rotate-180': historialAbierto }"
@@ -423,11 +440,11 @@ onMounted(async () => {
     <!-- ── FAB ───────────────────────────────────────────────────────────── -->
     <button
       @click="abrirNuevaSolicitud"
-      class="fixed right-4 rounded-full px-5 py-3 shadow-lg flex items-center gap-2 text-white font-medium z-40"
-      :style="`bottom: calc(72px + env(safe-area-inset-bottom)); background: var(--color-acento)`"
+      class="fab-btn"
+      :style="`bottom: calc(76px + env(safe-area-inset-bottom))`"
     >
-      <i class="ti ti-plus text-lg"/>
-      Nueva
+      <i class="ti ti-plus" style="font-size:1.125rem"/>
+      Nueva solicitud
     </button>
 
     <!-- ── BottomNav ──────────────────────────────────────────────────────── -->
@@ -762,12 +779,72 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.pt-safe {
-  padding-top: max(1rem, env(safe-area-inset-top));
+/* ── Header solicitudes ────────────────────────────────────────────────── */
+.sol-header {
+  position: relative;
+  overflow: hidden;
+  background: var(--gradient-hero);
+  padding: max(1.25rem, env(safe-area-inset-top)) 1rem 1rem;
 }
-.pb-6 {
-  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+.sol-header-pattern {
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle at 90% 10%, rgba(255,255,255,0.1) 0%, transparent 50%);
 }
+.sol-header-content {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.sol-header-subtitle {
+  font-size: 0.6875rem; font-weight: 600; color: rgba(255,255,255,0.65);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.2rem;
+}
+.sol-header-title {
+  font-size: 1.375rem; font-weight: 800; color: white; line-height: 1.15;
+}
+.sol-summary-chips {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+/* ── Chips ─────────────────────────────────────────────────────────────── */
+.chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.6875rem; font-weight: 700;
+  border-radius: 999px; padding: 0.2rem 0.625rem; line-height: 1.4;
+}
+.chip--accent {
+  background: rgba(255,255,255,0.18); color: white; border: 1px solid rgba(255,255,255,0.3);
+}
+.chip--muted {
+  background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.15);
+}
+/* Para usar fuera del header */
+section .chip--accent {
+  background: var(--color-acento-suave); color: var(--color-acento); border: none;
+}
+
+/* ── Sección label ─────────────────────────────────────────────────────── */
+.sol-section-label {
+  font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: #9CA3AF; margin-bottom: 0.5rem;
+}
+
+/* ── FAB ───────────────────────────────────────────────────────────────── */
+.fab-btn {
+  position: fixed; right: 1rem;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.8125rem 1.25rem;
+  border-radius: 999px;
+  background: var(--gradient-primary);
+  box-shadow: var(--shadow-acento);
+  color: white; font-size: 0.875rem; font-weight: 700;
+  border: none; cursor: pointer; z-index: 40;
+  -webkit-tap-highlight-color: transparent;
+}
+.fab-btn:active { opacity: 0.85; transform: scale(0.97); }
 
 /* Bottom sheet */
 .sheet-enter-active, .sheet-leave-active { transition: transform 0.3s ease; }

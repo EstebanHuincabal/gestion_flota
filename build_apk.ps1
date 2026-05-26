@@ -54,7 +54,7 @@ Write-Ok "Backend URL: http://${ip}:8000"
 # 2. Actualizar solo la linea VITE_API_URL en el .env raiz (sin tocar el resto)
 Write-Step "Actualizando .env..."
 
-$envContent = Get-Content -Path $envFile -Raw
+$envContent = Get-Content -Path $envFile -Raw -Encoding UTF8
 $nuevaLinea = "VITE_API_URL=http://${ip}:8000"
 
 if ($envContent -match "(?m)^VITE_API_URL=.*$") {

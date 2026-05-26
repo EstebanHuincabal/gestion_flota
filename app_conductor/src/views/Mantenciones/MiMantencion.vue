@@ -148,12 +148,31 @@ onMounted(() => store.cargarMantenciones())
       </div>
     </Transition>
 
-    <!-- Header -->
-    <header class="bg-white px-4 pt-safe pb-4 border-b border-gray-100">
-      <h1 class="text-xl font-bold text-gray-800">Mantención</h1>
-      <p v-if="store.vehiculo" class="text-xs text-gray-400 mt-0.5">
-        {{ store.vehiculo.patente }} · {{ store.vehiculo.marca }} {{ store.vehiculo.modelo }}
-      </p>
+    <!-- Header hero -->
+    <header class="mant-header">
+      <div class="mant-header-bg" aria-hidden="true"/>
+      <div class="mant-header-inner">
+        <div class="mant-header-top">
+          <div>
+            <p class="mant-subtitle">Estado del vehículo</p>
+            <h1 class="mant-title">Mantención</h1>
+          </div>
+          <!-- Ícono de llave grande decorativo -->
+          <div class="mant-hero-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </div>
+        </div>
+        <!-- Info vehículo -->
+        <div v-if="store.vehiculo" class="mant-vehicle-chip">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/>
+          </svg>
+          {{ store.vehiculo.patente }} · {{ store.vehiculo.marca }} {{ store.vehiculo.modelo }}
+        </div>
+      </div>
     </header>
 
     <!-- Vehículo en mantención — alerta bloqueante -->
@@ -173,7 +192,7 @@ onMounted(() => store.cargarMantenciones())
 
     <!-- Skeleton carga -->
     <div v-if="store.cargando && !store.mantenciones.length" class="px-4 mt-4 flex flex-col gap-3">
-      <div v-for="i in 2" :key="i" class="h-28 rounded-2xl bg-gray-200 animate-pulse"/>
+      <div v-for="i in 2" :key="i" class="h-28 skeleton"/>
     </div>
 
     <template v-else>
@@ -279,14 +298,14 @@ onMounted(() => store.cargarMantenciones())
     </template>
 
     <!-- Botón historial -->
-    <div class="px-4 pb-2 mt-2">
+    <div class="px-4 pb-2 mt-3">
       <button
-        class="w-full flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-2xl px-4 py-3.5 active:opacity-70 shadow-sm"
+        class="historial-btn"
         @click="router.push('/mantencion/historial')"
       >
         <div class="flex items-center gap-3">
-          <span class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
-            <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <span class="historial-icon">
+            <svg class="w-5 h-5" style="color: var(--color-acento)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
                 d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
             </svg>
@@ -317,11 +336,77 @@ onMounted(() => store.cargarMantenciones())
 </template>
 
 <style scoped>
-.pt-safe {
-  padding-top: max(1rem, env(safe-area-inset-top));
+/* ── Header mantención ─────────────────────────────────────────────────── */
+.mant-header {
+  position: relative;
+  overflow: hidden;
+  background: var(--gradient-hero);
+  padding: max(1.25rem, env(safe-area-inset-top)) 1rem 1rem;
 }
+.mant-header-bg {
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle at 85% 15%, rgba(255,255,255,0.10) 0%, transparent 45%),
+    radial-gradient(circle at 15% 85%, rgba(124,58,237,0.20) 0%, transparent 50%);
+}
+.mant-header-inner { position: relative; }
+.mant-header-top {
+  display: flex; align-items: flex-start;
+  justify-content: space-between; gap: 0.75rem;
+}
+.mant-subtitle {
+  font-size: 0.6875rem; font-weight: 600; color: rgba(255,255,255,0.65);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.15rem;
+}
+.mant-title {
+  font-size: 1.5rem; font-weight: 800; color: white; line-height: 1.15;
+}
+.mant-hero-icon {
+  width: 64px; height: 64px; flex-shrink: 0; opacity: 0.18;
+  color: white;
+}
+.mant-hero-icon svg { width: 100%; height: 100%; }
+.mant-vehicle-chip {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2);
+  color: rgba(255,255,255,0.85);
+  font-size: 0.6875rem; font-weight: 600; border-radius: 999px;
+  padding: 0.25rem 0.625rem; margin-top: 0.75rem;
+}
+
+/* Toast safe area */
 .top-safe-toast {
   top: max(1rem, calc(env(safe-area-inset-top) + 0.5rem));
+}
+
+/* Historial btn */
+.historial-btn {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.75rem;
+  background: white; border: 1px solid #E5E7EB;
+  border-radius: 1.25rem; padding: 1rem 1.125rem;
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+}
+.historial-btn:active { opacity: 0.72; }
+.historial-icon {
+  width: 40px; height: 40px; border-radius: 0.75rem;
+  background: var(--color-acento-suave);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Skeleton */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 1rem;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* Toast */

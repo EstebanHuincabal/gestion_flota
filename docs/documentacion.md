@@ -1,6 +1,6 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 2.2 · **Última actualización:** Mayo 2026  
+> **Versión:** 2.3 · **Última actualización:** Mayo 2026  
 > **Stack:** Django 5 · Vue 3 · Capacitor 8 · SQLite · JWT
 
 ---
@@ -686,19 +686,38 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Costos / Detalles). Mapa Leaflet (carga dinámica desde CDN). Lista combinada de paradas + peajes. Bottom-sheet modales con validación para iniciar y finalizar ruta. Toast de confirmación. |
 | `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
 | `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. Al tocar una tarjeta se abre `ModalDetalleMantencion` con la acción correspondiente al estado. Toast de feedback tras iniciar o completar. |
-| `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. Botón "Cerrar sesión" con bottom-sheet de confirmación. |
+| `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. **Sección Apariencia** con selector de 6 temas de color (se guarda localmente por dispositivo). Botón "Cerrar sesión" con bottom-sheet de confirmación. |
+
+#### Rediseño visual (Mayo 2026)
+
+Se realizó un rediseño completo de la UI de la app móvil (`v2.3`). Cambios principales:
+
+| Archivo | Cambio |
+|---|---|
+| `assets/main.css` | Nuevos tokens CSS: `--gradient-primary/hero/success/card`, `--shadow-xs/sm/md/lg/acento`, clases utilitarias `.card`, `.card-hero`, `.glass`, `.btn-primary`, `.skeleton`, `.badge` |
+| `BottomNav.vue` | Glassmorphism (`backdrop-filter: blur(20px)`), pill de indicador activo con sombra púrpura, íconos rellenos vs. contorno para estado activo/inactivo, altura nav aumentada a 64px (`--nav-h: 64px`) |
+| `RutaCard.vue` | Variante `activa`: tarjeta hero con gradiente verde, pulso animado, chips de costos. Variante `pendiente`: acento izquierdo con gradiente, sombra sutil. Variante `finalizada`: chip de check verde |
+| `ListaRutas.vue` | Header con gradiente `--gradient-hero` (azul-morado profundo), avatar con borde translúcido, stats row con chips de estado, botón sync e íconos ghost |
+| `ListaSolicitudes.vue` | Header hero con título grande, chips de resumen (activas/resueltas), FAB rediseñado con gradiente y sombra `var(--shadow-acento)`, sección labels estilo uppercase |
+| `MiMantencion.vue` | Header hero con ícono de llave decorativo, chip de información del vehículo, skeleton mejorado |
+| `HistorialMantenciones.vue` | Header con gradiente, botón volver circular translúcido, lista convertida a **timeline visual** con eje punteado, puntos de color y tarjetas flotantes |
+| `Ajustes.vue` | Header hero tipo "profile card" con avatar grande con anillo, chips de datos del conductor, tarjeta de vehículo rediseñada, grupos de ajustes estilo iOS (íconos de colores + chevrons) |
 
 #### Componentes
 
 | Componente | Descripción |
 |---|---|
-| `BottomNav.vue` | Barra inferior fija con 4 tabs: Rutas · Solicitudes · Mantención · Ajustes. Badge rojo `!` en Mantención si hay mantención urgente o vehículo bloqueado; badge azul con cantidad si hay mantenciones activas sin urgencia. |
-| `RutaCard.vue` | Tarjeta de ruta con tres variantes: `activa` (borde verde, pulso), `pendiente` (indigo), `finalizada` (gris compacta) |
+| `BottomNav.vue` | Barra inferior con glassmorphism, pill activo con sombra `--shadow-acento`, íconos filled/outline según estado. Badge rojo `!` si hay mantención urgente; badge azul con cantidad si hay activas. Altura total: 64px + safe area. |
+| `RutaCard.vue` | Tarjeta de ruta con 3 variantes: `activa` (hero gradient verde + pulso animado), `pendiente` (borde izquierdo gradiente), `finalizada` (compacta con chip de check) |
 | `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino/peaje). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
 | `ModalDetalleMantencion.vue` | Bottom-sheet con el detalle completo de una mantención y las acciones disponibles por estado: **pendiente** → mini-confirm + botón azul "Iniciar mantención"; **en_proceso** → botón verde "Marcar como realizada" que abre `ModalCompletarMantencion`; **realizada** → solo lectura (precio, foto, quién la completó). |
 | `ModalCompletarMantencion.vue` | Bottom-sheet formulario para registrar la finalización de una mantención: costo final en CLP (con formato automático), fecha de realización, foto del recibo (captura de cámara con `capture="environment"`, opcional) y notas. Envía `multipart/FormData` al endpoint `/completar/`. |
 
 #### Servicios
+
+| Store | Archivo | Descripción |
+|---|---|---|
+| Temas | `stores/theme.js` | Store Pinia con 6 temas de color (Índigo, Océano, Esmeralda, Carmesí, Cobre, Pizarra). Aplica variables CSS en `:root` de forma reactiva. Persiste la elección en `@capacitor/preferences` (clave `tema_app`). Personal por conductor y por dispositivo. |
 
 | Servicio | Archivo | Descripción |
 |---|---|---|
