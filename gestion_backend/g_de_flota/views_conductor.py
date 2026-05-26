@@ -8,10 +8,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
-from .models import Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo
+from .models import Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo, Documento
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
 from .firebase_push import enviar_push
+from .checklist_items import get_items, ITEMS_MAP, MAP_DOC_ITEM
 
 
 # ─────────────────────────────────────────
@@ -92,6 +93,7 @@ def _serializar_ruta(ruta, detallado=False):
         'costo_peajes_real':      ruta.costo_peajes_real,
         'costo_total_real':       ruta.costo_total_real,
         'notas':                 ruta.notas,
+        'extra':                 ruta.extra or {},
         'polyline':              ruta.polyline or [],
         'paradas':               paradas_list,
         # Vehículo y conductor (siempre incluidos, ligeros)
@@ -783,3 +785,206 @@ def conductor_push_token(request):
     request.user.save(update_fields=['notif_prefs'])
 
     return Response({'ok': True})
+
+
+# ─────────────────────────────────────────
+# GET + POST /api/conductor/checklist/:ruta_id/
+# ─────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def conductor_checklist(request, ruta_id):
+    """
+    Checklist pre-viaje vinculado a una ruta.
+
+    GET  → devuelve ítems con estado de documentos pre-cargado + borrador si existe.
+    POST → guarda o actualiza el checklist como SolicitudConductor tipo='mantencion'.
+    """
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    # ── Obtener ruta ──────────────────────────────────────────────────────────
+    try:
+        ruta = (
+            Ruta.objects
+            .select_related('vehiculo', 'conductor')
+            .get(id=ruta_id, conductor=request.user)
+        )
+    except Ruta.DoesNotExist:
+        return Response({'error': 'Ruta no encontrada.'}, status=404)
+
+    # ── GET ───────────────────────────────────────────────────────────────────
+    if request.method == 'GET':
+        items = get_items()
+
+        # Enriquecer ítems de documentos del vehículo con estado real
+        docs_vehiculo = {}
+        if ruta.vehiculo:
+            for doc in Documento.objects.filter(vehiculo=ruta.vehiculo):
+                docs_vehiculo[doc.tipo] = doc
+
+        for item in items:
+            if item['id'] in ('doc_permiso', 'doc_revision', 'doc_soap'):
+                tipo_doc = {v: k for k, v in MAP_DOC_ITEM.items()}.get(item['id'])
+                doc = docs_vehiculo.get(tipo_doc) if tipo_doc else None
+                if doc:
+                    estado_doc = doc.estado()
+                    item['estado_documento']  = estado_doc
+                    item['fecha_vencimiento'] = doc.fecha_vencimiento.isoformat() if doc.fecha_vencimiento else None
+                    item['pre_resultado']     = 'ok' if estado_doc == 'vigente' else None
+                else:
+                    item['estado_documento']  = None
+                    item['fecha_vencimiento'] = None
+                    item['pre_resultado']     = None
+            # Ítem de licencia del conductor
+            elif item['id'] == 'doc_licencia':
+                doc_lic = Documento.objects.filter(
+                    conductor=request.user, tipo='licencia'
+                ).first()
+                if doc_lic:
+                    estado_doc = doc_lic.estado()
+                    item['estado_documento']  = estado_doc
+                    item['fecha_vencimiento'] = doc_lic.fecha_vencimiento.isoformat() if doc_lic.fecha_vencimiento else None
+                    item['pre_resultado']     = 'ok' if estado_doc == 'vigente' else None
+                else:
+                    item['estado_documento']  = None
+                    item['fecha_vencimiento'] = None
+                    item['pre_resultado']     = None
+
+        # Buscar borrador (checklist previo guardado en estado pendiente)
+        respuestas_guardadas = {}
+        borrador = SolicitudConductor.objects.filter(
+            conductor=request.user,
+            tipo='mantencion',
+            estado='pendiente',
+            extra__ruta_id=ruta.id,
+            extra__es_checklist=True,
+        ).first()
+        if borrador:
+            respuestas_guardadas = borrador.extra.get('respuestas', {})
+
+        return Response({
+            'items':               items,
+            'respuestas_guardadas': respuestas_guardadas,
+            'ruta': {
+                'id':     ruta.id,
+                'nombre': ruta.nombre,
+            },
+            'vehiculo': {
+                'patente': ruta.vehiculo.patente if ruta.vehiculo else '',
+                'marca':   ruta.vehiculo.marca   if ruta.vehiculo else '',
+            },
+        })
+
+    # ── POST ──────────────────────────────────────────────────────────────────
+    respuestas = request.data.get('respuestas', {})
+    firma_b64  = request.data.get('firma_base64', '')
+
+    # 1. Validar ítems obligatorios
+    items = get_items()
+    obligatorios = [i['id'] for i in items if i['obligatorio']]
+    faltantes    = [i for i in obligatorios if i not in respuestas or not respuestas[i].get('resultado')]
+
+    if faltantes:
+        nombres_faltantes = [ITEMS_MAP.get(f, f) for f in faltantes]
+        return Response({
+            'error':    f'Faltan {len(faltantes)} ítem(s) obligatorio(s).',
+            'faltantes': nombres_faltantes,
+        }, status=400)
+
+    # 2. Detectar fallas
+    fallas = [iid for iid in obligatorios if respuestas.get(iid, {}).get('resultado') == 'falla']
+
+    # 3. Resumen de fallas
+    resumen_fallas = '; '.join(
+        f"{ITEMS_MAP.get(iid, iid)}: {respuestas[iid].get('observacion', '').strip() or 'sin observación'}"
+        for iid in fallas
+    )
+
+    tiene_fallas = bool(fallas)
+
+    # 4. Crear / actualizar SolicitudConductor
+    empresa  = request.user.empresa
+    vehiculo = ruta.vehiculo
+
+    defaults = {
+        'empresa':     empresa,
+        'vehiculo':    vehiculo,
+        'titulo':      f'Checklist pre-viaje — {ruta.nombre}',
+        'descripcion': ('Vehículo en orden.' if not tiene_fallas
+                        else 'Fallas:\n' + resumen_fallas),
+        'estado':      'aprobado' if not tiene_fallas else 'pendiente',
+        'prioridad':   'baja'     if not tiene_fallas else 'alta',
+        'extra': {
+            'ruta_id':      ruta.id,
+            'es_checklist': True,
+            'respuestas':   respuestas,
+            'firma_b64':    firma_b64,
+            'tiene_fallas': tiene_fallas,
+            'fallas_detalle': fallas,
+        },
+    }
+
+    sol, _ = SolicitudConductor.objects.update_or_create(
+        conductor=request.user,
+        tipo='mantencion',
+        extra__ruta_id=ruta.id,
+        extra__es_checklist=True,
+        defaults=defaults,
+    )
+
+    # 5. Notificar admins
+    nombre_conductor = request.user.nombre or request.user.email
+    patente          = vehiculo.patente if vehiculo else '—'
+
+    if empresa:
+        if not tiene_fallas:
+            notificar_admins_empresa(
+                empresa,
+                tipo='actividad',
+                titulo=f'✓ Vehículo en orden — {patente}',
+                mensaje=f'{nombre_conductor} completó el checklist. Vehículo listo para partir en {ruta.nombre}.',
+                url_accion=f'/empresa/solicitudes/{sol.id}',
+            )
+        else:
+            notificar_admins_empresa(
+                empresa,
+                tipo='solicitud_conductor',
+                titulo=f'⚠ Checklist con fallas — {patente}',
+                mensaje=f'{nombre_conductor} detectó fallas antes de partir: {resumen_fallas}',
+                url_accion=f'/empresa/solicitudes/{sol.id}',
+            )
+
+    # 6. Actualizar ruta.extra
+    extra_ruta = ruta.extra or {}
+    extra_ruta.update({'checklist_completo': True, 'checklist_id': sol.id})
+    ruta.extra = extra_ruta
+    ruta.save(update_fields=['extra'])
+
+    # 7. Push al conductor (fail-silent)
+    try:
+        if not tiene_fallas:
+            enviar_push(request.user, 'Checklist completado ✓', 'Todo en orden. Ya puedes iniciar la ruta.')
+        else:
+            enviar_push(request.user, 'Checklist enviado ⚠', 'Se notificó al administrador sobre las fallas.')
+    except Exception:
+        registrar_log('ERROR', 'checklist_push_fallido', request, detalle={'ruta_id': ruta.id})
+
+    # 8. Registrar log
+    registrar_log('ACTIVIDAD', 'checklist_completado', request, detalle={
+        'ruta_id':      ruta.id,
+        'tiene_fallas': tiene_fallas,
+        'fallas':       fallas,
+    })
+
+    # 9. Retornar
+    return Response({
+        'ok':           True,
+        'tiene_fallas': tiene_fallas,
+        'solicitud_id': sol.id,
+        'mensaje': (
+            'Todo en orden. Puedes iniciar la ruta.'
+            if not tiene_fallas
+            else 'Checklist enviado con fallas. El administrador fue notificado.'
+        ),
+    })

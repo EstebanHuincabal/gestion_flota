@@ -820,6 +820,7 @@ class Ruta(models.Model):
     costo_total_real       = models.IntegerField(null=True, blank=True)
     polyline          = models.JSONField(default=list, blank=True)
     notas             = models.TextField(blank=True, default='')
+    extra             = models.JSONField(default=dict, blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
 
@@ -918,6 +919,7 @@ class SolicitudConductor(models.Model):
     prioridad      = models.CharField(max_length=10, choices=PRIORIDADES, default='media')
     foto           = models.FileField(upload_to='solicitudes/%Y/%m/', null=True, blank=True)
     respuesta      = models.TextField(blank=True, default='')
+    extra          = models.JSONField(default=dict, blank=True)
     respondido_por = models.ForeignKey(
         Usuario, on_delete=models.SET_NULL,
         null=True, blank=True, related_name='solicitudes_respondidas',

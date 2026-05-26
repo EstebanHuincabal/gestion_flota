@@ -39,6 +39,12 @@ const routes = [
     meta: { requiereAuth: true },
   },
   {
+    path: '/rutas/:id/checklist',
+    name: 'checklist-previaje',
+    component: () => import('@/views/Rutas/ChecklistPreviaje.vue'),
+    meta: { requiereAuth: true },
+  },
+  {
     path: '/solicitudes',
     name: 'solicitudes',
     component: () => import('@/views/Solicitudes/ListaSolicitudes.vue'),

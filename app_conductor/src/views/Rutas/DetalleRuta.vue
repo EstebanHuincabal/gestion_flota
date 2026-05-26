@@ -219,6 +219,11 @@ const precioLitroEst = computed(() => {
   return Math.round(ruta.value.costo_combustible_est / parseFloat(litrosEst.value))
 })
 
+// ── Checklist pre-viaje ───────────────────────────────────────────────────────
+const checklistCompleto = computed(() =>
+  ruta.value?.extra?.checklist_completo === true
+)
+
 // ── Helpers estáticos ─────────────────────────────────────────────────────────
 const ESTADO_LABEL = {
   pendiente: 'Pendiente', activo: 'En curso',
@@ -615,19 +620,35 @@ const COMBUSTIBLE = {
         style="bottom: var(--nav-total, 60px)"
       >
 
-        <!-- [pendiente] → Iniciar ruta -->
-        <button
-          v-if="ruta.estado === 'pendiente'"
-          @click="abrirIniciar"
-          class="w-full py-4 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[54px]"
-          style="background:linear-gradient(135deg,#22c55e,#16a34a);
-                 box-shadow:0 4px 16px rgba(34,197,94,.4)"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
-          </svg>
-          Iniciar ruta
-        </button>
+        <!-- [pendiente] → Checklist o Iniciar ruta -->
+        <template v-if="ruta.estado === 'pendiente'">
+          <!-- Sin checklist: ir al checklist primero -->
+          <button
+            v-if="!checklistCompleto"
+            @click="router.push(`/rutas/${rutaId}/checklist`)"
+            class="w-full py-4 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[54px]"
+            style="background:linear-gradient(135deg,#534AB7,#7C3AED);
+                   box-shadow:0 4px 20px rgba(83,74,183,0.35)"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+            </svg>
+            Completar checklist antes de iniciar
+          </button>
+          <!-- Con checklist: iniciar ruta normalmente -->
+          <button
+            v-else
+            @click="abrirIniciar"
+            class="w-full py-4 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[54px]"
+            style="background:linear-gradient(135deg,#22c55e,#16a34a);
+                   box-shadow:0 4px 16px rgba(34,197,94,.4)"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+            </svg>
+            Iniciar ruta
+          </button>
+        </template>
 
         <!-- [activo] → Finalizar ruta -->
         <button

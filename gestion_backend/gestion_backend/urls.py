@@ -56,6 +56,7 @@ from g_de_flota.views_conductor import (
     conductor_mantencion_detalle,
     conductor_iniciar_mantencion, conductor_completar_mantencion,
     conductor_push_token,
+    conductor_checklist,
 )
 from g_de_flota.views_solicitudes import (
     SolicitudesListView, SolicitudesConteoView,
@@ -172,6 +173,7 @@ urlpatterns = [
     path('api/conductor/mantenciones/<int:mantencion_id>/iniciar/',   conductor_iniciar_mantencion,    name='conductor-mantencion-iniciar'),
     path('api/conductor/mantenciones/<int:mantencion_id>/completar/', conductor_completar_mantencion,  name='conductor-mantencion-completar'),
     path('api/conductor/push-token/',                                 conductor_push_token,            name='conductor-push-token'),
+    path('api/conductor/checklist/<int:ruta_id>/',                    conductor_checklist,              name='conductor-checklist'),
 
     # Panel web — gestión de solicitudes de conductores (USUARIO/ADMIN)
     path('api/empresa/solicitudes/',                              SolicitudesListView.as_view(),    name='solicitudes-lista'),
