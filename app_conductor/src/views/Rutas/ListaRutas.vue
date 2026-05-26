@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore }       from '@/stores/auth.js'
 import { useRutasStore }      from '@/stores/rutas.js'
 import { useMantencionesStore } from '@/stores/mantenciones.js'
+import { usePermisos } from '@/composables/usePermisos.js'
 import BottomNav  from '@/components/BottomNav.vue'
 import RutaCard   from '@/components/RutaCard.vue'
 import { iniciales, tiempoDesde } from '@/utils/formato.js'
@@ -12,6 +13,7 @@ const router       = useRouter()
 const auth         = useAuthStore()
 const rutasStore   = useRutasStore()
 const mantenStore  = useMantencionesStore()
+const { cargando: cargandoPermisos } = usePermisos()
 
 const historialAbierto = ref(true)
 
@@ -45,7 +47,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div
+  <!-- Skeleton mientras se cargan los permisos -->
+  <div v-if="cargandoPermisos" class="min-h-dvh bg-gray-50 flex items-center justify-center">
+    <span class="w-8 h-8 border-2 border-gray-200 border-t-[var(--color-acento)] rounded-full animate-spin"/>
+  </div>
+
+  <!-- Contenido normal (el watch redirige a /solicitudes si no hay módulo) -->
+  <div v-else
     class="min-h-dvh bg-gray-50 pb-nav"
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"

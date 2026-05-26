@@ -2,11 +2,23 @@
 import { ref } from 'vue'
 import { useAuthStore }  from '@/stores/auth.js'
 import { useThemeStore } from '@/stores/theme.js'
+import { usePermisos }   from '@/composables/usePermisos.js'
 import BottomNav from '@/components/BottomNav.vue'
 import { iniciales } from '@/utils/formato.js'
 
 const auth       = useAuthStore()
 const themeStore = useThemeStore()
+
+const { modulos, planNombre } = usePermisos()
+
+const MODULO_LABELS = {
+  rutas:                 'Rutas y trabajos',
+  mantencion_correctiva: 'Mantención correctiva',
+  mantencion_predictiva: 'Mantención predictiva',
+  documentos:            'Documentos',
+  combustible:           'Combustible',
+  finanzas:              'Finanzas',
+}
 
 // ── Confirmación de cierre de sesión ─────────────────────────────────────────
 const confirmandoLogout = ref(false)
@@ -95,6 +107,26 @@ async function handleLogout() {
         <div>
           <p class="text-sm font-semibold text-orange-700">Sin vehículo asignado</p>
           <p class="text-xs text-orange-600 mt-0.5">Contacta a tu administrador para que te asigne un vehículo.</p>
+        </div>
+      </section>
+
+      <!-- ── Plan de la empresa ───────────────────────────────────────────── -->
+      <section class="aj-settings-group">
+        <p class="aj-group-title">Plan de la empresa</p>
+        <div class="aj-plan-body">
+          <p class="aj-plan-nombre">{{ planNombre || 'Sin plan asignado' }}</p>
+          <div class="aj-plan-chips">
+            <span
+              v-for="mod in modulos"
+              :key="mod"
+              class="aj-plan-chip"
+            >
+              {{ MODULO_LABELS[mod] || mod }}
+            </span>
+            <span v-if="modulos.length === 0" class="aj-plan-empty">
+              Sin módulos activos
+            </span>
+          </div>
         </div>
       </section>
 
@@ -396,6 +428,34 @@ async function handleLogout() {
 /* ── Row sublabel ──────────────────────────────────────────────────────── */
 .aj-row-sublabel {
   font-size: 0.6875rem; color: #9CA3AF; margin-top: 0.1rem; line-height: 1.3;
+}
+
+/* ── Plan de la empresa ─────────────────────────────────────────────────── */
+.aj-plan-body {
+  padding: 0.75rem 1.125rem 1rem;
+}
+.aj-plan-nombre {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #1F2937;
+  margin: 0 0 0.625rem;
+}
+.aj-plan-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.aj-plan-chip {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.2rem 0.625rem;
+  border-radius: 999px;
+  background: #E1F5EE;
+  color: #085041;
+}
+.aj-plan-empty {
+  font-size: 0.75rem;
+  color: #9CA3AF;
 }
 
 /* ── Grid de temas ─────────────────────────────────────────────────────── */

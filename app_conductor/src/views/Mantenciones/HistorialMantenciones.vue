@@ -9,8 +9,11 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/services/api.js'
+import { usePermisos } from '@/composables/usePermisos.js'
 
 const router = useRouter()
+
+const { cargando: cargandoPermisos } = usePermisos()
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 const historial  = ref([])
@@ -112,7 +115,12 @@ onMounted(() => cargar(true))
 </script>
 
 <template>
-  <div
+  <!-- Spinner mientras se verifican permisos del plan -->
+  <div v-if="cargandoPermisos" class="min-h-dvh bg-gray-50 flex items-center justify-center">
+    <span class="w-8 h-8 border-2 border-gray-200 border-t-[var(--color-acento)] rounded-full animate-spin"/>
+  </div>
+
+  <div v-else
     class="min-h-dvh bg-gray-50 pb-safe-bottom"
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"

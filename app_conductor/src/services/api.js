@@ -87,4 +87,6 @@ export async function limpiarSesion() {
   await Preferences.remove({ key: 'access_token' })
   await Preferences.remove({ key: 'refresh_token' })
   await Preferences.remove({ key: 'usuario' })
+  await Preferences.remove({ key: 'plan_modulos' })
+  await Preferences.remove({ key: 'plan_nombre' })
 }

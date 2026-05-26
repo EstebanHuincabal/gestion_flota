@@ -727,6 +727,82 @@ Se realizó un rediseño completo de la UI de la app móvil (`v2.3`). Cambios pr
 | Sincronización | `services/sync.js` | Detecta reconexión (`@capacitor/network`) y envía acciones encoladas durante el modo offline. |
 | WebSocket | `services/websocket.js` | Singleton que mantiene conexión persistente a `ws/conductor/`. Reconexión automática con backoff exponencial (máx. 30 s). Notifica al store cuando cambia el estado de una solicitud. |
 
+#### Sistema de permisos por plan (Mayo 2026 — actualizado)
+
+La app aplica restricciones de acceso según los módulos que el plan de la empresa tiene habilitados. La fuente de verdad es `PlanSuscripcion.permisos` (M2M), no el campo `modulos` JSONField. El backend deriva los módulos visibles comprobando si el plan tiene **algún permiso** con el prefijo del módulo (`rutas.`, `solicitudes.`, `mantenciones.`).
+
+##### Endpoint de módulos activos
+
+```
+GET /api/conductor/mi-plan/
+→ { "plan_modulos": ["rutas", "solicitudes", "mantenciones"], "plan_nombre": "Premium" }
+```
+
+**Función auxiliar en backend** (`views_conductor.py`):
+
+```python
+_MODULO_A_PREFIJO = {
+    'rutas':        'rutas.',
+    'solicitudes':  'solicitudes.',
+    'mantenciones': 'mantenciones.',
+}
+
+def _modulos_desde_permisos(plan) -> list:
+    codigos = set(plan.permisos.values_list('codigo', flat=True))
+    return [m for m, p in _MODULO_A_PREFIJO.items()
+            if any(c.startswith(p) for c in codigos)]
+```
+
+##### Flujo de sincronización
+
+1. **Al iniciar la app:** `usePermisos()` carga Preferences (caché instantánea), luego llama a `/api/conductor/mi-plan/` y establece el estado reactivo. `cargando = false` solo después de que responde el servidor, para evitar parpadeos.
+2. **Polling automático:** cada 15 segundos `usePermisos` refresca los módulos. Si cambian, actualiza Preferences y los refs reactivos → todos los componentes se actualizan sin recargar.
+3. **Vuelta al primer plano:** `App.addListener('appStateChange', ...)` dispara un refresco inmediato al volver desde background.
+4. **Router guard:** antes de cada navegación lee `plan_modulos` desde Preferences. Si la ruta tiene `meta.modulo` y no está en el array, redirige silenciosamente al primer módulo disponible (rutas → solicitudes → mantenciones → ajustes).
+5. **Watch en cada vista protegida:** `ListaRutas`, `ListaSolicitudes`, `MiMantencion` y `HistorialMantenciones` contienen un `watch` que detecta si el módulo deja de estar activo **mientras el usuario está en la pantalla** y redirige automáticamente a `ajustes`.
+6. **Logout:** `resetearPermisos()` limpia el singleton (interval + listener), luego `limpiarSesion()` borra Preferences.
+
+##### Módulos de la app y lo que controlan
+
+| Módulo clave | Tab visible | Rutas protegidas | Redirect si removido |
+|---|---|---|---|
+| `rutas` | Rutas (BottomNav) | `/rutas`, `/rutas/:id`, `/rutas/:id/checklist` | → `ajustes` (vía watch) |
+| `solicitudes` | Solicitudes (BottomNav) | `/solicitudes` | → `ajustes` (vía watch) |
+| `mantenciones` | Mantención (BottomNav) | `/mantencion`, `/mantencion/historial` | → `ajustes` (vía watch) |
+| — | Ajustes (BottomNav) | `/ajustes` | Siempre visible |
+
+##### Singleton `usePermisos`
+
+Estado a nivel de módulo JS (compartido entre todos los componentes):
+
+```javascript
+// Un solo intervalo y listener para toda la app
+const modulos    = ref([])
+const planNombre = ref('')
+const cargando   = ref(true)
+let _inicializado = false
+
+export function usePermisos() {
+  _inicializar()   // no-op si ya fue llamado
+  return { modulos, planNombre, tieneModulo, cargando }
+}
+export async function resetearPermisos() { /* limpia al hacer logout */ }
+```
+
+##### Archivos del sistema de permisos
+
+| Archivo | Descripción |
+|---|---|
+| `src/composables/usePermisos.js` | Singleton reactivo: polling 15 s + `appStateChange`. Expone `modulos`, `planNombre`, `tieneModulo()`, `cargando` |
+| `src/router/index.js` | Guard + `_primerModuloDisponible()` para redirigir al módulo correcto según el plan |
+| `src/components/BottomNav.vue` | `itemsVisibles` computed: filtra los 4 tabs según el plan (`rutas`, `solicitudes`, `mantenciones` requieren módulo; `ajustes` siempre visible) |
+| `src/views/Rutas/ListaRutas.vue` | Watch auto-redirect si módulo `rutas` es removido |
+| `src/views/Solicitudes/ListaSolicitudes.vue` | Watch auto-redirect si módulo `solicitudes` es removido |
+| `src/views/Mantenciones/MiMantencion.vue` | Watch auto-redirect si módulo `mantenciones` es removido |
+| `src/views/Mantenciones/HistorialMantenciones.vue` | Watch auto-redirect si módulo `mantenciones` es removido |
+| `src/stores/auth.js` | `logout()` llama `resetearPermisos()` antes de limpiar sesión |
+| `src/views/Ajustes/Ajustes.vue` | Sección "Plan de la empresa" con nombre del plan y chips de módulos activos |
+
 #### Autenticación con RUT chileno
 
 1. El usuario ingresa el RUT en formato `12.345.678-9` (formato display).
@@ -758,7 +834,7 @@ La conexión se reconecta automáticamente si se cae (backoff 1 s → 2 s → 4 
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET` | `/api/conductor/rutas/` | Lista rutas del conductor autenticado (pendiente, activo, finalizado) |
+| `GET` | `/api/conductor/rutas/` | Lista rutas del conductor autenticado (pendiente, activo, finalizado). Retorna `403` si el plan de la empresa no incluye el módulo `rutas`. |
 | `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, peajes, vehículo con `km_actuales` y `consumo_l_100km` |
 | `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo |
 | `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin`, costos reales, notas y actualiza `km_actuales` |

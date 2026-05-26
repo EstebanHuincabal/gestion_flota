@@ -10,6 +10,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { Preferences } from '@capacitor/preferences'
 import { apiFetch, limpiarSesion } from '../services/api.js'
+import { resetearPermisos } from '../composables/usePermisos.js'
 
 export const useAuthStore = defineStore('auth', () => {
   const usuario  = ref(null)
@@ -56,6 +57,17 @@ export const useAuthStore = defineStore('auth', () => {
       await Preferences.set({ key: 'refresh_token', value: data.refresh })
       await Preferences.set({ key: 'usuario',       value: JSON.stringify(userObj) })
 
+      // Módulos del plan — se guardan por separado para ser leídos desde
+      // el composable usePermisos y el router guard sin depender del store
+      await Preferences.set({
+        key:   'plan_modulos',
+        value: JSON.stringify(userObj.plan_modulos || []),
+      })
+      await Preferences.set({
+        key:   'plan_nombre',
+        value: userObj.plan_nombre || '',
+      })
+
       usuario.value = userObj
       return { success: true, primerLogin: userObj.primer_login }
     } catch (e) {
@@ -76,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
       wsService.disconnect()
     } catch {}
 
+    await resetearPermisos()  // limpia el singleton y el intervalo de polling
     await limpiarSesion()
     usuario.value = null
     // Importación dinámica para evitar dependencia circular con router

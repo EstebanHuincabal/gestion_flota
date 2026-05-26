@@ -1,10 +1,14 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSolicitudesStore } from '@/stores/solicitudes.js'
+import { usePermisos } from '@/composables/usePermisos.js'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import BottomNav from '@/components/BottomNav.vue'
 
-const store = useSolicitudesStore()
+const router = useRouter()
+const store  = useSolicitudesStore()
+const { cargando: cargandoPermisos } = usePermisos()
 
 // ── Notificación tiempo real ──────────────────────────────────────────────────
 // Cuando llega un evento WebSocket, mostramos un toast informativo
@@ -280,7 +284,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div
+  <!-- Spinner mientras se verifican permisos del plan -->
+  <div v-if="cargandoPermisos" class="min-h-dvh bg-gray-50 flex items-center justify-center">
+    <span class="w-8 h-8 border-2 border-gray-200 border-t-[var(--color-acento)] rounded-full animate-spin"/>
+  </div>
+
+  <div v-else
     class="min-h-dvh bg-gray-50 pb-nav"
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"

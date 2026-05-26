@@ -1,212 +1,489 @@
-Implementa el checklist pre-viaje sin tablas nuevas — reutiliza SolicitudConductor y agrega un JSONField en Ruta.
+Vas a implementar el sistema de permisos por plan en la app móvil de conductores (Vue 3 + Capacitor) y ajustar el dashboard para que muestre solo lo que el plan permite.
 
 ---
 
-## CAMBIO EN models.py
+## CONTEXTO
 
-Agregar en la clase Ruta después del campo notas:
+El sistema de permisos funciona así:
+- El plan de la empresa define qué módulos están habilitados (campo modulos JSONField en PlanSuscripcion)
+- El backend retorna plan_modulos en la respuesta del login
+- La app guarda plan_modulos en @capacitor/preferences
+- Cada vista verifica si su módulo está habilitado antes de mostrarse
+- SUPERADMIN siempre tiene acceso total (no aplica en la app — solo conductores)
+
+Módulos posibles que afectan la app del conductor:
+- 'rutas'                  → pantalla Mis Rutas + tab en bottom nav
+- 'mantencion_correctiva'  → solicitud de mantención en panel de solicitudes
+- 'mantencion_predictiva'  → alertas de mantención en solicitudes
+- 'documentos'             → pantalla Mis Documentos + solicitud de documento
+- 'combustible'            → solicitud de combustible en solicitudes (GastoOperativo)
+- 'finanzas'               → registro de gastos desde la app
+
+---
+
+## PARTE 1 — BACKEND
+
+### Modificar vista de login (views.py)
+Buscar la vista que maneja POST /api/login/ y agregar en la respuesta de login exitoso para conductores:
+
 ```python
-extra = models.JSONField(default=dict, blank=True)
+plan_modulos = []
+plan_nombre  = ''
+if user.empresa and user.empresa.plan:
+    plan_modulos = user.empresa.plan.modulos or []
+    plan_nombre  = user.empresa.plan.get_nombre_display()
+
+# Agregar al JsonResponse:
+'plan_modulos': plan_modulos,
+'plan_nombre':  plan_nombre,
 ```
 
-Luego: python manage.py makemigrations && python manage.py migrate
+### Modificar GET /api/conductor/rutas/ (views.py)
+Si el plan no incluye 'rutas' → retornar 403:
+```python
+if 'rutas' not in request.user.empresa.plan.modulos:
+    return JsonResponse({'error': 'Tu plan no incluye el módulo de rutas.'}, status=403)
+```
+
+### Modificar POST /api/conductor/solicitudes/ (views.py)
+Validar que el tipo de solicitud esté permitido por el plan:
+
+```python
+MODULO_REQUERIDO = {
+    'mantencion':  'mantencion_correctiva',
+    'combustible': 'combustible',
+    'documento':   'documentos',
+    'incidencia':  None,  # siempre disponible
+}
+modulo = MODULO_REQUERIDO.get(tipo)
+if modulo and modulo not in request.user.empresa.plan.modulos:
+    return JsonResponse({
+        'error': f'Tu plan no incluye este tipo de solicitud.',
+        'codigo': 'MODULO_NO_INCLUIDO',
+        'modulo': modulo,
+    }, status=403)
+```
+
+### Modificar GET /api/conductor/documentos/ (views.py)
+```python
+if 'documentos' not in request.user.empresa.plan.modulos:
+    return JsonResponse({'error': 'Tu plan no incluye el módulo de documentos.'}, status=403)
+```
 
 ---
 
-## ARCHIVO NUEVO: g_de_flota/checklist_items.py
+## PARTE 2 — SERVICIO DE PERMISOS EN LA APP
 
-```python
-CHECKLIST_ITEMS = [
-    ('doc_permiso',   'documentos', 'Permiso de circulación',   'Vigente y en el vehículo',  True),
-    ('doc_revision',  'documentos', 'Revisión técnica',         'Vigente y en el vehículo',  True),
-    ('doc_soap',      'documentos', 'Seguro SOAP',              'Vigente y en el vehículo',  True),
-    ('doc_licencia',  'documentos', 'Licencia de conducir',     'Vigente y clase correcta',  True),
-    ('mec_frenos',    'mecanica',   'Frenos',                   'Freno de pie y de mano',    True),
-    ('mec_neumaticos','mecanica',   'Neumáticos',               'Estado y presión correcta', True),
-    ('mec_aceite',    'mecanica',   'Nivel de aceite',          'En rango normal',           True),
-    ('mec_combustible','mecanica',  'Nivel de combustible',     'Suficiente para la ruta',   True),
-    ('mec_luces',     'mecanica',   'Luces y señalización',     'Todas funcionando',         True),
-    ('seg_extintor',  'seguridad',  'Extintor',                 'Vigente y accesible',       True),
-    ('seg_botiquin',  'seguridad',  'Botiquín',                 'Completo y accesible',      True),
-    ('seg_triangulos','seguridad',  'Triángulos de emergencia', 'Presentes en el vehículo',  True),
+### Crear src/services/permisos.js (nuevo archivo)
+
+```javascript
+import { Preferences } from '@capacitor/preferences'
+
+export async function cargarModulos() {
+  const { value } = await Preferences.get({ key: 'plan_modulos' })
+  return JSON.parse(value || '[]')
+}
+
+export async function tieneModulo(modulo) {
+  const modulos = await cargarModulos()
+  return modulos.includes(modulo)
+}
+
+export async function getModulos() {
+  return await cargarModulos()
+}
+```
+
+### Crear src/composables/usePermisos.js (nuevo archivo)
+Composable reactivo para usar en cualquier componente Vue:
+
+```javascript
+import { ref, onMounted } from 'vue'
+import { Preferences } from '@capacitor/preferences'
+
+export function usePermisos() {
+  const modulos    = ref([])
+  const planNombre = ref('')
+  const cargando   = ref(true)
+
+  onMounted(async () => {
+    const { value: m } = await Preferences.get({ key: 'plan_modulos' })
+    const { value: p } = await Preferences.get({ key: 'plan_nombre' })
+    modulos.value    = JSON.parse(m || '[]')
+    planNombre.value = p || ''
+    cargando.value   = false
+  })
+
+  function tieneModulo(modulo) {
+    return modulos.value.includes(modulo)
+  }
+
+  return { modulos, planNombre, tieneModulo, cargando }
+}
+```
+
+---
+
+## PARTE 3 — GUARDAR MÓDULOS AL HACER LOGIN
+
+### Modificar src/stores/auth.js
+En la acción login(), después de guardar access_token, refresh_token y usuario, agregar:
+
+```javascript
+await Preferences.set({
+  key: 'plan_modulos',
+  value: JSON.stringify(data.plan_modulos || [])
+})
+await Preferences.set({
+  key: 'plan_nombre',
+  value: data.plan_nombre || ''
+})
+```
+
+En la acción logout(), agregar:
+```javascript
+await Preferences.remove({ key: 'plan_modulos' })
+await Preferences.remove({ key: 'plan_nombre' })
+```
+
+En la acción cargarSesion(), agregar:
+```javascript
+const { value: modulos } = await Preferences.get({ key: 'plan_modulos' })
+// No necesita guardarse en el store — se lee directo desde Preferences cuando se necesita
+```
+
+---
+
+## PARTE 4 — BOTTOM NAVIGATION
+
+### Modificar src/components/BottomNav.vue
+Usar usePermisos() para mostrar solo los tabs habilitados.
+
+El tab "Rutas" solo aparece si tieneModulo('rutas').
+El tab "Solicitudes" siempre aparece (incidencias no requieren módulo).
+El tab "Ajustes" siempre aparece.
+
+Si 'rutas' no está en el plan, la pantalla de inicio al abrir la app debe ser /solicitudes.
+
+```vue
+<script setup>
+import { usePermisos } from '@/composables/usePermisos.js'
+const { tieneModulo } = usePermisos()
+</script>
+
+<template>
+  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t"
+       style="padding-bottom: env(safe-area-inset-bottom)">
+    <div class="flex justify-around py-2">
+      <button v-if="tieneModulo('rutas')"
+        @click="router.push('/rutas')"
+        :class="['nav-item', esActivo('/rutas') ? 'activo' : '']">
+        <i class="ti ti-route text-xl"></i>
+        <span>Rutas</span>
+      </button>
+      <button @click="router.push('/solicitudes')"
+        :class="['nav-item', esActivo('/solicitudes') ? 'activo' : '']">
+        <i class="ti ti-bell text-xl"></i>
+        <span>Solicitudes</span>
+      </button>
+      <button @click="router.push('/ajustes')"
+        :class="['nav-item', esActivo('/ajustes') ? 'activo' : '']">
+        <i class="ti ti-settings text-xl"></i>
+        <span>Ajustes</span>
+      </button>
+    </div>
+  </nav>
+</template>
+```
+
+---
+
+## PARTE 5 — ROUTER GUARD
+
+### Modificar src/router/index.js
+Agregar meta con el módulo requerido en las rutas protegidas:
+
+```javascript
+const routes = [
+  { path: '/login',       component: () => import('@/views/Login.vue'),       meta: { publica: true } },
+  { path: '/onboarding',  component: () => import('@/views/Onboarding/SubirDocumentos.vue'), meta: { requiereAuth: true } },
+  {
+    path: '/rutas',
+    component: () => import('@/views/Rutas/ListaRutas.vue'),
+    meta: { requiereAuth: true, modulo: 'rutas' }
+  },
+  {
+    path: '/rutas/:id',
+    component: () => import('@/views/Rutas/DetalleRuta.vue'),
+    meta: { requiereAuth: true, modulo: 'rutas' }
+  },
+  {
+    path: '/rutas/:id/checklist',
+    component: () => import('@/views/Rutas/ChecklistPreviaje.vue'),
+    meta: { requiereAuth: true, modulo: 'rutas' }
+  },
+  {
+    path: '/documentos',
+    component: () => import('@/views/Documentos/MisDocumentos.vue'),
+    meta: { requiereAuth: true, modulo: 'documentos' }
+  },
+  { path: '/solicitudes', component: () => import('@/views/Solicitudes/ListaSolicitudes.vue'), meta: { requiereAuth: true } },
+  { path: '/ajustes',     component: () => import('@/views/Ajustes/Ajustes.vue'),             meta: { requiereAuth: true } },
 ]
 
-def get_items():
-    return [
-        {'id': i[0], 'categoria': i[1], 'nombre': i[2], 'descripcion': i[3], 'obligatorio': i[4]}
-        for i in CHECKLIST_ITEMS
-    ]
+router.beforeEach(async (to) => {
+  const { value: token   } = await Preferences.get({ key: 'access_token' })
+  const { value: modulos } = await Preferences.get({ key: 'plan_modulos' })
+  const modulosArray = JSON.parse(modulos || '[]')
 
-ITEMS_MAP = {i[0]: i[2] for i in CHECKLIST_ITEMS}
+  if (!to.meta.publica && !token) return '/login'
+  if (to.path === '/login' && token) {
+    // Redirigir a la pantalla correcta según el plan
+    return modulosArray.includes('rutas') ? '/rutas' : '/solicitudes'
+  }
 
-MAP_DOC_ITEM = {
-    'permiso_circulacion': 'doc_permiso',
-    'revision_tecnica':    'doc_revision',
-    'seguro_soap':         'doc_soap',
-}
+  // Verificar módulo requerido
+  if (to.meta.modulo && !modulosArray.includes(to.meta.modulo)) {
+    return '/modulo-no-disponible'
+  }
+})
 ```
 
----
-
-## VISTA ChecklistView (agregar en views.py)
-
-Importar al inicio de views.py:
-```python
-from .checklist_items import get_items, ITEMS_MAP, MAP_DOC_ITEM
-```
-
-### GET /api/conductor/checklist/:ruta_id/
-- Obtener ruta verificando que conductor == request.user
-- Cargar ítems con get_items()
-- Para cada ítem de documentos, buscar en Documento el estado real del vehículo de la ruta
-  Usar MAP_DOC_ITEM para mapear tipo_doc → item_id
-  Agregar al ítem: estado_documento (vigente/por_vencer/vencido/None) y pre_resultado ('ok' si vigente, None si no)
-- Buscar borrador: SolicitudConductor con tipo='mantencion', extra__ruta_id=ruta.id, extra__es_checklist=True, estado='pendiente'
-  Si existe, retornar sus respuestas guardadas en extra.respuestas
-- Retornar: { items, respuestas_guardadas, ruta: {id, nombre}, vehiculo: {patente, marca} }
-
-### POST /api/conductor/checklist/:ruta_id/
-Body: { respuestas: { item_id: { resultado, observacion } }, firma_base64 }
-
-1. Validar que todos los ítems obligatorios tienen resultado. Si faltan → 400 con mensaje.
-
-2. Detectar fallas: items donde resultado == 'falla'
-
-3. Construir resumen_fallas: lista de strings "NombreItem: observacion"
-
-4. Crear o actualizar SolicitudConductor con update_or_create filtrando por
-   conductor=request.user, tipo='mantencion', extra__ruta_id=ruta.id, extra__es_checklist=True
-   Campos:
-   - empresa, vehiculo de la ruta
-   - titulo: f'Checklist pre-viaje — {ruta.nombre}'
-   - descripcion: 'Vehículo en orden.' si sin fallas, o 'Fallas:\n' + fallas si hay
-   - estado: 'aprobado' si sin fallas, 'pendiente' si hay fallas
-   - prioridad: 'baja' si sin fallas, 'alta' si hay fallas
-   - extra: { ruta_id, es_checklist: True, respuestas, firma_b64, tiene_fallas, fallas_detalle }
-
-5. Notificar con notificar_admins_empresa():
-   - Sin fallas: tipo='actividad', titulo='✓ Vehículo en orden — {patente}',
-     mensaje='{conductor} completó el checklist. Vehículo listo para partir en {ruta.nombre}.'
-   - Con fallas: tipo='solicitud_conductor', titulo='⚠ Checklist con fallas — {patente}',
-     mensaje='{conductor} detectó fallas antes de partir: {resumen_fallas}'
-   - En ambos casos: url_accion='/empresa/solicitudes/{sol.id}'
-
-6. Actualizar ruta.extra: { checklist_completo: True, checklist_id: sol.id } → ruta.save()
-
-7. Push al conductor con push_conductor():
-   - Sin fallas: 'Todo en orden. Ya puedes iniciar la ruta.'
-   - Con fallas: 'Se notificó al administrador sobre las fallas.'
-
-8. registrar_log acción 'checklist_completado' con { ruta_id, tiene_fallas, fallas }
-
-9. Retornar: { ok: True, tiene_fallas, solicitud_id, mensaje }
-
----
-
-## URL (agregar en urls.py)
-
-```python
-path('api/conductor/checklist/<int:ruta_id>/', ChecklistView.as_view()),
-```
-
----
-
-## FRONTEND: src/views/Rutas/ChecklistPreviaje.vue (crear completo)
-
-### Layout
-- Header: botón ← + título "Checklist pre-viaje" + subtítulo "{ruta.nombre} · {patente}"
-- Barra de progreso (completados / total obligatorios × 100%)
-- Badge "X / Y" con conteo
-- Lista de ítems agrupados por categoría
-- Sección de firma digital al final
-- Botón de envío fijo al fondo
-
-### Ítem del checklist
-Cada ítem tiene tres estados visuales:
-- pendiente: borde gris, círculo vacío — toque abre opciones
-- ok: borde verde, fondo verde suave, círculo verde con check
-- falla: borde rojo, fondo rojo suave, círculo rojo con X + textarea de observación
-
-Al tocar un ítem pendiente: mostrar dos botones inline "✓ OK" y "✗ Falla"
-Al tocar un ítem ya marcado: toggle que lo devuelve a pendiente
-Los ítems de documentos con estado_documento='vigente' llegan pre-marcados como ok y muestran la fecha de vencimiento como subtítulo
-
-### Firma digital
-Componente canvas con eventos touch (touchstart, touchmove, touchend)
-Botón "Limpiar" bajo el canvas
-Al dibujar: emitir el base64 del canvas al padre
-
-```javascript
-// En el componente de firma:
-function terminar() {
-  emit('update:firma', canvas.value.toDataURL('image/png'))
-}
-```
-
-### Botón de envío
-Deshabilitado mientras haya ítems obligatorios sin respuesta o sin firma
-Texto dinámico:
-- Si faltan ítems: "Completa todos los ítems ({N} pendientes)"
-- Si falta firma: "Firma para continuar"
-- Si todo listo: "Enviar checklist"
-Color: gris si deshabilitado, verde si listo
-
-### Al enviar
-- POST /api/conductor/checklist/:ruta_id/
-- Si éxito sin fallas: showToast "Todo en orden. Puedes iniciar la ruta." → router.push(`/rutas/${rutaId}`)
-- Si éxito con fallas: showToast "Checklist enviado con fallas. El admin fue notificado." → router.push(`/rutas/${rutaId}`)
-- Si error: showToast con el mensaje del backend, no navegar
-
-### Store (si aplica)
-No necesita store propio — usar apiFetch directo en la vista con estado local ref()
-
----
-
-## MODIFICAR DetalleRuta.vue
-
-Agregar computed:
-```javascript
-const checklistCompleto = computed(() =>
-  ruta.value?.extra?.checklist_completo === true
-)
-```
-
-En el botón de acción para estado 'pendiente', reemplazar por lógica condicional:
-- Si !checklistCompleto: mostrar botón morado "Completar checklist antes de iniciar"
-  que navega a `/rutas/${ruta.id}/checklist`
-- Si checklistCompleto: mostrar botón verde "Iniciar ruta" que abre el modal existente
-
----
-
-## MODIFICAR router/index.js
-
+Agregar ruta para módulo no disponible:
 ```javascript
 {
-  path: '/rutas/:id/checklist',
-  component: () => import('@/views/Rutas/ChecklistPreviaje.vue'),
-  meta: { requiresAuth: true }
+  path: '/modulo-no-disponible',
+  component: () => import('@/views/ModuloNoDisponible.vue'),
+  meta: { requiereAuth: true }
 }
+```
+
+---
+
+## PARTE 6 — VISTA ModuloNoDisponible.vue (crear)
+
+Pantalla simple que se muestra cuando el conductor intenta acceder a un módulo que su plan no incluye:
+
+```vue
+<template>
+  <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; text-align:center;">
+    <div style="width:64px; height:64px; border-radius:50%; background:var(--color-background-secondary); display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+      <i class="ti ti-lock" style="font-size:28px; color:var(--color-text-tertiary);"></i>
+    </div>
+    <p style="font-size:17px; font-weight:500; margin:0 0 8px; color:var(--color-text-primary);">
+      Módulo no disponible
+    </p>
+    <p style="font-size:14px; color:var(--color-text-secondary); margin:0 0 24px; max-width:260px; line-height:1.5;">
+      Tu empresa no tiene acceso a este módulo en el plan actual.
+      Contacta al administrador para más información.
+    </p>
+    <p style="font-size:12px; color:var(--color-text-tertiary); margin:0 0 24px;">
+      Plan actual: <strong>{{ planNombre || '—' }}</strong>
+    </p>
+    <button @click="router.back()"
+      style="padding:12px 24px; border-radius:12px; background:var(--color-background-secondary); border:0.5px solid var(--color-border-secondary); font-size:14px; cursor:pointer; color:var(--color-text-primary);">
+      Volver
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { Preferences } from '@capacitor/preferences'
+
+const router     = useRouter()
+const planNombre = ref('')
+
+onMounted(async () => {
+  const { value } = await Preferences.get({ key: 'plan_nombre' })
+  planNombre.value = value || ''
+})
+</script>
+```
+
+---
+
+## PARTE 7 — PANEL DE SOLICITUDES (filtrar por módulo)
+
+### Modificar src/views/Solicitudes/ListaSolicitudes.vue
+El grid de tipos de solicitud debe mostrar solo los habilitados por el plan.
+
+```vue
+<script setup>
+import { usePermisos } from '@/composables/usePermisos.js'
+const { tieneModulo } = usePermisos()
+
+const TIPOS_SOLICITUD = [
+  {
+    value:    'mantencion',
+    label:    'Mantención',
+    icono:    'ti-tool',
+    color:    '#534AB7',
+    bg:       '#EEEDFE',
+    modulo:   'mantencion_correctiva',
+    desc:     'Falla mecánica o revisión',
+  },
+  {
+    value:    'combustible',
+    label:    'Combustible',
+    icono:    'ti-gas-station',
+    color:    '#B45309',
+    bg:       '#FEF3C7',
+    modulo:   'combustible',
+    desc:     'Solicitar recarga',
+  },
+  {
+    value:    'incidencia',
+    label:    'Incidencia',
+    icono:    'ti-alert-triangle',
+    color:    '#A32D2D',
+    bg:       '#FCEBEB',
+    modulo:   null,  // siempre disponible
+    desc:     'Accidente u otro problema',
+  },
+  {
+    value:    'documento',
+    label:    'Documento',
+    icono:    'ti-file-plus',
+    color:    '#16A34A',
+    bg:       '#DCFCE7',
+    modulo:   'documentos',
+    desc:     'Subir o renovar documento',
+  },
+]
+
+// Solo mostrar tipos habilitados por el plan
+const tiposDisponibles = computed(() =>
+  TIPOS_SOLICITUD.filter(t => !t.modulo || tieneModulo(t.modulo))
+)
+</script>
+
+<template>
+  <!-- Reemplazar el grid estático por: -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px;">
+    <div
+      v-for="tipo in tiposDisponibles"
+      :key="tipo.value"
+      @click="seleccionarTipo(tipo)"
+      style="...estilos existentes..."
+    >
+      <!-- card del tipo -->
+    </div>
+  </div>
+
+  <!-- Si solo hay un tipo disponible, mostrar en columna completa -->
+  <!-- Si no hay ninguno disponible, mostrar mensaje -->
+  <div v-if="tiposDisponibles.length === 0"
+    style="text-align:center; padding:24px; color:var(--color-text-secondary);">
+    <i class="ti ti-clipboard-off" style="font-size:28px; display:block; margin-bottom:8px;"></i>
+    <p style="font-size:13px; margin:0;">No hay tipos de solicitud disponibles en tu plan.</p>
+  </div>
+</template>
+```
+
+---
+
+## PARTE 8 — PANTALLA INICIO SEGÚN PLAN
+
+### Modificar src/views/Rutas/ListaRutas.vue
+Si el módulo de rutas no está disponible y el conductor llega a esta pantalla
+(por si acaso el guard falla), mostrar la pantalla de módulo no disponible inline:
+
+```vue
+<script setup>
+import { usePermisos } from '@/composables/usePermisos.js'
+const { tieneModulo, cargando } = usePermisos()
+</script>
+
+<template>
+  <div v-if="cargando"><!-- skeleton --></div>
+  <div v-else-if="!tieneModulo('rutas')">
+    <!-- Redirigir al router guard — esto es solo fallback -->
+    <p style="padding:24px; color:var(--color-text-secondary);">Redirigiendo...</p>
+  </div>
+  <div v-else>
+    <!-- Contenido normal de ListaRutas -->
+  </div>
+</template>
+```
+
+---
+
+## PARTE 9 — AJUSTES: mostrar plan actual
+
+### Modificar src/views/Ajustes/Ajustes.vue
+Agregar en la sección "Mi cuenta" el plan actual con sus módulos:
+
+```vue
+<script setup>
+import { usePermisos } from '@/composables/usePermisos.js'
+const { modulos, planNombre } = usePermisos()
+
+const MODULO_LABELS = {
+  rutas:                 'Rutas y trabajos',
+  mantencion_correctiva: 'Mantención',
+  mantencion_predictiva: 'Mantención predictiva',
+  documentos:            'Documentos',
+  combustible:           'Combustible',
+  finanzas:              'Finanzas',
+}
+</script>
+
+<template>
+  <!-- Agregar esta sección en Ajustes, después del perfil: -->
+  <p class="section-label">Plan de la empresa</p>
+  <div style="background:var(--color-background-secondary); border-radius:12px; padding:12px 14px; margin-bottom:16px;">
+    <p style="font-size:13px; font-weight:500; margin:0 0 8px; color:var(--color-text-primary);">
+      {{ planNombre || 'Sin plan asignado' }}
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      <span
+        v-for="mod in modulos"
+        :key="mod"
+        style="font-size:11px; padding:2px 8px; border-radius:99px; background:#E1F5EE; color:#085041;"
+      >
+        {{ MODULO_LABELS[mod] || mod }}
+      </span>
+      <span v-if="modulos.length === 0"
+        style="font-size:12px; color:var(--color-text-tertiary);">
+        Sin módulos activos
+      </span>
+    </div>
+  </div>
+</template>
 ```
 
 ---
 
 ## CONVENCIONES
-- Composition API <script setup>
-- apiFetch siempre, nunca fetch directo
-- Touch targets mínimo 44px
-- safe-area-inset-bottom en el botón fijo del fondo
+- Composition API <script setup> siempre
+- Nunca localStorage — siempre @capacitor/preferences
+- El guard del router es la primera línea de defensa — las vistas tienen solo fallback visual
+- Si tieneModulo() devuelve false para una ruta → redirigir a /modulo-no-disponible
+- Los módulos se leen de Preferences, no del store — son datos persistentes del dispositivo
 - Textos en español
-- Si OSRM o push_conductor falla: fail-silent con registrar_log
+- Sin "// resto igual"
 
 ---
 
 ## ARCHIVOS A ENTREGAR
-1. checklist_items.py — completo
-2. views_checklist_patch.py — ChecklistView completa con indicación de dónde va en views.py
-3. urls_patch.py — la ruta nueva
-4. models_patch.py — solo la línea extra = JSONField a agregar en Ruta
-5. ChecklistPreviaje.vue — completo
-6. detalleruta_patch.vue — solo el fragmento del botón de acción modificado
-7. router_patch.js — solo la ruta nueva
+
+Backend:
+1. views_login_patch.py — solo las líneas a agregar en la respuesta del login
+2. views_solicitudes_patch.py — solo la validación de módulo en POST /api/conductor/solicitudes/
+3. views_documentos_patch.py — solo la validación en GET /api/conductor/documentos/
+4. views_rutas_patch.py — solo la validación en GET /api/conductor/rutas/
+
+Frontend:
+5. src/services/permisos.js — completo
+6. src/composables/usePermisos.js — completo
+7. src/stores/auth_patch.js — solo las líneas a agregar en login() y logout()
+8. src/router/index_patch.js — router completo con guards y meta modulos
+9. src/components/BottomNav.vue — completo reescrito
+10. src/views/ModuloNoDisponible.vue — completo
+11. src/views/Solicitudes/solicitudes_patch.vue — solo el grid de tipos modificado
+12. src/views/Ajustes/ajustes_patch.vue — solo la sección de plan a agregar
+13. src/views/Rutas/listarutas_patch.vue — solo el v-if de módulo
 
 Sin "# resto igual".

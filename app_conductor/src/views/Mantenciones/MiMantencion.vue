@@ -2,11 +2,14 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMantencionesStore } from '@/stores/mantenciones.js'
+import { usePermisos } from '@/composables/usePermisos.js'
 import BottomNav from '@/components/BottomNav.vue'
 import ModalDetalleMantencion from '@/components/ModalDetalleMantencion.vue'
 
 const store  = useMantencionesStore()
 const router = useRouter()
+
+const { cargando: cargandoPermisos } = usePermisos()
 
 // ── Pull to refresh ───────────────────────────────────────────────────────────
 let startY       = 0
@@ -126,7 +129,12 @@ onMounted(() => store.cargarMantenciones())
 </script>
 
 <template>
-  <div
+  <!-- Spinner mientras se verifican permisos del plan -->
+  <div v-if="cargandoPermisos" class="min-h-dvh bg-gray-50 flex items-center justify-center">
+    <span class="w-8 h-8 border-2 border-gray-200 border-t-[var(--color-acento)] rounded-full animate-spin"/>
+  </div>
+
+  <div v-else
     class="min-h-dvh bg-gray-50 pb-nav"
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"

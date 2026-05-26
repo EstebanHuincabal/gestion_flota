@@ -1,17 +1,28 @@
 <script setup>
+import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMantencionesStore } from '@/stores/mantenciones.js'
+import { usePermisos } from '@/composables/usePermisos.js'
 
 const router      = useRouter()
 const route       = useRoute()
 const mantenStore = useMantencionesStore()
 
+const { tieneModulo, cargando: cargandoPermisos } = usePermisos()
+
+// modulo: null → siempre visible; modulo: 'xxx' → visible solo si está en el plan
 const items = [
-  { to: '/rutas',       label: 'Rutas',      icon: 'rutas'       },
-  { to: '/solicitudes', label: 'Solicitudes', icon: 'solicitudes' },
-  { to: '/mantencion',  label: 'Mantención',  icon: 'mantencion'  },
-  { to: '/ajustes',     label: 'Ajustes',     icon: 'ajustes'     },
+  { to: '/rutas',       label: 'Rutas',      icon: 'rutas',       modulo: 'rutas'        },
+  { to: '/solicitudes', label: 'Solicitudes', icon: 'solicitudes', modulo: 'solicitudes'  },
+  { to: '/mantencion',  label: 'Mantención',  icon: 'mantencion',  modulo: 'mantenciones' },
+  { to: '/ajustes',     label: 'Ajustes',     icon: 'ajustes',     modulo: null           },
 ]
+
+// Mientras cargamos los permisos mostramos todos los ítems para evitar un flash
+const itemsVisibles = computed(() => {
+  if (cargandoPermisos.value) return items
+  return items.filter(item => !item.modulo || tieneModulo(item.modulo))
+})
 
 const esActivo = (to) => route.path.startsWith(to)
 </script>
@@ -25,7 +36,7 @@ const esActivo = (to) => route.path.startsWith(to)
   <nav class="nav-glass" style="padding-bottom: env(safe-area-inset-bottom, 0px)">
     <div class="nav-inner">
       <button
-        v-for="item in items"
+        v-for="item in itemsVisibles"
         :key="item.to"
         @click="router.push(item.to)"
         :aria-label="item.label"

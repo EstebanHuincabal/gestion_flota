@@ -16,6 +16,58 @@ from .checklist_items import get_items, ITEMS_MAP, MAP_DOC_ITEM
 
 
 # ─────────────────────────────────────────
+# Endpoint: info del plan actual
+# ─────────────────────────────────────────
+
+# Mapeo: clave que usa la app → prefijo en plan.permisos M2M
+# plan.modulos usa claves distintas ('trabajos_y_rutas', etc.) por eso
+# derivamos la visibilidad desde los permisos granulares, que son la
+# fuente de verdad que gestiona GestionPermisos.vue.
+_MODULO_A_PREFIJO = {
+    'rutas':        'rutas.',
+    'solicitudes':  'solicitudes.',
+    'mantenciones': 'mantenciones.',
+}
+
+
+def _modulos_desde_permisos(plan) -> list:
+    """
+    Devuelve la lista de módulos que la app debe mostrar,
+    derivados de los permisos M2M del plan.
+    Un módulo está activo si el plan tiene AL MENOS UN permiso de ese módulo.
+    """
+    codigos = set(plan.permisos.values_list('codigo', flat=True))
+    return [
+        modulo
+        for modulo, prefijo in _MODULO_A_PREFIJO.items()
+        if any(c.startswith(prefijo) for c in codigos)
+    ]
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def conductor_mi_plan(request):
+    """
+    Devuelve los módulos visibles en la app y el nombre del plan.
+
+    La visibilidad se deriva de plan.permisos (M2M), NO de plan.modulos
+    (JSONField), porque plan.modulos usa claves internas distintas a las
+    que maneja GestionPermisos.vue. Así, añadir/quitar permisos de rutas
+    en el panel de superadmin se refleja automáticamente en la app.
+    """
+    empresa     = request.user.empresa
+    modulos     = []
+    plan_nombre = ''
+
+    if empresa and empresa.plan_id:
+        plan        = empresa.plan
+        plan_nombre = plan.get_nombre_display() or plan.nombre or ''
+        modulos     = _modulos_desde_permisos(plan)
+
+    return Response({'plan_modulos': modulos, 'plan_nombre': plan_nombre})
+
+
+# ─────────────────────────────────────────
 # Helpers de plan / permisos
 # ─────────────────────────────────────────
 
@@ -139,6 +191,17 @@ def _serializar_ruta(ruta, detallado=False):
 def conductor_rutas(request):
     if request.user.rol != Rol.CONDUCTOR:
         return Response({'error': 'Solo conductores pueden acceder a este endpoint.'}, status=403)
+
+    # Verificar módulo 'rutas' en el plan de la empresa
+    # Se usa plan.permisos (M2M) como fuente de verdad, igual que conductor_mi_plan,
+    # porque plan.modulos usa la clave 'trabajos_y_rutas' (no 'rutas').
+    empresa = request.user.empresa
+    if empresa and empresa.plan_id:
+        if 'rutas' not in _modulos_desde_permisos(empresa.plan):
+            return Response(
+                {'error': 'Tu plan no incluye el módulo de rutas.', 'codigo': 'MODULO_NO_INCLUIDO', 'modulo': 'rutas'},
+                status=403,
+            )
 
     rutas_qs = (
         Ruta.objects
