@@ -4,6 +4,7 @@ import { useRouter, useRoute, RouterView } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import NotificacionesBell from '../../components/NotificacionesBell.vue'
 import PlanUsageBanner from './PlanUsageBanner.vue'
+import BannerSuscripcion from './BannerSuscripcion.vue'
 import LimitePlanModal from '../planes/LimitePlanModal.vue'
 import SessionWarningModal from '../../components/SessionWarningModal.vue'
 import { useSessionTimer } from '../../utils/useSessionTimer.js'
@@ -76,6 +77,10 @@ function conectarWSSolicitudes() {
 
 let pollingInterval = null
 
+function onSuscripcionBloqueada() {
+  router.push('/empresa/pago')
+}
+
 onMounted(() => {
   refrescarPermisos()
   pollingInterval = setInterval(refrescarPermisos, 15_000)
@@ -83,12 +88,15 @@ onMounted(() => {
   refrescarConteoSolicitudes()
   conectarWSSolicitudes()
   pollingSol = setInterval(refrescarConteoSolicitudes, 30_000)
+  // Escuchar bloqueo 402
+  window.addEventListener('suscripcion-bloqueada', onSuscripcionBloqueada)
 })
 
 onUnmounted(() => {
   clearInterval(pollingInterval)
   clearInterval(pollingSol)
   if (wsSolicitudes) { wsSolicitudes._manuallyClosed = true; wsSolicitudes.close() }
+  window.removeEventListener('suscripcion-bloqueada', onSuscripcionBloqueada)
 })
 
 const navItems = [
@@ -171,6 +179,13 @@ const navItems = [
     permiso: null,
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>`,
+  },
+  {
+    label: 'Suscripción y pagos',
+    path: '/empresa/pago',
+    permiso: null,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>`,
   },
   {
     label: 'Configuración',
@@ -279,6 +294,7 @@ const cerrarSesion = () => {
         </div>
       </header>
       <PlanUsageBanner />
+      <BannerSuscripcion />
       <div class="page-content">
         <RouterView />
       </div>

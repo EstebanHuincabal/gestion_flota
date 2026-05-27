@@ -286,6 +286,9 @@ class Usuario(AbstractUser):
     politicas_aceptadas = models.BooleanField(default=False)
     primer_login        = models.BooleanField(default=True)
 
+    # Datos adicionales (términos aceptados, etc.)
+    extra = models.JSONField(default=dict, blank=True)
+
     USERNAME_FIELD  = "email"
     REQUIRED_FIELDS = []
 
@@ -870,3 +873,134 @@ class SolicitudConductor(models.Model):
 
     def __str__(self):
         return f"{self.get_tipo_display()} — {self.conductor} — {self.get_estado_display()}"
+
+
+# ─────────────────────────────────────────
+# Configuración global del sistema (singleton)
+# ─────────────────────────────────────────
+
+class ConfiguracionSistema(models.Model):
+    """Singleton. Acceder siempre vía ConfiguracionSistema.get()."""
+
+    # Términos y condiciones
+    terminos_condiciones   = models.TextField(blank=True, default='')
+    terminos_version       = models.CharField(max_length=20, blank=True, default='1.0')
+    terminos_updated_at    = models.DateTimeField(null=True, blank=True)
+
+    # Configuración de pagos y bloqueo
+    dias_gracia_pago       = models.PositiveSmallIntegerField(default=7)
+    bloqueo_automatico     = models.BooleanField(default=True)
+    mensaje_pago_pendiente = models.TextField(
+        blank=True,
+        default='Tu suscripción tiene un pago pendiente. Por favor regulariza tu situación para continuar usando el servicio.'
+    )
+
+    class Meta:
+        verbose_name        = 'Configuración del Sistema'
+        verbose_name_plural = 'Configuración del Sistema'
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return 'Configuración del Sistema'
+
+
+# ─────────────────────────────────────────
+# Suscripciones y pagos Transbank
+# ─────────────────────────────────────────
+
+class Suscripcion(models.Model):
+    ESTADOS = [
+        ('trial',      'Trial'),
+        ('activa',     'Activa'),
+        ('gracia',     'Período de gracia'),
+        ('suspendida', 'Suspendida'),
+        ('cancelada',  'Cancelada'),
+    ]
+    CICLOS = [('mensual', 'Mensual'), ('anual', 'Anual')]
+
+    empresa           = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name='suscripcion')
+    plan              = models.ForeignKey(PlanSuscripcion, on_delete=models.PROTECT)
+    ciclo             = models.CharField(max_length=10, choices=CICLOS, default='mensual')
+    estado            = models.CharField(max_length=20, choices=ESTADOS, default='trial')
+    fecha_inicio      = models.DateTimeField(null=True, blank=True)
+    fecha_fin_periodo = models.DateTimeField(null=True, blank=True)
+    fecha_cancelacion = models.DateTimeField(null=True, blank=True)
+    trial_hasta       = models.DateTimeField(null=True, blank=True)
+    dias_gracia       = models.PositiveSmallIntegerField(default=7)
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Suscripción'
+
+    @property
+    def esta_bloqueada(self):
+        return self.estado in ('suspendida', 'cancelada')
+
+    @property
+    def dias_para_vencer(self):
+        if not self.fecha_fin_periodo:
+            return None
+        return (self.fecha_fin_periodo.date() - timezone.now().date()).days
+
+    def __str__(self):
+        return f"{self.empresa.nombre} — {self.get_estado_display()}"
+
+
+class PagoTransbank(models.Model):
+    ESTADOS = [
+        ('iniciado',  'Iniciado'),
+        ('aprobado',  'Aprobado'),
+        ('rechazado', 'Rechazado'),
+        ('anulado',   'Anulado'),
+        ('fallido',   'Fallido'),
+    ]
+
+    empresa      = models.ForeignKey(Empresa, on_delete=models.PROTECT, related_name='pagos')
+    suscripcion  = models.ForeignKey(Suscripcion, on_delete=models.PROTECT, related_name='pagos')
+    token        = models.CharField(max_length=200, unique=True)
+    orden_compra = models.CharField(max_length=64, unique=True)
+    monto        = models.PositiveIntegerField()
+    estado       = models.CharField(max_length=20, choices=ESTADOS, default='iniciado')
+    ciclo        = models.CharField(max_length=10, default='mensual')
+    plan_nombre  = models.CharField(max_length=50, blank=True, default='')
+    respuesta_tb = models.JSONField(default=dict, blank=True)
+    fecha_pago   = models.DateTimeField(null=True, blank=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering     = ['-created_at']
+        verbose_name = 'Pago Transbank'
+
+    def __str__(self):
+        return f"{self.empresa.nombre} — {self.orden_compra} — {self.get_estado_display()}"
+
+
+# ─────────────────────────────────────────
+# Tarjeta guardada – Webpay OneClick Mall
+# ─────────────────────────────────────────
+
+class TarjetaGuardada(models.Model):
+    """
+    Tarjeta inscrita con Webpay OneClick para cobros automáticos.
+    Se crea cuando el usuario completa el formulario de inscripción de OneClick.
+    """
+    empresa     = models.OneToOneField(
+        Empresa, on_delete=models.CASCADE, related_name='tarjeta_guardada'
+    )
+    tbk_user    = models.CharField(max_length=200)        # token de cobro devuelto por Transbank
+    username_tb = models.CharField(max_length=100)        # identificador usado en la inscripción
+    last_4      = models.CharField(max_length=4,  blank=True)
+    card_type   = models.CharField(max_length=40, blank=True)   # Visa, MasterCard, etc.
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name        = 'Tarjeta guardada'
+        verbose_name_plural = 'Tarjetas guardadas'
+
+    def __str__(self):
+        return f"{self.empresa.nombre} – {self.card_type} ****{self.last_4}"

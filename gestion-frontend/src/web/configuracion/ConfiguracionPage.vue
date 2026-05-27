@@ -4,6 +4,7 @@ import PerfilTab from './tabs/PerfilTab.vue'
 import AparienciaTab from './tabs/AparienciaTab.vue'
 import NotificacionesTab from './tabs/NotificacionesTab.vue'
 import MiPlanTab from './tabs/MiPlanTab.vue'
+import TerminosCondicionesTab from './tabs/TerminosCondicionesTab.vue'
 
 const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
 
@@ -39,6 +40,14 @@ const TABS = [
       d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>`,
     component: MiPlanTab,
     roles: ['USUARIO'],
+  },
+  {
+    id: 'terminos',
+    label: 'Términos y Pagos',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>`,
+    component: TerminosCondicionesTab,
+    roles: ['SUPERADMIN'],
   },
 ]
 

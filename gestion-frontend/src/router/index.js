@@ -58,6 +58,13 @@ import SolicitudesAdmin       from '../web/solicitudes/SolicitudesAdmin.vue'
 // Calendario global
 import CalendarioGlobal from '../web/calendario/CalendarioGlobal.vue'
 
+// Pagos y suscripciones
+import IniciarPago     from '../web/pago/IniciarPago.vue'
+import PagoExitoso    from '../web/pago/PagoExitoso.vue'
+import PagoFallido    from '../web/pago/PagoFallido.vue'
+import HistorialPagos from '../web/pago/HistorialPagos.vue'
+import PagosSuperAdmin from '../web/admin/PagosSuperAdmin.vue'
+
 const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
@@ -117,6 +124,7 @@ const routes = [
       { path: 'rutas',        component: Rutas },
       { path: 'solicitudes',  component: SolicitudesAdmin },
       { path: 'calendario',   component: CalendarioGlobal },
+      { path: 'pagos',        component: PagosSuperAdmin },
     ],
   },
 
@@ -152,6 +160,10 @@ const routes = [
       { path: 'solicitudes',     component: SolicitudesConductores },
       { path: 'calendario',      component: CalendarioGlobal,        meta: { permiso: 'calendario.ver' } },
       { path: 'configuracion',   component: ConfiguracionPage },
+      { path: 'pago',            component: IniciarPago },
+      { path: 'pago/exitoso',    component: PagoExitoso },
+      { path: 'pago/fallido',    component: PagoFallido },
+      { path: 'pagos',           component: HistorialPagos },
     ],
   },
 ]

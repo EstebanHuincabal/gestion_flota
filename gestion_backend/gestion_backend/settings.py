@@ -41,6 +41,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'g_de_flota.middleware.ConfiguracionSeguridadMiddleware',
+    'g_de_flota.middleware.BloqueoSuscripcionMiddleware',
 ]
 
 ROOT_URLCONF = 'gestion_backend.urls'
@@ -154,6 +155,18 @@ SIMPLE_JWT = {
 
 # ── WebSockets (Django Channels) ───────────────────────────────────────────────
 ASGI_APPLICATION = 'gestion_backend.asgi.application'
+
+# ── Transbank Webpay Plus ──────────────────────────────────────────────────────
+TRANSBANK_ENVIRONMENT  = os.environ.get('TRANSBANK_ENVIRONMENT', 'integration')  # 'integration' | 'production'
+TRANSBANK_COMMERCE_CODE = os.environ.get('TRANSBANK_COMMERCE_CODE', '597055555532')
+TRANSBANK_API_KEY       = os.environ.get('TRANSBANK_API_KEY', '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C')
+
+# URL base del frontend (para redirects de retorno Transbank)
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:7183')
+
+# OneClick Mall (tarjeta guardada / cobros automáticos)
+ONECLICK_COMMERCE_CODE = os.environ.get('ONECLICK_COMMERCE_CODE', '597055555541')
+ONECLICK_CHILD_CODE    = os.environ.get('ONECLICK_CHILD_CODE',    '597055555542')
 
 CHANNEL_LAYERS = {
     'default': {

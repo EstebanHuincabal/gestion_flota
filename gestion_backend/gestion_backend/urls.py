@@ -25,6 +25,14 @@ from g_de_flota.views_planes import (
     planes_lista_crear, planes_detalle,
     plan_asignar_empresa, plan_uso, plan_permisos,
     solicitar_cambio_plan,
+    # Transbank Webpay Plus
+    PagoIniciarView, PagoRetornoView, PagoHistorialView,
+    # Términos y suscripciones
+    TerminosView, TerminosPublicosView, TerminosAceptarView,
+    SuscripcionEmpresaView, SuscripcionesAdminView,
+    # OneClick — tarjeta guardada
+    TarjetaEstadoView, TarjetaInscribirView,
+    TarjetaInscripcionRetornoView, TarjetaEliminarView,
 )
 from g_de_flota.views_config import (
     usuario_perfil, usuario_cambiar_password, plan_historial,
@@ -190,6 +198,23 @@ urlpatterns = [
 
     # Calendario global
     path('api/empresa/calendario/', calendario_eventos, name='calendario-eventos'),
+
+    # ── Transbank Webpay Plus ───────────────────────────────────────────────────
+    path('api/pago/iniciar/',                          PagoIniciarView.as_view(),         name='pago-iniciar'),
+    path('api/pago/retorno/',                          PagoRetornoView.as_view(),         name='pago-retorno'),
+    path('api/pago/historial/',                        PagoHistorialView.as_view(),       name='pago-historial'),
+    path('api/admin/terminos/',                        TerminosView.as_view(),            name='admin-terminos'),
+    path('api/terminos/',                              TerminosPublicosView.as_view(),    name='terminos-publicos'),
+    path('api/empresa/terminos/aceptar/',              TerminosAceptarView.as_view(),     name='terminos-aceptar'),
+    path('api/empresa/suscripcion/',                   SuscripcionEmpresaView.as_view(),  name='empresa-suscripcion'),
+    path('api/admin/suscripciones/',                   SuscripcionesAdminView.as_view(),  name='admin-suscripciones'),
+    path('api/admin/suscripciones/<int:sus_id>/',      SuscripcionesAdminView.as_view(),  name='admin-suscripciones-detalle'),
+
+    # ── OneClick Mall — tarjeta guardada ────────────────────────────────────────
+    path('api/empresa/tarjeta/',                       TarjetaEstadoView.as_view(),              name='empresa-tarjeta'),
+    path('api/empresa/tarjeta/inscribir/',             TarjetaInscribirView.as_view(),           name='empresa-tarjeta-inscribir'),
+    path('api/empresa/tarjeta/retorno/',               TarjetaInscripcionRetornoView.as_view(),  name='empresa-tarjeta-retorno'),
+    path('api/empresa/tarjeta/eliminar/',              TarjetaEliminarView.as_view(),            name='empresa-tarjeta-eliminar'),
 
     # Rutas y trabajos — rutas específicas ANTES de las rutas con :id
     path('api/empresa/rutas/calcular/',                          RouteCalcularView.as_view(),     name='rutas-calcular'),

@@ -1,12 +1,22 @@
+import json
+import uuid
 from django.http import JsonResponse
+from django.views import View
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.shortcuts import redirect
+from django.conf import settings as django_settings
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 from .models import (
     Empresa, Usuario, Flota, Vehiculo, PlanSuscripcion, CambioPlan,
-    Rol, TipoNotificacion, Notificacion, Permiso
+    Rol, TipoNotificacion, Notificacion, Permiso,
+    ConfiguracionSistema, Suscripcion, PagoTransbank, TarjetaGuardada,
 )
 from .audit import registrar_log
 from .notificaciones import notificar, notificar_admins_empresa
@@ -367,3 +377,813 @@ def solicitar_cambio_plan(request):
                   detalle={'empresa': empresa.nombre, 'plan_solicitado': plan.nombre})
 
     return Response({"message": "Solicitud enviada. El administrador recibirá una notificación."})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transbank Webpay Plus — helpers y vistas
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_webpay_transaction():
+    """Devuelve una instancia de Transaction configurada según el entorno."""
+    try:
+        from transbank.webpay.webpay_plus.transaction import Transaction
+        from transbank.common.options import WebpayOptions
+        from transbank.common.integration_type import IntegrationType
+    except ImportError:
+        raise ImportError("transbank-sdk no está instalado. Ejecuta: pip install transbank-sdk>=4.0.0")
+
+    env = getattr(django_settings, 'TRANSBANK_ENVIRONMENT', 'integration')
+    commerce_code = django_settings.TRANSBANK_COMMERCE_CODE
+    api_key       = django_settings.TRANSBANK_API_KEY
+
+    if env == 'production':
+        options = WebpayOptions(
+            commerce_code=commerce_code,
+            api_key=api_key,
+            integration_type=IntegrationType.LIVE,
+        )
+    else:
+        options = WebpayOptions(
+            commerce_code=commerce_code,
+            api_key=api_key,
+            integration_type=IntegrationType.TEST,
+        )
+    return Transaction(options)
+
+
+def _get_oneclick_inscription():
+    """Devuelve una instancia de MallInscription (OneClick) según el entorno."""
+    try:
+        from transbank.webpay.oneclick.mall_inscription import MallInscription
+        from transbank.common.options import WebpayOptions
+        from transbank.common.integration_type import IntegrationType
+    except ImportError:
+        raise ImportError("transbank-sdk no está instalado.")
+
+    env  = getattr(django_settings, 'TRANSBANK_ENVIRONMENT', 'integration')
+    code = django_settings.ONECLICK_COMMERCE_CODE
+    key  = django_settings.TRANSBANK_API_KEY
+    itype = IntegrationType.LIVE if env == 'production' else IntegrationType.TEST
+    return MallInscription(WebpayOptions(commerce_code=code, api_key=key, integration_type=itype))
+
+
+def _get_oneclick_transaction():
+    """Devuelve una instancia de MallTransaction (OneClick) según el entorno."""
+    try:
+        from transbank.webpay.oneclick.mall_transaction import MallTransaction
+        from transbank.common.options import WebpayOptions
+        from transbank.common.integration_type import IntegrationType
+    except ImportError:
+        raise ImportError("transbank-sdk no está instalado.")
+
+    env  = getattr(django_settings, 'TRANSBANK_ENVIRONMENT', 'integration')
+    code = django_settings.ONECLICK_COMMERCE_CODE
+    key  = django_settings.TRANSBANK_API_KEY
+    itype = IntegrationType.LIVE if env == 'production' else IntegrationType.TEST
+    return MallTransaction(WebpayOptions(commerce_code=code, api_key=key, integration_type=itype))
+
+
+# ─────────────────────────────────────────
+# POST /api/pago/iniciar/
+# ─────────────────────────────────────────
+
+class PagoIniciarView(APIView):
+    """
+    Inicia un pago. Soporta dos modos:
+      - usar_tarjeta=false (default): Webpay Plus → devuelve {url, token}
+      - usar_tarjeta=true: OneClick Mall → cobra directamente y devuelve {ok, cobrado, ...}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if getattr(request.user, 'rol', None) != 'USUARIO':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        plan_id       = request.data.get('plan_id')
+        ciclo         = request.data.get('ciclo', 'mensual')
+        usar_tarjeta  = request.data.get('usar_tarjeta', False)
+        empresa       = request.user.empresa
+
+        if not empresa:
+            return Response({'error': 'Sin empresa asignada.'}, status=403)
+
+        try:
+            plan = PlanSuscripcion.objects.get(id=plan_id, activo=True)
+        except PlanSuscripcion.DoesNotExist:
+            return Response({'error': 'Plan no encontrado.'}, status=404)
+
+        # ── Bloqueo temporal: no se puede pagar si la suscripción aún tiene > 7 días ──
+        sus_existente = Suscripcion.objects.filter(empresa=empresa).first()
+        if sus_existente and sus_existente.estado == 'activa':
+            dias = sus_existente.dias_para_vencer
+            if dias is not None and dias > 7:
+                fecha_str = sus_existente.fecha_fin_periodo.strftime('%d/%m/%Y') \
+                            if sus_existente.fecha_fin_periodo else None
+                return Response({
+                    'error':         f'Tu suscripción está activa hasta el {fecha_str}.',
+                    'codigo':        'PAGO_NO_PERMITIDO',
+                    'proxima_fecha': fecha_str,
+                    'dias_restantes': dias,
+                }, status=400)
+
+        monto = int(plan.precio_anual if ciclo == 'anual' else plan.precio_mensual or 0)
+        if not monto:
+            return Response({'error': 'Este plan no tiene precio configurado.'}, status=400)
+
+        orden_compra = f"ORD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
+
+        # ── Modo OneClick: cobro con tarjeta guardada ─────────────────────────────
+        if usar_tarjeta:
+            try:
+                tarjeta = empresa.tarjeta_guardada
+            except TarjetaGuardada.DoesNotExist:
+                return Response({'error': 'No tienes una tarjeta guardada.'}, status=400)
+
+            child_order = f"CHD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
+            sus, _ = Suscripcion.objects.get_or_create(
+                empresa=empresa,
+                defaults={'plan': plan, 'ciclo': ciclo, 'estado': 'trial'},
+            )
+
+            try:
+                tx = _get_oneclick_transaction()
+                oc_resp = tx.authorize(
+                    user_name=tarjeta.username_tb,
+                    tbk_user=tarjeta.tbk_user,
+                    parent_buy_order=orden_compra,
+                    details=[{
+                        'commerce_code':       django_settings.ONECLICK_CHILD_CODE,
+                        'buy_order':           child_order,
+                        'amount':              monto,
+                        'installments_number': 1,
+                    }],
+                )
+            except Exception as e:
+                import traceback
+                print(f"[ONECLICK ERROR] {traceback.format_exc()}")
+                registrar_log('SEGURIDAD', 'oneclick_error', request, detalle={'error': str(e)})
+                return Response({'error': f'Error al cobrar con tarjeta guardada: {str(e)}'}, status=502)
+
+            # Verificar resultado del cobro
+            if isinstance(oc_resp, dict):
+                details = oc_resp.get('details', [])
+            else:
+                details = getattr(oc_resp, 'details', [])
+
+            if details:
+                det = details[0]
+                resp_code = det.get('response_code', -1) if isinstance(det, dict) else getattr(det, 'response_code', -1)
+                auth_code = det.get('authorization_code', '') if isinstance(det, dict) else getattr(det, 'authorization_code', '')
+            else:
+                resp_code = -1
+                auth_code = ''
+
+            if resp_code != 0:
+                return Response({'error': 'El cobro fue rechazado por Transbank.'}, status=400)
+
+            # Pago aprobado → actualizar suscripción
+            PagoTransbank.objects.create(
+                empresa=empresa, suscripcion=sus,
+                token=f"OC-{orden_compra}",
+                orden_compra=orden_compra,
+                monto=monto, ciclo=ciclo,
+                plan_nombre=plan.get_nombre_display(),
+                estado='aprobado',
+                fecha_pago=timezone.now(),
+                respuesta_tb={'auth_code': auth_code, 'response_code': resp_code, 'via': 'oneclick'},
+            )
+            sus.ciclo  = ciclo
+            sus.estado = 'activa'
+            sus.plan   = plan
+            sus.fecha_inicio      = timezone.now()
+            sus.fecha_fin_periodo = (
+                timezone.now() + timezone.timedelta(days=365)
+                if ciclo == 'anual'
+                else timezone.now() + timezone.timedelta(days=30)
+            )
+            sus.save()
+            empresa.plan = plan
+            empresa.save(update_fields=['plan'])
+
+            notificar_admins_empresa(
+                empresa=empresa, tipo='actividad',
+                titulo='Pago automático procesado',
+                mensaje=(
+                    f'Se cobró {monto:,} CLP con tu tarjeta guardada '
+                    f'({tarjeta.card_type} ****{tarjeta.last_4}). '
+                    f'Próximo cobro: {sus.fecha_fin_periodo.strftime("%d/%m/%Y")}.'
+                ),
+            )
+            registrar_log('ACTIVIDAD', 'pago_oneclick', request, detalle={
+                'plan': plan.nombre, 'monto': monto, 'ciclo': ciclo,
+            })
+            return Response({
+                'ok': True, 'cobrado': True,
+                'monto': monto,
+                'plan':  plan.get_nombre_display(),
+                'nueva_fecha_fin': sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
+            })
+
+        # ── Modo Webpay Plus (nueva tarjeta) ──────────────────────────────────────
+        session_id = f"SES-{request.user.id}-{uuid.uuid4().hex[:6]}"
+        return_url = request.build_absolute_uri('/api/pago/retorno/')
+
+        try:
+            tx       = _get_webpay_transaction()
+            response = tx.create(
+                buy_order=orden_compra,
+                session_id=session_id,
+                amount=monto,
+                return_url=return_url,
+            )
+        except Exception as e:
+            import traceback
+            print(f"[TRANSBANK ERROR] {traceback.format_exc()}")
+            registrar_log('SEGURIDAD', 'pago_error_crear', request, detalle={'error': str(e)})
+            return Response({'error': f'Error al conectar con Transbank: {str(e)}'}, status=502)
+
+        sus, _ = Suscripcion.objects.get_or_create(
+            empresa=empresa,
+            defaults={'plan': plan, 'ciclo': ciclo, 'estado': 'trial'},
+        )
+
+        token_tb = response.get('token') if isinstance(response, dict) else getattr(response, 'token', None)
+        url_tb   = response.get('url')   if isinstance(response, dict) else getattr(response, 'url', None)
+
+        print(f"[TRANSBANK] token={token_tb!r}  url={url_tb!r}")
+
+        if not token_tb or not url_tb:
+            return Response({'error': 'Transbank no devolvió token/url válidos.'}, status=502)
+
+        PagoTransbank.objects.create(
+            empresa=empresa, suscripcion=sus,
+            token=token_tb, orden_compra=orden_compra,
+            monto=monto, ciclo=ciclo,
+            plan_nombre=plan.get_nombre_display(),
+        )
+
+        registrar_log('ACTIVIDAD', 'pago_iniciado', request, detalle={
+            'plan': plan.nombre, 'monto': monto, 'ciclo': ciclo,
+        })
+
+        return Response({'url': url_tb, 'token': token_tb})
+
+
+# ─────────────────────────────────────────
+# POST /api/pago/retorno/  (retorno desde Transbank)
+# ─────────────────────────────────────────
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PagoRetornoView(View):
+    """
+    Endpoint de retorno desde Transbank.
+    Webpay puede redirigir con GET (?token_ws=...) o con POST (body token_ws).
+    Confirma la transacción y redirige al frontend.
+    """
+
+    def get(self, request):
+        """Transbank redirige al navegador del usuario con GET + ?token_ws=..."""
+        return self._procesar(request, request.GET.get('token_ws'))
+
+    def post(self, request):
+        """Compatibilidad con versiones que envían token_ws por POST body."""
+        token_ws = request.POST.get('token_ws') or request.GET.get('token_ws')
+        return self._procesar(request, token_ws)
+
+    def _procesar(self, request, token_ws):
+        if not token_ws:
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=sin_token")
+
+        try:
+            pago = PagoTransbank.objects.select_related(
+                'empresa', 'suscripcion', 'suscripcion__plan',
+            ).get(token=token_ws)
+        except PagoTransbank.DoesNotExist:
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=token_invalido")
+
+        # Evitar doble commit si el pago ya fue procesado
+        if pago.estado in ('aprobado', 'rechazado'):
+            if pago.estado == 'aprobado':
+                return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/exitoso?orden={pago.orden_compra}")
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")
+
+        try:
+            tx       = _get_webpay_transaction()
+            response = tx.commit(token_ws)
+
+            resp_dict = response if isinstance(response, dict) else vars(response)
+            pago.respuesta_tb = resp_dict
+            pago.fecha_pago   = timezone.now()
+
+            resp_code = resp_dict.get('response_code', -1)
+
+            if resp_code == 0:
+                pago.estado = 'aprobado'
+                pago.save()
+
+                sus        = pago.suscripcion
+                sus.ciclo  = pago.ciclo
+                sus.estado = 'activa'
+                sus.fecha_inicio      = timezone.now()
+                sus.fecha_fin_periodo = (
+                    timezone.now() + timezone.timedelta(days=365)
+                    if pago.ciclo == 'anual'
+                    else timezone.now() + timezone.timedelta(days=30)
+                )
+                sus.save()
+
+                # Sincronizar plan en Empresa
+                sus.empresa.plan = sus.plan
+                sus.empresa.save(update_fields=['plan'])
+
+                notificar_admins_empresa(
+                    empresa=pago.empresa,
+                    tipo='actividad',
+                    titulo='Pago procesado correctamente',
+                    mensaje=(
+                        f'Tu plan {sus.plan.get_nombre_display()} está activo. '
+                        f'Próximo cobro: {sus.fecha_fin_periodo.strftime("%d/%m/%Y")}.'
+                    ),
+                    extra={'pago_id': pago.id},
+                )
+
+                registrar_log('ACTIVIDAD', 'pago_aprobado', request, detalle={
+                    'empresa_id': pago.empresa.id,
+                    'monto':      pago.monto,
+                    'plan':       pago.plan_nombre,
+                })
+
+                return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/exitoso?orden={pago.orden_compra}")
+
+            else:
+                pago.estado = 'rechazado'
+                pago.save()
+
+                notificar_admins_empresa(
+                    empresa=pago.empresa,
+                    tipo='seguridad',
+                    titulo='Pago rechazado',
+                    mensaje='Tu pago fue rechazado por Transbank. Intenta nuevamente.',
+                    extra={'pago_id': pago.id},
+                )
+
+                return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")
+
+        except Exception as e:
+            import traceback
+            print(f"[TRANSBANK COMMIT ERROR] {traceback.format_exc()}")
+            pago.estado = 'fallido'
+            pago.save()
+            registrar_log('SEGURIDAD', 'pago_error', request, detalle={'error': str(e), 'pago_id': pago.id})
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=error_sistema")
+
+
+# ─────────────────────────────────────────
+# GET /api/pago/historial/
+# ─────────────────────────────────────────
+
+class PagoHistorialView(APIView):
+    """Historial de pagos aprobados (USUARIO ve su empresa; SUPERADMIN puede filtrar)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'rol', None) not in ('USUARIO', 'SUPERADMIN'):
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        if request.user.rol == 'SUPERADMIN':
+            empresa_id = request.query_params.get('empresa_id')
+            if not empresa_id:
+                return Response({'error': 'Se requiere empresa_id.'}, status=400)
+            try:
+                empresa = Empresa.objects.get(id=empresa_id)
+            except Empresa.DoesNotExist:
+                return Response({'error': 'Empresa no encontrada.'}, status=404)
+        else:
+            empresa = request.user.empresa
+
+        pagos = PagoTransbank.objects.filter(
+            empresa=empresa, estado='aprobado',
+        ).select_related('suscripcion__plan')
+
+        data = [{
+            'id':           p.id,
+            'orden_compra': p.orden_compra,
+            'monto':        p.monto,
+            'plan':         p.plan_nombre,
+            'ciclo':        p.ciclo,
+            'fecha':        p.fecha_pago.strftime('%d/%m/%Y %H:%M') if p.fecha_pago else None,
+            'estado':       p.estado,
+        } for p in pagos]
+
+        return Response({'pagos': data})
+
+
+# ─────────────────────────────────────────
+# GET/PUT /api/admin/terminos/
+# ─────────────────────────────────────────
+
+class TerminosView(APIView):
+    """Gestión de términos y configuración de pagos (solo SUPERADMIN)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        config = ConfiguracionSistema.get()
+        return Response({
+            'terminos':        config.terminos_condiciones,
+            'version':         config.terminos_version,
+            'updated_at':      config.terminos_updated_at.isoformat() if config.terminos_updated_at else None,
+            'dias_gracia':     config.dias_gracia_pago,
+            'bloqueo_auto':    config.bloqueo_automatico,
+            'mensaje_bloqueo': config.mensaje_pago_pendiente,
+            'ambiente_tb':     getattr(django_settings, 'TRANSBANK_ENVIRONMENT', 'integration').upper(),
+        })
+
+    def put(self, request):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        body   = request.data
+        config = ConfiguracionSistema.get()
+        if 'terminos' in body:
+            config.terminos_condiciones = body['terminos']
+            config.terminos_version     = body.get('version', config.terminos_version)
+            config.terminos_updated_at  = timezone.now()
+        if 'dias_gracia'     in body: config.dias_gracia_pago      = body['dias_gracia']
+        if 'bloqueo_auto'    in body: config.bloqueo_automatico     = body['bloqueo_auto']
+        if 'mensaje_bloqueo' in body: config.mensaje_pago_pendiente = body['mensaje_bloqueo']
+        config.save()
+
+        registrar_log('ACTIVIDAD', 'terminos_actualizados', request, detalle={
+            'version': config.terminos_version,
+        })
+        return Response({'ok': True})
+
+
+# ─────────────────────────────────────────
+# GET /api/terminos/  (público)
+# ─────────────────────────────────────────
+
+class TerminosPublicosView(APIView):
+    """Devuelve los términos vigentes sin requerir autenticación."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        config = ConfiguracionSistema.get()
+        return Response({
+            'terminos': config.terminos_condiciones,
+            'version':  config.terminos_version,
+            'fecha':    config.terminos_updated_at.strftime('%d/%m/%Y') if config.terminos_updated_at else None,
+        })
+
+
+# ─────────────────────────────────────────
+# POST /api/empresa/terminos/aceptar/
+# ─────────────────────────────────────────
+
+class TerminosAceptarView(APIView):
+    """Registra que el usuario aceptó los términos (versión y fecha)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        version = request.data.get('version', '')
+        extra = request.user.extra or {}
+        extra.update({
+            'terminos_version':     version,
+            'terminos_aceptado_at': timezone.now().isoformat(),
+        })
+        request.user.extra = extra
+        request.user.save(update_fields=['extra'])
+        return Response({'ok': True})
+
+
+# ─────────────────────────────────────────
+# GET /api/empresa/suscripcion/
+# ─────────────────────────────────────────
+
+class SuscripcionEmpresaView(APIView):
+    """Devuelve el estado de la suscripción de la empresa del usuario."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa = getattr(request.user, 'empresa', None)
+        if not empresa:
+            return Response({'suscripcion': None})
+
+        try:
+            sus = empresa.suscripcion
+        except Suscripcion.DoesNotExist:
+            return Response({'suscripcion': None})
+
+        return Response({
+            'suscripcion': {
+                'estado':            sus.estado,
+                'ciclo':             sus.ciclo,
+                'plan':              sus.plan.get_nombre_display() if sus.plan else None,
+                'fecha_fin_periodo': sus.fecha_fin_periodo.strftime('%d/%m/%Y') if sus.fecha_fin_periodo else None,
+                'dias_para_vencer':  sus.dias_para_vencer,
+                'esta_bloqueada':    sus.esta_bloqueada,
+            }
+        })
+
+
+# ─────────────────────────────────────────
+# GET/PUT /api/admin/suscripciones/<id>/
+# ─────────────────────────────────────────
+
+class SuscripcionesAdminView(APIView):
+    """Lista todas las suscripciones o modifica una (SUPERADMIN)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, sus_id=None):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        suscripciones = Suscripcion.objects.select_related(
+            'empresa', 'plan',
+        ).order_by('-created_at')
+
+        estado = request.query_params.get('estado')
+        buscar = request.query_params.get('q', '').strip()
+        if estado:
+            suscripciones = suscripciones.filter(estado=estado)
+        if buscar:
+            suscripciones = suscripciones.filter(empresa__nombre__icontains=buscar)
+
+        from django.db.models import Sum
+        ahora      = timezone.now()
+        inicio_mes = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        mrr = PagoTransbank.objects.filter(
+            estado='aprobado',
+            ciclo='mensual',
+            fecha_pago__gte=inicio_mes,
+        ).aggregate(total=Sum('monto'))['total'] or 0
+
+        data = []
+        for s in suscripciones:
+            ultimo_pago = s.pagos.filter(estado='aprobado').first()
+            data.append({
+                'id':               s.id,
+                'empresa':          s.empresa.nombre,
+                'empresa_id':       s.empresa.id,
+                'plan':             s.plan.get_nombre_display() if s.plan else None,
+                'ciclo':            s.ciclo,
+                'estado':           s.estado,
+                'fecha_fin':        s.fecha_fin_periodo.strftime('%d/%m/%Y') if s.fecha_fin_periodo else None,
+                'dias_para_vencer': s.dias_para_vencer,
+                'ultimo_pago':      ultimo_pago.fecha_pago.strftime('%d/%m/%Y') if ultimo_pago and ultimo_pago.fecha_pago else None,
+            })
+
+        activas     = Suscripcion.objects.filter(estado='activa').count()
+        en_gracia   = Suscripcion.objects.filter(estado='gracia').count()
+        suspendidas = Suscripcion.objects.filter(estado='suspendida').count()
+
+        return Response({
+            'suscripciones': data,
+            'kpis': {
+                'mrr':         mrr,
+                'activas':     activas,
+                'en_gracia':   en_gracia,
+                'suspendidas': suspendidas,
+            },
+        })
+
+    def put(self, request, sus_id=None):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        if sus_id is None:
+            return Response({'error': 'Se requiere ID de suscripción.'}, status=400)
+
+        try:
+            sus = Suscripcion.objects.select_related('empresa').get(id=sus_id)
+        except Suscripcion.DoesNotExist:
+            return Response({'error': 'Suscripción no encontrada.'}, status=404)
+
+        accion = request.data.get('accion')
+
+        if accion == 'reactivar':
+            sus.estado = 'activa'
+            sus.fecha_fin_periodo = timezone.now() + timezone.timedelta(days=30)
+            sus.empresa.estado = 'activa'
+            sus.empresa.save(update_fields=['estado'])
+            sus.save()
+            notificar_admins_empresa(
+                empresa=sus.empresa,
+                tipo='actividad',
+                titulo='Suscripción reactivada',
+                mensaje='Tu suscripción ha sido reactivada por el administrador.',
+            )
+            registrar_log('ACTIVIDAD', 'suscripcion_reactivada', request, detalle={
+                'empresa_id': sus.empresa.id,
+                'empresa':    sus.empresa.nombre,
+            })
+            return Response({'ok': True, 'estado': sus.estado})
+
+        elif accion == 'extender_gracia':
+            dias_extra = int(request.data.get('dias', 7))
+            if sus.fecha_fin_periodo:
+                sus.fecha_fin_periodo += timezone.timedelta(days=dias_extra)
+            sus.save()
+            notificar_admins_empresa(
+                empresa=sus.empresa,
+                tipo='actividad',
+                titulo=f'Período de gracia extendido {dias_extra} días',
+                mensaje=f'El administrador extendió tu período de gracia {dias_extra} días más.',
+            )
+            registrar_log('ACTIVIDAD', 'gracia_extendida', request, detalle={
+                'empresa_id': sus.empresa.id,
+                'dias_extra': dias_extra,
+            })
+            return Response({'ok': True})
+
+        return Response({'error': 'Acción no reconocida.'}, status=400)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OneClick Mall — tarjeta guardada para cobros automáticos
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────
+# GET /api/empresa/tarjeta/
+# ─────────────────────────────────────────
+
+class TarjetaEstadoView(APIView):
+    """Devuelve la tarjeta guardada de la empresa o null."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'rol', None) != 'USUARIO':
+            return Response({'tarjeta': None})
+        empresa = getattr(request.user, 'empresa', None)
+        if not empresa:
+            return Response({'tarjeta': None})
+        try:
+            t = empresa.tarjeta_guardada
+            return Response({'tarjeta': {
+                'card_type':  t.card_type,
+                'last_4':     t.last_4,
+                'created_at': t.created_at.strftime('%d/%m/%Y'),
+            }})
+        except TarjetaGuardada.DoesNotExist:
+            return Response({'tarjeta': None})
+
+
+# ─────────────────────────────────────────
+# POST /api/empresa/tarjeta/inscribir/
+# ─────────────────────────────────────────
+
+class TarjetaInscribirView(APIView):
+    """Inicia la inscripción de tarjeta con OneClick Mall."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if getattr(request.user, 'rol', None) != 'USUARIO':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        empresa = getattr(request.user, 'empresa', None)
+        if not empresa:
+            return Response({'error': 'Sin empresa asignada.'}, status=403)
+
+        # No permitir si ya tiene tarjeta guardada
+        try:
+            empresa.tarjeta_guardada
+            return Response({'error': 'Ya tienes una tarjeta guardada. Elimínala primero.'}, status=400)
+        except TarjetaGuardada.DoesNotExist:
+            pass
+
+        username   = f"emp-{empresa.id}"
+        email      = request.user.email or f"empresa{empresa.id}@gestionflota.cl"
+        return_url = request.build_absolute_uri('/api/empresa/tarjeta/retorno/')
+
+        try:
+            insc     = _get_oneclick_inscription()
+            response = insc.start(username=username, email=email, response_url=return_url)
+        except Exception as e:
+            import traceback
+            print(f"[ONECLICK INSCRIPCION ERROR] {traceback.format_exc()}")
+            return Response({'error': f'Error al iniciar inscripción: {str(e)}'}, status=502)
+
+        if isinstance(response, dict):
+            token = response.get('token')
+            url   = response.get('url_webpay')
+        else:
+            token = getattr(response, 'token', None)
+            url   = getattr(response, 'url_webpay', None)
+
+        if not token or not url:
+            return Response({'error': 'Transbank no devolvió datos de inscripción.'}, status=502)
+
+        return Response({'url': url, 'token': token})
+
+
+# ─────────────────────────────────────────
+# GET /api/empresa/tarjeta/retorno/
+# ─────────────────────────────────────────
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TarjetaInscripcionRetornoView(View):
+    """
+    Transbank redirige aquí después de que el usuario inscribe su tarjeta.
+    Llama a finish(), guarda TarjetaGuardada y redirige al frontend.
+    """
+
+    def get(self, request):
+        return self._procesar(request, request.GET.get('TBK_TOKEN') or request.GET.get('token'))
+
+    def post(self, request):
+        token = request.POST.get('TBK_TOKEN') or request.GET.get('TBK_TOKEN')
+        return self._procesar(request, token)
+
+    def _procesar(self, request, token):
+        if not token:
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago?inscripcion=sin_token")
+
+        try:
+            insc     = _get_oneclick_inscription()
+            response = insc.finish(token=token)
+        except Exception as e:
+            import traceback
+            print(f"[ONECLICK FINISH ERROR] {traceback.format_exc()}")
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago?inscripcion=error")
+
+        # Extraer datos de la respuesta
+        if isinstance(response, dict):
+            tbk_user   = response.get('tbk_user')
+            username   = response.get('user_name', '')
+            last_4     = response.get('last_4_card_digits', '')
+            card_type  = response.get('card_type', '')
+            ins_status = response.get('inscription_status', -1)
+        else:
+            tbk_user   = getattr(response, 'tbk_user', None)
+            username   = getattr(response, 'user_name', '')
+            last_4     = getattr(response, 'last_4_card_digits', '')
+            card_type  = getattr(response, 'card_type', '')
+            ins_status = getattr(response, 'inscription_status', -1)
+
+        if ins_status != 0 or not tbk_user:
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago?inscripcion=rechazada")
+
+        # Derivar empresa desde el username (formato "emp-{id}")
+        try:
+            empresa_id = int(username.replace('emp-', ''))
+            empresa    = Empresa.objects.get(id=empresa_id)
+        except (ValueError, Empresa.DoesNotExist):
+            return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago?inscripcion=error_empresa")
+
+        # Crear o actualizar TarjetaGuardada
+        TarjetaGuardada.objects.update_or_create(
+            empresa=empresa,
+            defaults={
+                'tbk_user':    tbk_user,
+                'username_tb': username,
+                'last_4':      last_4,
+                'card_type':   card_type,
+            },
+        )
+
+        notificar_admins_empresa(
+            empresa=empresa,
+            tipo='actividad',
+            titulo='Tarjeta guardada correctamente',
+            mensaje=f'Tu {card_type} terminada en {last_4} fue inscrita para cobros automáticos.',
+        )
+
+        return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago?inscripcion=ok")
+
+
+# ─────────────────────────────────────────
+# DELETE /api/empresa/tarjeta/
+# ─────────────────────────────────────────
+
+class TarjetaEliminarView(APIView):
+    """Elimina la tarjeta guardada del usuario (desuscribe de OneClick)."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        if getattr(request.user, 'rol', None) != 'USUARIO':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        empresa = getattr(request.user, 'empresa', None)
+        if not empresa:
+            return Response({'error': 'Sin empresa asignada.'}, status=403)
+
+        try:
+            tarjeta = empresa.tarjeta_guardada
+        except TarjetaGuardada.DoesNotExist:
+            return Response({'error': 'No tienes tarjeta guardada.'}, status=404)
+
+        # Intentar eliminar en Transbank (no crítico si falla)
+        try:
+            insc = _get_oneclick_inscription()
+            insc.delete(tbk_user=tarjeta.tbk_user, username=tarjeta.username_tb)
+        except Exception as e:
+            print(f"[ONECLICK DELETE WARNING] {e}")
+
+        tarjeta.delete()
+        registrar_log('ACTIVIDAD', 'tarjeta_eliminada', request, detalle={
+            'empresa': empresa.nombre,
+        })
+        return Response({'ok': True})

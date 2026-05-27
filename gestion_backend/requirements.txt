@@ -8,3 +8,4 @@ channels
 daphne
 openpyxl
 Pillow
+transbank-sdk>=4.0.0

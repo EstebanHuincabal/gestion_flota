@@ -67,6 +67,15 @@ export async function apiFetch(url, options = {}) {
     }
   }
 
+  if (response.status === 402) {
+    response.clone().json().then(data => {
+      if (data?.codigo === 'SUSCRIPCION_BLOQUEADA') {
+        window.dispatchEvent(new CustomEvent('suscripcion-bloqueada', { detail: data }))
+        throw new Error(data.error)
+      }
+    }).catch(() => {})
+  }
+
   if (response.status === 403) {
     response.clone().json().then(data => {
       if (data?.codigo === 'LIMITE_PLAN') {
