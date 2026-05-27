@@ -55,6 +55,9 @@ import Rutas from '../web/rutas/Rutas.vue'
 import SolicitudesConductores from '../web/solicitudes/SolicitudesConductores.vue'
 import SolicitudesAdmin       from '../web/solicitudes/SolicitudesAdmin.vue'
 
+// Calendario global
+import CalendarioGlobal from '../web/calendario/CalendarioGlobal.vue'
+
 const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
@@ -113,6 +116,7 @@ const routes = [
       { path: 'reportes',     component: ReportesSuperAdmin },
       { path: 'rutas',        component: Rutas },
       { path: 'solicitudes',  component: SolicitudesAdmin },
+      { path: 'calendario',   component: CalendarioGlobal },
     ],
   },
 
@@ -146,6 +150,7 @@ const routes = [
       { path: 'reportes',        component: ReportesEmpresa },
       { path: 'rutas',           component: Rutas,                   meta: { permiso: 'rutas.ver' } },
       { path: 'solicitudes',     component: SolicitudesConductores },
+      { path: 'calendario',      component: CalendarioGlobal,        meta: { permiso: 'calendario.ver' } },
       { path: 'configuracion',   component: ConfiguracionPage },
     ],
   },

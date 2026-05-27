@@ -64,6 +64,7 @@ from g_de_flota.views_solicitudes import (
     SolicitudesListView, SolicitudesConteoView,
     SolicitudDetailView, SolicitudAprobarView, SolicitudRechazarView,
 )
+from g_de_flota.views_calendario import calendario_eventos
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -186,6 +187,9 @@ urlpatterns = [
     path('api/empresa/solicitudes/<int:sol_id>/',                 SolicitudDetailView.as_view(),    name='solicitudes-detalle'),
     path('api/empresa/solicitudes/<int:sol_id>/aprobar/',         SolicitudAprobarView.as_view(),   name='solicitudes-aprobar'),
     path('api/empresa/solicitudes/<int:sol_id>/rechazar/',        SolicitudRechazarView.as_view(),  name='solicitudes-rechazar'),
+
+    # Calendario global
+    path('api/empresa/calendario/', calendario_eventos, name='calendario-eventos'),
 
     # Rutas y trabajos — rutas específicas ANTES de las rutas con :id
     path('api/empresa/rutas/calcular/',                          RouteCalcularView.as_view(),     name='rutas-calcular'),

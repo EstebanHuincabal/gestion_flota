@@ -1,489 +1,705 @@
-Vas a implementar el sistema de permisos por plan en la app móvil de conductores (Vue 3 + Capacitor) y ajustar el dashboard para que muestre solo lo que el plan permite.
+Vas a implementar la integración completa de Transbank Webpay Plus como pasarela de pago para el sistema SaaS multiempresas. Todo lo nuevo va en views_planes.py salvo indicación explícita.
 
 ---
 
-## CONTEXTO
+## CONTEXTO DEL SISTEMA
 
-El sistema de permisos funciona así:
-- El plan de la empresa define qué módulos están habilitados (campo modulos JSONField en PlanSuscripcion)
-- El backend retorna plan_modulos en la respuesta del login
-- La app guarda plan_modulos en @capacitor/preferences
-- Cada vista verifica si su módulo está habilitado antes de mostrarse
-- SUPERADMIN siempre tiene acceso total (no aplica en la app — solo conductores)
-
-Módulos posibles que afectan la app del conductor:
-- 'rutas'                  → pantalla Mis Rutas + tab en bottom nav
-- 'mantencion_correctiva'  → solicitud de mantención en panel de solicitudes
-- 'mantencion_predictiva'  → alertas de mantención en solicitudes
-- 'documentos'             → pantalla Mis Documentos + solicitud de documento
-- 'combustible'            → solicitud de combustible en solicitudes (GastoOperativo)
-- 'finanzas'               → registro de gastos desde la app
+- El sistema ya tiene PlanSuscripcion, Empresa, Suscripcion (o similar) en models.py
+- Ya existe ConfiguracionSistema como singleton con get()
+- Ya existe notificar_admins_empresa() y registrar_log()
+- El SUPERADMIN gestiona empresas y planes desde el panel web
+- Las empresas pagan mensual o anualmente por su plan
+- Puerto backend: 8000 · Frontend: 7183
 
 ---
 
-## PARTE 1 — BACKEND
+## PARTE 1 — INSTALACIÓN Y CONFIGURACIÓN
 
-### Modificar vista de login (views.py)
-Buscar la vista que maneja POST /api/login/ y agregar en la respuesta de login exitoso para conductores:
+```bash
+pip install transbank-sdk
+```
+Agregar en requirements.txt: transbank-sdk>=4.0.0
 
+Agregar en settings.py:
 ```python
-plan_modulos = []
-plan_nombre  = ''
-if user.empresa and user.empresa.plan:
-    plan_modulos = user.empresa.plan.modulos or []
-    plan_nombre  = user.empresa.plan.get_nombre_display()
-
-# Agregar al JsonResponse:
-'plan_modulos': plan_modulos,
-'plan_nombre':  plan_nombre,
+TRANSBANK_ENVIRONMENT = os.environ.get('TRANSBANK_ENVIRONMENT', 'integration')  # 'integration' | 'production'
+TRANSBANK_COMMERCE_CODE = os.environ.get('TRANSBANK_COMMERCE_CODE', '597055555532')  # código de integración por defecto
+TRANSBANK_API_KEY = os.environ.get('TRANSBANK_API_KEY', '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C')  # key de integración por defecto
 ```
 
-### Modificar GET /api/conductor/rutas/ (views.py)
-Si el plan no incluye 'rutas' → retornar 403:
+Agregar en .env:
+TRANSBANK_ENVIRONMENT=integration
+TRANSBANK_COMMERCE_CODE=597055555532
+TRANSBANK_API_KEY=579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C
+
+Los valores de integración (597055555532 y la API key) son los oficiales de Transbank para pruebas — funcionan sin registro previo.
+
+---
+
+## PARTE 2 — MODELOS NUEVOS (agregar en models.py)
+
+### Suscripcion
 ```python
-if 'rutas' not in request.user.empresa.plan.modulos:
-    return JsonResponse({'error': 'Tu plan no incluye el módulo de rutas.'}, status=403)
+class Suscripcion(models.Model):
+    ESTADOS = [
+        ('trial',      'Trial'),
+        ('activa',     'Activa'),
+        ('gracia',     'Período de gracia'),
+        ('suspendida', 'Suspendida'),
+        ('cancelada',  'Cancelada'),
+    ]
+    CICLOS = [('mensual', 'Mensual'), ('anual', 'Anual')]
+
+    empresa           = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name='suscripcion')
+    plan              = models.ForeignKey(PlanSuscripcion, on_delete=models.PROTECT)
+    ciclo             = models.CharField(max_length=10, choices=CICLOS, default='mensual')
+    estado            = models.CharField(max_length=20, choices=ESTADOS, default='trial')
+    fecha_inicio      = models.DateTimeField(null=True, blank=True)
+    fecha_fin_periodo = models.DateTimeField(null=True, blank=True)
+    fecha_cancelacion = models.DateTimeField(null=True, blank=True)
+    trial_hasta       = models.DateTimeField(null=True, blank=True)
+    dias_gracia       = models.PositiveSmallIntegerField(default=7)
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Suscripción'
+
+    @property
+    def esta_bloqueada(self):
+        return self.estado in ('suspendida', 'cancelada')
+
+    @property
+    def dias_para_vencer(self):
+        if not self.fecha_fin_periodo:
+            return None
+        from django.utils import timezone
+        return (self.fecha_fin_periodo.date() - timezone.now().date()).days
 ```
 
-### Modificar POST /api/conductor/solicitudes/ (views.py)
-Validar que el tipo de solicitud esté permitido por el plan:
-
+### PagoTransbank
 ```python
-MODULO_REQUERIDO = {
-    'mantencion':  'mantencion_correctiva',
-    'combustible': 'combustible',
-    'documento':   'documentos',
-    'incidencia':  None,  # siempre disponible
-}
-modulo = MODULO_REQUERIDO.get(tipo)
-if modulo and modulo not in request.user.empresa.plan.modulos:
-    return JsonResponse({
-        'error': f'Tu plan no incluye este tipo de solicitud.',
-        'codigo': 'MODULO_NO_INCLUIDO',
-        'modulo': modulo,
-    }, status=403)
+class PagoTransbank(models.Model):
+    ESTADOS = [
+        ('iniciado',   'Iniciado'),
+        ('aprobado',   'Aprobado'),
+        ('rechazado',  'Rechazado'),
+        ('anulado',    'Anulado'),
+        ('fallido',    'Fallido'),
+    ]
+
+    empresa         = models.ForeignKey(Empresa, on_delete=models.PROTECT, related_name='pagos')
+    suscripcion     = models.ForeignKey(Suscripcion, on_delete=models.PROTECT, related_name='pagos')
+    token           = models.CharField(max_length=200, unique=True)
+    orden_compra    = models.CharField(max_length=64, unique=True)
+    monto           = models.PositiveIntegerField()
+    estado          = models.CharField(max_length=20, choices=ESTADOS, default='iniciado')
+    ciclo           = models.CharField(max_length=10, default='mensual')
+    plan_nombre     = models.CharField(max_length=50, blank=True, default='')
+    respuesta_tb    = models.JSONField(default=dict, blank=True)
+    fecha_pago      = models.DateTimeField(null=True, blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering     = ['-created_at']
+        verbose_name = 'Pago Transbank'
 ```
 
-### Modificar GET /api/conductor/documentos/ (views.py)
+### Agregar a ConfiguracionSistema (ya existe — solo estos campos nuevos)
 ```python
-if 'documentos' not in request.user.empresa.plan.modulos:
-    return JsonResponse({'error': 'Tu plan no incluye el módulo de documentos.'}, status=403)
-```
-
----
-
-## PARTE 2 — SERVICIO DE PERMISOS EN LA APP
-
-### Crear src/services/permisos.js (nuevo archivo)
-
-```javascript
-import { Preferences } from '@capacitor/preferences'
-
-export async function cargarModulos() {
-  const { value } = await Preferences.get({ key: 'plan_modulos' })
-  return JSON.parse(value || '[]')
-}
-
-export async function tieneModulo(modulo) {
-  const modulos = await cargarModulos()
-  return modulos.includes(modulo)
-}
-
-export async function getModulos() {
-  return await cargarModulos()
-}
-```
-
-### Crear src/composables/usePermisos.js (nuevo archivo)
-Composable reactivo para usar en cualquier componente Vue:
-
-```javascript
-import { ref, onMounted } from 'vue'
-import { Preferences } from '@capacitor/preferences'
-
-export function usePermisos() {
-  const modulos    = ref([])
-  const planNombre = ref('')
-  const cargando   = ref(true)
-
-  onMounted(async () => {
-    const { value: m } = await Preferences.get({ key: 'plan_modulos' })
-    const { value: p } = await Preferences.get({ key: 'plan_nombre' })
-    modulos.value    = JSON.parse(m || '[]')
-    planNombre.value = p || ''
-    cargando.value   = false
-  })
-
-  function tieneModulo(modulo) {
-    return modulos.value.includes(modulo)
-  }
-
-  return { modulos, planNombre, tieneModulo, cargando }
-}
-```
-
----
-
-## PARTE 3 — GUARDAR MÓDULOS AL HACER LOGIN
-
-### Modificar src/stores/auth.js
-En la acción login(), después de guardar access_token, refresh_token y usuario, agregar:
-
-```javascript
-await Preferences.set({
-  key: 'plan_modulos',
-  value: JSON.stringify(data.plan_modulos || [])
-})
-await Preferences.set({
-  key: 'plan_nombre',
-  value: data.plan_nombre || ''
-})
-```
-
-En la acción logout(), agregar:
-```javascript
-await Preferences.remove({ key: 'plan_modulos' })
-await Preferences.remove({ key: 'plan_nombre' })
-```
-
-En la acción cargarSesion(), agregar:
-```javascript
-const { value: modulos } = await Preferences.get({ key: 'plan_modulos' })
-// No necesita guardarse en el store — se lee directo desde Preferences cuando se necesita
-```
-
----
-
-## PARTE 4 — BOTTOM NAVIGATION
-
-### Modificar src/components/BottomNav.vue
-Usar usePermisos() para mostrar solo los tabs habilitados.
-
-El tab "Rutas" solo aparece si tieneModulo('rutas').
-El tab "Solicitudes" siempre aparece (incidencias no requieren módulo).
-El tab "Ajustes" siempre aparece.
-
-Si 'rutas' no está en el plan, la pantalla de inicio al abrir la app debe ser /solicitudes.
-
-```vue
-<script setup>
-import { usePermisos } from '@/composables/usePermisos.js'
-const { tieneModulo } = usePermisos()
-</script>
-
-<template>
-  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t"
-       style="padding-bottom: env(safe-area-inset-bottom)">
-    <div class="flex justify-around py-2">
-      <button v-if="tieneModulo('rutas')"
-        @click="router.push('/rutas')"
-        :class="['nav-item', esActivo('/rutas') ? 'activo' : '']">
-        <i class="ti ti-route text-xl"></i>
-        <span>Rutas</span>
-      </button>
-      <button @click="router.push('/solicitudes')"
-        :class="['nav-item', esActivo('/solicitudes') ? 'activo' : '']">
-        <i class="ti ti-bell text-xl"></i>
-        <span>Solicitudes</span>
-      </button>
-      <button @click="router.push('/ajustes')"
-        :class="['nav-item', esActivo('/ajustes') ? 'activo' : '']">
-        <i class="ti ti-settings text-xl"></i>
-        <span>Ajustes</span>
-      </button>
-    </div>
-  </nav>
-</template>
-```
-
----
-
-## PARTE 5 — ROUTER GUARD
-
-### Modificar src/router/index.js
-Agregar meta con el módulo requerido en las rutas protegidas:
-
-```javascript
-const routes = [
-  { path: '/login',       component: () => import('@/views/Login.vue'),       meta: { publica: true } },
-  { path: '/onboarding',  component: () => import('@/views/Onboarding/SubirDocumentos.vue'), meta: { requiereAuth: true } },
-  {
-    path: '/rutas',
-    component: () => import('@/views/Rutas/ListaRutas.vue'),
-    meta: { requiereAuth: true, modulo: 'rutas' }
-  },
-  {
-    path: '/rutas/:id',
-    component: () => import('@/views/Rutas/DetalleRuta.vue'),
-    meta: { requiereAuth: true, modulo: 'rutas' }
-  },
-  {
-    path: '/rutas/:id/checklist',
-    component: () => import('@/views/Rutas/ChecklistPreviaje.vue'),
-    meta: { requiereAuth: true, modulo: 'rutas' }
-  },
-  {
-    path: '/documentos',
-    component: () => import('@/views/Documentos/MisDocumentos.vue'),
-    meta: { requiereAuth: true, modulo: 'documentos' }
-  },
-  { path: '/solicitudes', component: () => import('@/views/Solicitudes/ListaSolicitudes.vue'), meta: { requiereAuth: true } },
-  { path: '/ajustes',     component: () => import('@/views/Ajustes/Ajustes.vue'),             meta: { requiereAuth: true } },
-]
-
-router.beforeEach(async (to) => {
-  const { value: token   } = await Preferences.get({ key: 'access_token' })
-  const { value: modulos } = await Preferences.get({ key: 'plan_modulos' })
-  const modulosArray = JSON.parse(modulos || '[]')
-
-  if (!to.meta.publica && !token) return '/login'
-  if (to.path === '/login' && token) {
-    // Redirigir a la pantalla correcta según el plan
-    return modulosArray.includes('rutas') ? '/rutas' : '/solicitudes'
-  }
-
-  // Verificar módulo requerido
-  if (to.meta.modulo && !modulosArray.includes(to.meta.modulo)) {
-    return '/modulo-no-disponible'
-  }
-})
-```
-
-Agregar ruta para módulo no disponible:
-```javascript
-{
-  path: '/modulo-no-disponible',
-  component: () => import('@/views/ModuloNoDisponible.vue'),
-  meta: { requiereAuth: true }
-}
-```
-
----
-
-## PARTE 6 — VISTA ModuloNoDisponible.vue (crear)
-
-Pantalla simple que se muestra cuando el conductor intenta acceder a un módulo que su plan no incluye:
-
-```vue
-<template>
-  <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; text-align:center;">
-    <div style="width:64px; height:64px; border-radius:50%; background:var(--color-background-secondary); display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
-      <i class="ti ti-lock" style="font-size:28px; color:var(--color-text-tertiary);"></i>
-    </div>
-    <p style="font-size:17px; font-weight:500; margin:0 0 8px; color:var(--color-text-primary);">
-      Módulo no disponible
-    </p>
-    <p style="font-size:14px; color:var(--color-text-secondary); margin:0 0 24px; max-width:260px; line-height:1.5;">
-      Tu empresa no tiene acceso a este módulo en el plan actual.
-      Contacta al administrador para más información.
-    </p>
-    <p style="font-size:12px; color:var(--color-text-tertiary); margin:0 0 24px;">
-      Plan actual: <strong>{{ planNombre || '—' }}</strong>
-    </p>
-    <button @click="router.back()"
-      style="padding:12px 24px; border-radius:12px; background:var(--color-background-secondary); border:0.5px solid var(--color-border-secondary); font-size:14px; cursor:pointer; color:var(--color-text-primary);">
-      Volver
-    </button>
-  </div>
-</template>
-
-<script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { Preferences } from '@capacitor/preferences'
-
-const router     = useRouter()
-const planNombre = ref('')
-
-onMounted(async () => {
-  const { value } = await Preferences.get({ key: 'plan_nombre' })
-  planNombre.value = value || ''
-})
-</script>
-```
-
----
-
-## PARTE 7 — PANEL DE SOLICITUDES (filtrar por módulo)
-
-### Modificar src/views/Solicitudes/ListaSolicitudes.vue
-El grid de tipos de solicitud debe mostrar solo los habilitados por el plan.
-
-```vue
-<script setup>
-import { usePermisos } from '@/composables/usePermisos.js'
-const { tieneModulo } = usePermisos()
-
-const TIPOS_SOLICITUD = [
-  {
-    value:    'mantencion',
-    label:    'Mantención',
-    icono:    'ti-tool',
-    color:    '#534AB7',
-    bg:       '#EEEDFE',
-    modulo:   'mantencion_correctiva',
-    desc:     'Falla mecánica o revisión',
-  },
-  {
-    value:    'combustible',
-    label:    'Combustible',
-    icono:    'ti-gas-station',
-    color:    '#B45309',
-    bg:       '#FEF3C7',
-    modulo:   'combustible',
-    desc:     'Solicitar recarga',
-  },
-  {
-    value:    'incidencia',
-    label:    'Incidencia',
-    icono:    'ti-alert-triangle',
-    color:    '#A32D2D',
-    bg:       '#FCEBEB',
-    modulo:   null,  // siempre disponible
-    desc:     'Accidente u otro problema',
-  },
-  {
-    value:    'documento',
-    label:    'Documento',
-    icono:    'ti-file-plus',
-    color:    '#16A34A',
-    bg:       '#DCFCE7',
-    modulo:   'documentos',
-    desc:     'Subir o renovar documento',
-  },
-]
-
-// Solo mostrar tipos habilitados por el plan
-const tiposDisponibles = computed(() =>
-  TIPOS_SOLICITUD.filter(t => !t.modulo || tieneModulo(t.modulo))
+# Agregar en la clase ConfiguracionSistema existente:
+terminos_condiciones   = models.TextField(blank=True, default='')
+terminos_version       = models.CharField(max_length=20, blank=True, default='1.0')
+terminos_updated_at    = models.DateTimeField(null=True, blank=True)
+dias_gracia_pago       = models.PositiveSmallIntegerField(default=7)
+bloqueo_automatico     = models.BooleanField(default=True)
+mensaje_pago_pendiente = models.TextField(
+    blank=True,
+    default='Tu suscripción tiene un pago pendiente. Por favor regulariza tu situación para continuar usando el servicio.'
 )
-</script>
-
-<template>
-  <!-- Reemplazar el grid estático por: -->
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px;">
-    <div
-      v-for="tipo in tiposDisponibles"
-      :key="tipo.value"
-      @click="seleccionarTipo(tipo)"
-      style="...estilos existentes..."
-    >
-      <!-- card del tipo -->
-    </div>
-  </div>
-
-  <!-- Si solo hay un tipo disponible, mostrar en columna completa -->
-  <!-- Si no hay ninguno disponible, mostrar mensaje -->
-  <div v-if="tiposDisponibles.length === 0"
-    style="text-align:center; padding:24px; color:var(--color-text-secondary);">
-    <i class="ti ti-clipboard-off" style="font-size:28px; display:block; margin-bottom:8px;"></i>
-    <p style="font-size:13px; margin:0;">No hay tipos de solicitud disponibles en tu plan.</p>
-  </div>
-</template>
 ```
 
 ---
 
-## PARTE 8 — PANTALLA INICIO SEGÚN PLAN
+## PARTE 3 — MIDDLEWARE DE BLOQUEO (nuevo archivo)
 
-### Modificar src/views/Rutas/ListaRutas.vue
-Si el módulo de rutas no está disponible y el conductor llega a esta pantalla
-(por si acaso el guard falla), mostrar la pantalla de módulo no disponible inline:
+Crear gestion_backend/g_de_flota/middleware.py (o agregar al existente si ya existe):
 
-```vue
-<script setup>
-import { usePermisos } from '@/composables/usePermisos.js'
-const { tieneModulo, cargando } = usePermisos()
-</script>
+```python
+from django.http import JsonResponse
+from django.utils import timezone
 
-<template>
-  <div v-if="cargando"><!-- skeleton --></div>
-  <div v-else-if="!tieneModulo('rutas')">
-    <!-- Redirigir al router guard — esto es solo fallback -->
-    <p style="padding:24px; color:var(--color-text-secondary);">Redirigiendo...</p>
-  </div>
-  <div v-else>
-    <!-- Contenido normal de ListaRutas -->
-  </div>
-</template>
+RUTAS_LIBRES = [
+    '/api/login/',
+    '/api/token/',
+    '/api/token/refresh/',
+    '/api/pago/',           # checkout Transbank
+    '/api/pago/retorno/',   # retorno Transbank
+    '/api/terminos/',       # ver términos
+    '/admin/',
+]
+
+class BloqueoSuscripcionMiddleware:
+    """
+    Bloquea el acceso a la API si la empresa tiene suscripción suspendida.
+    Solo aplica a usuarios con rol USUARIO (no SUPERADMIN ni CONDUCTOR).
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if any(request.path.startswith(r) for r in RUTAS_LIBRES):
+            return self.get_response(request)
+
+        if not hasattr(request, 'user') or not request.user.is_authenticated:
+            return self.get_response(request)
+
+        if request.user.rol != 'USUARIO':
+            return self.get_response(request)
+
+        empresa = request.user.empresa
+        if not empresa:
+            return self.get_response(request)
+
+        try:
+            sus = empresa.suscripcion
+        except Exception:
+            return self.get_response(request)
+
+        if sus.esta_bloqueada:
+            from .models import ConfiguracionSistema
+            config = ConfiguracionSistema.get()
+            return JsonResponse({
+                'error':  config.mensaje_pago_pendiente,
+                'codigo': 'SUSCRIPCION_BLOQUEADA',
+                'estado': sus.estado,
+            }, status=402)
+
+        # Advertencia si está en período de gracia
+        response = self.get_response(request)
+        if sus.estado == 'gracia':
+            dias = sus.dias_para_vencer
+            response['X-Gracia-Dias'] = str(dias or 0)
+
+        return response
+```
+
+Registrar en settings.py en MIDDLEWARE (después de AuthenticationMiddleware):
+```python
+'g_de_flota.middleware.BloqueoSuscripcionMiddleware',
 ```
 
 ---
 
-## PARTE 9 — AJUSTES: mostrar plan actual
+## PARTE 4 — VISTAS DE PAGO (en views_planes.py)
 
-### Modificar src/views/Ajustes/Ajustes.vue
-Agregar en la sección "Mi cuenta" el plan actual con sus módulos:
+Importar al inicio de views_planes.py:
+```python
+import uuid
+from django.utils import timezone
+from transbank.webpay.webpay_plus.transaction import Transaction
+from transbank.common.options import WebpayOptions
+from transbank.common.integration_type import IntegrationType
+from django.conf import settings
 
-```vue
-<script setup>
-import { usePermisos } from '@/composables/usePermisos.js'
-const { modulos, planNombre } = usePermisos()
+def get_webpay_transaction():
+    if settings.TRANSBANK_ENVIRONMENT == 'production':
+        options = WebpayOptions(
+            commerce_code=settings.TRANSBANK_COMMERCE_CODE,
+            api_key=settings.TRANSBANK_API_KEY,
+            integration_type=IntegrationType.LIVE,
+        )
+    else:
+        options = WebpayOptions(
+            commerce_code=settings.TRANSBANK_COMMERCE_CODE,
+            api_key=settings.TRANSBANK_API_KEY,
+            integration_type=IntegrationType.TEST,
+        )
+    return Transaction(options)
+```
 
-const MODULO_LABELS = {
-  rutas:                 'Rutas y trabajos',
-  mantencion_correctiva: 'Mantención',
-  mantencion_predictiva: 'Mantención predictiva',
-  documentos:            'Documentos',
-  combustible:           'Combustible',
-  finanzas:              'Finanzas',
+### POST /api/pago/iniciar/
+Solo rol USUARIO con empresa activa.
+Body: { plan_id, ciclo }
+
+```python
+class PagoIniciarView(View):
+    def post(self, request):
+        if not request.user.is_authenticated or request.user.rol != 'USUARIO':
+            return JsonResponse({'error': 'Sin acceso.'}, status=403)
+
+        body    = json.loads(request.body)
+        plan_id = body.get('plan_id')
+        ciclo   = body.get('ciclo', 'mensual')
+        empresa = request.user.empresa
+
+        try:
+            plan = PlanSuscripcion.objects.get(id=plan_id, activo=True)
+        except PlanSuscripcion.DoesNotExist:
+            return JsonResponse({'error': 'Plan no encontrado.'}, status=404)
+
+        monto = int(plan.precio_anual if ciclo == 'anual' else plan.precio_mensual)
+        if not monto:
+            return JsonResponse({'error': 'Este plan no tiene precio configurado.'}, status=400)
+
+        orden_compra = f"ORD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
+        session_id   = f"SES-{request.user.id}-{uuid.uuid4().hex[:6]}"
+        return_url   = f"{settings.FRONTEND_URL}/empresa/pago/retorno"
+
+        tx = get_webpay_transaction()
+        response = tx.create(
+            buy_order=orden_compra,
+            session_id=session_id,
+            amount=monto,
+            return_url=return_url,
+        )
+
+        # Obtener o crear suscripción
+        sus, _ = Suscripcion.objects.get_or_create(
+            empresa=empresa,
+            defaults={'plan': plan, 'ciclo': ciclo, 'estado': 'trial'}
+        )
+
+        PagoTransbank.objects.create(
+            empresa=empresa,
+            suscripcion=sus,
+            token=response['token'],
+            orden_compra=orden_compra,
+            monto=monto,
+            ciclo=ciclo,
+            plan_nombre=plan.get_nombre_display(),
+        )
+
+        registrar_log(request, 'ACTIVIDAD', 'pago_iniciado', {
+            'plan': plan.nombre, 'monto': monto, 'ciclo': ciclo
+        })
+
+        return JsonResponse({
+            'url':   response['url'],
+            'token': response['token'],
+        })
+```
+
+### POST /api/pago/retorno/ (retorno de Transbank)
+Esta vista recibe el token_ws de Transbank después del pago.
+Decorar con @csrf_exempt porque Transbank hace POST directo.
+
+```python
+@method_decorator(csrf_exempt, name='dispatch')
+class PagoRetornoView(View):
+    def post(self, request):
+        token_ws = request.POST.get('token_ws') or request.GET.get('token_ws')
+
+        if not token_ws:
+            return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=sin_token")
+
+        try:
+            pago = PagoTransbank.objects.select_related(
+                'empresa', 'suscripcion', 'suscripcion__plan'
+            ).get(token=token_ws)
+        except PagoTransbank.DoesNotExist:
+            return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=token_invalido")
+
+        try:
+            tx       = get_webpay_transaction()
+            response = tx.commit(token_ws)
+
+            pago.respuesta_tb = dict(response)
+            pago.fecha_pago   = timezone.now()
+
+            # response_code 0 = aprobado
+            if response.get('response_code') == 0:
+                pago.estado = 'aprobado'
+                pago.save()
+
+                sus = pago.suscripcion
+                sus.plan   = sus.plan  # mantener o actualizar si cambió
+                sus.ciclo  = pago.ciclo
+                sus.estado = 'activa'
+                sus.fecha_inicio      = timezone.now()
+                sus.fecha_fin_periodo = (
+                    timezone.now() + timezone.timedelta(days=365)
+                    if pago.ciclo == 'anual'
+                    else timezone.now() + timezone.timedelta(days=30)
+                )
+                sus.save()
+
+                # Actualizar plan de la empresa
+                sus.empresa.plan = sus.plan
+                sus.empresa.save()
+
+                notificar_admins_empresa(
+                    empresa=pago.empresa,
+                    tipo='actividad',
+                    titulo='Pago procesado correctamente',
+                    mensaje=f'Tu plan {sus.plan.get_nombre_display()} está activo. Próximo cobro: {sus.fecha_fin_periodo.strftime("%d/%m/%Y")}.',
+                    extra={'pago_id': pago.id}
+                )
+
+                registrar_log(None, 'ACTIVIDAD', 'pago_aprobado', {
+                    'empresa_id': pago.empresa.id, 'monto': pago.monto, 'plan': pago.plan_nombre
+                })
+
+                return redirect(f"{settings.FRONTEND_URL}/empresa/pago/exitoso?orden={pago.orden_compra}")
+
+            else:
+                pago.estado = 'rechazado'
+                pago.save()
+
+                notificar_admins_empresa(
+                    empresa=pago.empresa,
+                    tipo='seguridad',
+                    titulo='Pago rechazado',
+                    mensaje='Tu pago fue rechazado por Transbank. Intenta nuevamente.',
+                    extra={'pago_id': pago.id}
+                )
+
+                return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")
+
+        except Exception as e:
+            pago.estado = 'fallido'
+            pago.save()
+            registrar_log(None, 'SEGURIDAD', 'pago_error', {'error': str(e), 'pago_id': pago.id})
+            return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=error_sistema")
+```
+
+### GET /api/pago/historial/
+Solo USUARIO — historial de pagos de su empresa:
+```python
+class PagoHistorialView(View):
+    def get(self, request):
+        if request.user.rol not in ('USUARIO', 'SUPERADMIN'):
+            return JsonResponse({'error': 'Sin acceso.'}, status=403)
+
+        empresa = request.user.empresa if request.user.rol == 'USUARIO' else None
+        empresa_id = request.GET.get('empresa_id')
+
+        if request.user.rol == 'SUPERADMIN' and empresa_id:
+            empresa = Empresa.objects.get(id=empresa_id)
+
+        pagos = PagoTransbank.objects.filter(
+            empresa=empresa, estado='aprobado'
+        ).select_related('suscripcion__plan')
+
+        data = [{
+            'id':           p.id,
+            'orden_compra': p.orden_compra,
+            'monto':        p.monto,
+            'plan':         p.plan_nombre,
+            'ciclo':        p.ciclo,
+            'fecha':        p.fecha_pago.strftime('%d/%m/%Y %H:%M') if p.fecha_pago else None,
+            'estado':       p.estado,
+        } for p in pagos]
+
+        return JsonResponse({'pagos': data})
+```
+
+### GET/PUT /api/admin/terminos/
+Solo SUPERADMIN:
+```python
+class TerminosView(View):
+    def get(self, request):
+        config = ConfiguracionSistema.get()
+        return JsonResponse({
+            'terminos':         config.terminos_condiciones,
+            'version':          config.terminos_version,
+            'updated_at':       config.terminos_updated_at.isoformat() if config.terminos_updated_at else None,
+            'dias_gracia':      config.dias_gracia_pago,
+            'bloqueo_auto':     config.bloqueo_automatico,
+            'mensaje_bloqueo':  config.mensaje_pago_pendiente,
+        })
+
+    def put(self, request):
+        if request.user.rol != 'SUPERADMIN':
+            return JsonResponse({'error': 'Sin acceso.'}, status=403)
+        body   = json.loads(request.body)
+        config = ConfiguracionSistema.get()
+        if 'terminos' in body:
+            config.terminos_condiciones = body['terminos']
+            config.terminos_version     = body.get('version', config.terminos_version)
+            config.terminos_updated_at  = timezone.now()
+        if 'dias_gracia'     in body: config.dias_gracia_pago       = body['dias_gracia']
+        if 'bloqueo_auto'    in body: config.bloqueo_automatico      = body['bloqueo_auto']
+        if 'mensaje_bloqueo' in body: config.mensaje_pago_pendiente  = body['mensaje_bloqueo']
+        config.save()
+        registrar_log(request, 'ACTIVIDAD', 'terminos_actualizados', {'version': config.terminos_version})
+        return JsonResponse({'ok': True})
+
+# Endpoint público para que cualquier empresa pueda leer los términos:
+class TerminosPublicosView(View):
+    def get(self, request):
+        config = ConfiguracionSistema.get()
+        return JsonResponse({
+            'terminos': config.terminos_condiciones,
+            'version':  config.terminos_version,
+            'fecha':    config.terminos_updated_at.strftime('%d/%m/%Y') if config.terminos_updated_at else None,
+        })
+```
+
+### Management command: verificar_suscripciones
+Crear g_de_flota/management/commands/verificar_suscripciones.py
+Ejecutar diariamente con cron: 0 9 * * *
+
+Lógica:
+```python
+def handle(self, *args, **kwargs):
+    from django.utils import timezone
+    config = ConfiguracionSistema.get()
+    hoy    = timezone.now()
+
+    suscripciones = Suscripcion.objects.filter(
+        estado__in=['activa', 'gracia']
+    ).select_related('empresa', 'plan')
+
+    for sus in suscripciones:
+        if not sus.fecha_fin_periodo:
+            continue
+
+        dias = (sus.fecha_fin_periodo - hoy).days
+
+        if sus.estado == 'activa' and dias <= 0:
+            # Vencida → pasar a gracia
+            sus.estado = 'gracia'
+            sus.save()
+            notificar_admins_empresa(
+                empresa=sus.empresa,
+                tipo='seguridad',
+                titulo='Suscripción vencida — período de gracia iniciado',
+                mensaje=f'Tu suscripción venció. Tienes {config.dias_gracia_pago} días para regularizar el pago antes de que el servicio sea suspendido.',
+            )
+
+        elif sus.estado == 'gracia':
+            dias_en_gracia = (hoy - sus.fecha_fin_periodo).days
+            if dias_en_gracia >= config.dias_gracia_pago and config.bloqueo_automatico:
+                sus.estado = 'suspendida'
+                sus.empresa.estado = 'suspendida'
+                sus.empresa.save()
+                sus.save()
+                notificar_admins_empresa(
+                    empresa=sus.empresa,
+                    tipo='seguridad',
+                    titulo='Servicio suspendido por falta de pago',
+                    mensaje=config.mensaje_pago_pendiente,
+                )
+
+        elif sus.estado == 'activa' and dias in [30, 15, 7, 3, 1]:
+            notificar_admins_empresa(
+                empresa=sus.empresa,
+                tipo='actividad',
+                titulo=f'Tu suscripción vence en {dias} días',
+                mensaje=f'El plan {sus.plan.get_nombre_display()} vence el {sus.fecha_fin_periodo.strftime("%d/%m/%Y")}. Renueva para evitar interrupciones.',
+            )
+
+    self.stdout.write(self.style.SUCCESS('Suscripciones verificadas.'))
+```
+
+---
+
+## PARTE 5 — URLS (agregar en urls.py)
+
+```python
+path('api/pago/iniciar/',           PagoIniciarView.as_view()),
+path('api/pago/retorno/',           PagoRetornoView.as_view()),
+path('api/pago/historial/',         PagoHistorialView.as_view()),
+path('api/admin/terminos/',         TerminosView.as_view()),
+path('api/terminos/',               TerminosPublicosView.as_view()),
+path('api/admin/suscripciones/',    SuscripcionesAdminView.as_view()),
+path('api/empresa/suscripcion/',    SuscripcionEmpresaView.as_view()),
+```
+
+---
+
+## PARTE 6 — FRONTEND WEB
+
+### src/web/pago/IniciarPago.vue
+Vista para que la empresa seleccione plan y ciclo antes de pagar.
+Tabs mensual / anual con ahorro calculado.
+Cards de planes disponibles (traídas de GET /api/configuracion/planes/).
+Al seleccionar plan y ciclo → POST /api/pago/iniciar/ → redirigir a response.url con window.location.href.
+Mostrar spinner mientras redirige.
+Nota: "Serás redirigido a Webpay de Transbank para completar el pago de forma segura."
+
+### src/web/pago/PagoExitoso.vue
+Ruta: /empresa/pago/exitoso
+Leer ?orden= de la URL y mostrar resumen del pago.
+Botón "Ir al panel" → router.push('/empresa/dashboard').
+Llamar GET /api/empresa/suscripcion/ para mostrar el estado actualizado.
+
+### src/web/pago/PagoFallido.vue
+Ruta: /empresa/pago/fallido
+Leer ?error= de la URL y mostrar mensaje apropiado según el código:
+- rechazado: "Tu pago fue rechazado. Verifica los datos de tu tarjeta."
+- sin_token: "Ocurrió un error en la sesión de pago."
+- error_sistema: "Error del sistema. Intenta nuevamente."
+Botón "Reintentar pago" → router.push('/empresa/pago').
+
+### src/web/pago/HistorialPagos.vue
+Vista para el USUARIO: tabla de pagos aprobados con columnas orden, plan, ciclo, monto, fecha.
+Formatear monto en CLP: $149.000.
+Botón exportar CSV.
+
+### src/web/admin/PagosSuperAdmin.vue
+Vista para el SUPERADMIN con:
+
+KPI cards: MRR del mes, total cobrado este mes, empresas activas, empresas en gracia/suspendidas.
+
+Tabla de todas las empresas con columnas:
+Empresa · Plan · Ciclo · Estado suscripción · Próximo cobro · Último pago · Acciones
+
+Badges de estado:
+- activa: verde
+- trial: azul
+- gracia: naranja con días restantes
+- suspendida: rojo
+- cancelada: gris
+
+Acciones por fila:
+- suspendida: botón "Reactivar" → PUT /api/admin/suscripciones/:id/reactivar/
+- gracia: botón "Extender gracia" (N días más)
+- activa: botón "Ver pagos"
+
+Filtros: estado, plan, búsqueda por nombre.
+
+### src/web/configuracion/TerminosCondiciones.vue
+Vista dentro del módulo de configuración del SUPERADMIN.
+Tab "Términos y condiciones":
+- Editor de texto enriquecido (usar textarea grande, no WYSIWYG — mantener simple)
+- Campo versión (ej: "1.2")
+- Botón "Guardar y publicar" → PUT /api/admin/terminos/
+- Fecha de última actualización
+
+Tab "Configuración de pagos":
+- Input: días de gracia antes del bloqueo (número)
+- Toggle: bloqueo automático activado/desactivado
+- Textarea: mensaje de bloqueo (lo que ve la empresa bloqueada)
+- Badge de ambiente: TEST o PRODUCCIÓN según TRANSBANK_ENVIRONMENT
+
+### src/web/empresa/BannerSuscripcion.vue
+Banner que aparece en EmpresaLayout.vue cuando la suscripción está por vencer o en gracia.
+
+Leer estado desde GET /api/empresa/suscripcion/ al montar. Refrescar cada 10 minutos.
+
+Variantes:
+- gracia (naranja): "Tu suscripción venció. Tienes X días para pagar antes de que el servicio sea suspendido. [Pagar ahora]"
+- por_vencer ≤7 días (amarillo): "Tu suscripción vence en X días. [Renovar]"
+- suspendida (rojo, pantalla completa bloqueante): overlay que cubre todo el contenido con el mensaje de bloqueo y botón "Regularizar pago"
+
+El overlay de suspensión usa position:fixed con z-index alto para bloquear toda interacción. Solo permite ir a /empresa/pago.
+
+### Interceptor en api.js
+En apiFetch, después del manejo de 401/403 existente, agregar:
+```javascript
+if (res.status === 402) {
+  const data = await res.json()
+  if (data.codigo === 'SUSCRIPCION_BLOQUEADA') {
+    window.dispatchEvent(new CustomEvent('suscripcion-bloqueada', { detail: data }))
+    throw new Error(data.error)
+  }
 }
-</script>
+```
 
-<template>
-  <!-- Agregar esta sección en Ajustes, después del perfil: -->
-  <p class="section-label">Plan de la empresa</p>
-  <div style="background:var(--color-background-secondary); border-radius:12px; padding:12px 14px; margin-bottom:16px;">
-    <p style="font-size:13px; font-weight:500; margin:0 0 8px; color:var(--color-text-primary);">
-      {{ planNombre || 'Sin plan asignado' }}
-    </p>
-    <div style="display:flex; flex-wrap:wrap; gap:6px;">
-      <span
-        v-for="mod in modulos"
-        :key="mod"
-        style="font-size:11px; padding:2px 8px; border-radius:99px; background:#E1F5EE; color:#085041;"
-      >
-        {{ MODULO_LABELS[mod] || mod }}
-      </span>
-      <span v-if="modulos.length === 0"
-        style="font-size:12px; color:var(--color-text-tertiary);">
-        Sin módulos activos
-      </span>
-    </div>
-  </div>
-</template>
+En EmpresaLayout.vue al montar:
+```javascript
+window.addEventListener('suscripcion-bloqueada', () => {
+  router.push('/empresa/pago')
+})
+```
+
+---
+
+## PARTE 7 — TÉRMINOS Y CONDICIONES EN ONBOARDING
+
+En el login web de la empresa (cuando primer_login=true), antes de acceder al panel mostrar pantalla de aceptación de términos:
+
+GET /api/terminos/ → mostrar el texto con scroll obligatorio
+Checkbox "He leído y acepto los términos y condiciones (versión X.X)"
+Botón "Aceptar y continuar" — deshabilitado hasta que se marque el checkbox y se llegue al final del scroll
+POST /api/empresa/terminos/aceptar/ → guarda version aceptada y fecha en Usuario.extra
+
+Si los términos se actualizan (nueva versión), mostrar nuevamente la pantalla de aceptación al próximo login.
+
+---
+
+## URLS adicionales para términos
+
+```python
+path('api/empresa/terminos/aceptar/', TerminosAceptarView.as_view()),
+```
+
+Vista TerminosAceptarView:
+- POST con { version }
+- Guardar en request.user.extra = { ..., terminos_version: version, terminos_aceptado_at: now().isoformat() }
+- Si Usuario no tiene campo extra: agregar extra = models.JSONField(default=dict, blank=True) en models.py
+
+---
+
+## TARJETAS DE PRUEBA TRANSBANK (ambiente integration)
+
+Agregar en la vista de configuración del SUPERADMIN como sección informativa:
+
+| Número | Resultado | CVC | Fecha exp |
+|---|---|---|---|
+| 4051 8856 0044 6623 | Aprobado | 123 | Cualquier fecha futura |
+| 4051 8842 3993 7763 | Rechazado | 123 | Cualquier fecha futura |
+| 5186 0595 5959 0568 | Aprobado (débito) | 123 | Cualquier fecha futura |
+
+RUT para autenticación en ambiente test: 11.111.111-1, clave: 123
+
+---
+
+## NAVEGACIÓN
+
+Agregar en sidebar USUARIO:
+- Ítem: "Suscripción y pagos" · ícono: ti-credit-card · ruta: /empresa/pago
+
+Agregar en sidebar SUPERADMIN:
+- Ítem: "Pagos" · ícono: ti-report-money · ruta: /admin/pagos
+- En módulo Configuración: tab "Términos y condiciones"
+
+Agregar en router/index.js:
+```javascript
+{ path: '/empresa/pago',          component: () => import('@/web/pago/IniciarPago.vue'),        meta: { roles: ['USUARIO'] } },
+{ path: '/empresa/pago/exitoso',  component: () => import('@/web/pago/PagoExitoso.vue'),         meta: { roles: ['USUARIO'] } },
+{ path: '/empresa/pago/fallido',  component: () => import('@/web/pago/PagoFallido.vue'),         meta: { roles: ['USUARIO'] } },
+{ path: '/empresa/pagos',         component: () => import('@/web/pago/HistorialPagos.vue'),      meta: { roles: ['USUARIO'] } },
+{ path: '/admin/pagos',           component: () => import('@/web/admin/PagosSuperAdmin.vue'),    meta: { roles: ['SUPERADMIN'] } },
 ```
 
 ---
 
 ## CONVENCIONES
-- Composition API <script setup> siempre
-- Nunca localStorage — siempre @capacitor/preferences
-- El guard del router es la primera línea de defensa — las vistas tienen solo fallback visual
-- Si tieneModulo() devuelve false para una ruta → redirigir a /modulo-no-disponible
-- Los módulos se leen de Preferences, no del store — son datos persistentes del dispositivo
-- Textos en español
-- Sin "// resto igual"
+- Montos siempre en CLP entero sin decimales: $149.000
+- @csrf_exempt solo en PagoRetornoView
+- registrar_log en: pago iniciado, pago aprobado, pago rechazado, suspensión, reactivación, términos actualizados
+- notificar_admins_empresa en: pago aprobado, vencimiento próximo, período de gracia, suspensión
+- Fail-silent en BannerSuscripcion si el endpoint falla
+- SUPERADMIN nunca es bloqueado por el middleware
+- El bloqueo opera a nivel de API — el frontend muestra el overlay pero el backend igual rechaza las peticiones
+- Cron diario obligatorio: 0 9 * * * python manage.py verificar_suscripciones
+- Textos en español es-CL
 
 ---
 
 ## ARCHIVOS A ENTREGAR
 
 Backend:
-1. views_login_patch.py — solo las líneas a agregar en la respuesta del login
-2. views_solicitudes_patch.py — solo la validación de módulo en POST /api/conductor/solicitudes/
-3. views_documentos_patch.py — solo la validación en GET /api/conductor/documentos/
-4. views_rutas_patch.py — solo la validación en GET /api/conductor/rutas/
+1. models_patch.py — Suscripcion, PagoTransbank + campos nuevos en ConfiguracionSistema + campo extra en Usuario
+2. views_pago_patch.py — PagoIniciarView, PagoRetornoView, PagoHistorialView, TerminosView, TerminosPublicosView, TerminosAceptarView, SuscripcionEmpresaView, SuscripcionesAdminView con indicación de dónde van en views_planes.py
+3. middleware_patch.py — BloqueoSuscripcionMiddleware con indicación de dónde va y cómo registrar en settings.py
+4. management/commands/verificar_suscripciones.py — completo
+5. urls_patch.py — todas las rutas nuevas
+6. settings_patch.py — líneas a agregar en settings.py y MIDDLEWARE
 
 Frontend:
-5. src/services/permisos.js — completo
-6. src/composables/usePermisos.js — completo
-7. src/stores/auth_patch.js — solo las líneas a agregar en login() y logout()
-8. src/router/index_patch.js — router completo con guards y meta modulos
-9. src/components/BottomNav.vue — completo reescrito
-10. src/views/ModuloNoDisponible.vue — completo
-11. src/views/Solicitudes/solicitudes_patch.vue — solo el grid de tipos modificado
-12. src/views/Ajustes/ajustes_patch.vue — solo la sección de plan a agregar
-13. src/views/Rutas/listarutas_patch.vue — solo el v-if de módulo
+7. IniciarPago.vue — completo
+8. PagoExitoso.vue — completo
+9. PagoFallido.vue — completo
+10. HistorialPagos.vue — completo
+11. PagosSuperAdmin.vue — completo
+12. TerminosCondiciones.vue — completo
+13. BannerSuscripcion.vue — completo
+14. api_js_patch.js — solo el bloque 402 a agregar
+15. router_patch.js — rutas nuevas
+16. nav_patch.md — ítems a agregar en sidebars
 
 Sin "# resto igual".

@@ -27,6 +27,7 @@ const LABELS = {
   finanzas:     'Finanzas',
   documentos:   'Documentos',
   usuarios:     'Usuarios',
+  calendario:   'Calendario',
 }
 const labelCat = (cat) => LABELS[cat] ?? cat
 
