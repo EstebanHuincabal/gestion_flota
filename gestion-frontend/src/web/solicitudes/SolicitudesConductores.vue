@@ -497,6 +497,26 @@ watch(filtroBuscar, () => {
                 <span class="detalle-lbl">Respondido por</span>
                 <span>{{ modalDetalle.respondido_por_nombre }} · {{ fmtFecha(modalDetalle.respondido_at) }}</span>
               </div>
+              <template v-if="modalDetalle.tipo === 'combustible' && modalDetalle.extra">
+                <div class="detalle-item">
+                  <span class="detalle-lbl">Monto</span>
+                  <span>{{ modalDetalle.extra.monto ? '$' + modalDetalle.extra.monto.toLocaleString('es-CL') : '—' }}</span>
+                </div>
+                <div class="detalle-item">
+                  <span class="detalle-lbl">Litros</span>
+                  <span>{{ modalDetalle.extra.litros || '—' }} L</span>
+                </div>
+              </template>
+              <template v-if="modalDetalle.tipo === 'incidencia' && modalDetalle.extra">
+                <div class="detalle-item" v-if="modalDetalle.extra.subtipo">
+                  <span class="detalle-lbl">Tipo de Incidencia</span>
+                  <span class="capitalize">{{ modalDetalle.extra.subtipo.replace('_', ' ') }}</span>
+                </div>
+                <div class="detalle-item" v-if="modalDetalle.extra.subtipo === 'multa'">
+                  <span class="detalle-lbl">Monto Multa</span>
+                  <span>{{ modalDetalle.extra.monto ? '$' + modalDetalle.extra.monto.toLocaleString('es-CL') : '—' }}</span>
+                </div>
+              </template>
             </div>
 
             <!-- Descripción -->

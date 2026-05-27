@@ -1061,7 +1061,7 @@ class SolicitudConductorSerializer(serializers.ModelSerializer):
             'conductor', 'conductor_nombre', 'conductor_iniciales',
             'vehiculo', 'vehiculo_patente',
             'respondido_por', 'respondido_por_nombre', 'respondido_at',
-            'created_at', 'updated_at',
+            'created_at', 'updated_at', 'extra',
         ]
 
     def _nombre_usuario(self, usuario):

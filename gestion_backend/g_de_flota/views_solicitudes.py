@@ -109,8 +109,43 @@ def _crear_entidad_automatica(solicitud, request_user, extra=None):
             solicitud.vehiculo.save(update_fields=['en_mantencion'])
         return mantencion
 
-    elif solicitud.tipo == 'documento' and solicitud.vehiculo:
-        Documento.objects.create(
+    elif solicitud.tipo == 'combustible' and solicitud.vehiculo:
+        sol_extra = solicitud.extra or {}
+        monto = sol_extra.get('monto', 0)
+        litros = sol_extra.get('litros', 0)
+
+        gasto = GastoOperativo.objects.create(
+            empresa=solicitud.empresa,
+            vehiculo=solicitud.vehiculo,
+            conductor=solicitud.conductor,
+            categoria='combustible',
+            descripcion=f'Aprobado desde solicitud de conductor. {litros} Litros.',
+            monto=monto,
+            fecha=timezone.now().date(),
+            registrado_por=request_user,
+            comprobante=solicitud.foto if solicitud.foto else None,
+        )
+        return gasto
+
+    elif solicitud.tipo == 'incidencia' and solicitud.vehiculo:
+        sol_extra = solicitud.extra or {}
+        subtipo = sol_extra.get('subtipo')
+        if subtipo == 'multa':
+            monto = sol_extra.get('monto', 0)
+            gasto = GastoOperativo.objects.create(
+                empresa=solicitud.empresa,
+                vehiculo=solicitud.vehiculo,
+                conductor=solicitud.conductor,
+                categoria='multa',
+                descripcion=f'Aprobado desde solicitud de incidencia. Multa: {solicitud.titulo}',
+                monto=monto,
+                fecha=timezone.now().date(),
+                registrado_por=request_user,
+                comprobante=solicitud.foto if solicitud.foto else None,
+            )
+            return gasto
+
+    elif solicitud.tipo == 'documento' and solicitud.vehiculo:        Documento.objects.create(
             empresa=solicitud.empresa,
             entidad='vehiculo',
             tipo='revision_tecnica',      # tipo genérico; se puede ajustar manualmente
@@ -345,6 +380,8 @@ class SolicitudAprobarView(APIView):
         # Si se creó una mantención, incluir su id para redirigir al formulario
         if entidad and sol.tipo == 'mantencion':
             resp['mantencion_id'] = entidad.id
+        elif entidad and sol.tipo in ('combustible', 'incidencia'):
+            resp['gasto_id'] = entidad.id
 
         return Response(resp)
 

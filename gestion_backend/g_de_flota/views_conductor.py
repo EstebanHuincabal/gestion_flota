@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
-from .models import EventoRuta, Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo, Documento
+from .models import EventoRuta, Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo, Documento, Usuario
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
 from .firebase_push import enviar_push
@@ -375,6 +375,33 @@ def conductor_solicitudes(request):
     prioridad   = request.data.get('prioridad', 'media').strip()
     foto        = request.FILES.get('foto')
 
+    extra_data = {}
+    if tipo == 'combustible':
+        try:
+            monto = float(request.data.get('monto', 0))
+            litros = float(request.data.get('litros', 0))
+            if monto <= 0 or litros <= 0:
+                raise ValueError
+            extra_data['monto'] = monto
+            extra_data['litros'] = litros
+        except (TypeError, ValueError):
+            return Response({'error': 'Monto y litros deben ser números positivos válidos.'}, status=400)
+        if not foto:
+            return Response({'error': 'Para recargas de combustible es obligatorio adjuntar el comprobante.'}, status=400)
+
+    elif tipo == 'incidencia':
+        subtipo = request.data.get('subtipo', '').strip()
+        if subtipo:
+            extra_data['subtipo'] = subtipo
+        if subtipo == 'multa':
+            try:
+                monto = float(request.data.get('monto', 0))
+                if monto <= 0:
+                    raise ValueError
+                extra_data['monto'] = monto
+            except (TypeError, ValueError):
+                return Response({'error': 'El monto de la multa debe ser un número positivo válido.'}, status=400)
+
     # Validaciones básicas
     prioridades_validas = ['baja', 'media', 'alta']
 
@@ -397,7 +424,7 @@ def conductor_solicitudes(request):
         )
     if not titulo or len(titulo) < 5:
         errores['titulo'] = 'El título debe tener al menos 5 caracteres.'
-    if tipo != 'documento' and len(descripcion) < 10:
+    if tipo not in ['documento', 'combustible'] and len(descripcion) < 10:
         errores['descripcion'] = 'La descripción debe tener al menos 10 caracteres.'
     if prioridad not in prioridades_validas:
         prioridad = 'media'
@@ -421,6 +448,7 @@ def conductor_solicitudes(request):
         descripcion=descripcion,
         prioridad=prioridad,
         foto=foto,
+        extra=extra_data,
     )
 
     registrar_log('ACTIVIDAD', 'solicitud_creada', request, detalle={

@@ -66,6 +66,9 @@ const form = ref({
   titulo:      '',
   descripcion: '',
   prioridad:   'media',
+  monto:       null,
+  litros:      null,
+  subtipo_incidencia: '',
 })
 
 const TIPOS = [
@@ -88,7 +91,7 @@ function abrirNuevaSolicitud() {
   fotoDataUrl.value      = null
   fotoBase64.value       = null
   errorForm.value        = ''
-  form.value             = { titulo: '', descripcion: '', prioridad: 'media' }
+  form.value             = { titulo: '', descripcion: '', prioridad: 'media', monto: null, litros: null, subtipo_incidencia: '' }
   modalNueva.value       = true
 }
 
@@ -197,9 +200,33 @@ async function enviarSolicitud() {
     errorForm.value = 'La descripción debe tener al menos 10 caracteres.'
     return
   }
-  if (t === 'incidencia' && !fotoBase64.value) {
-    errorForm.value = 'Para incidencias se requiere una foto.'
-    return
+  if (t === 'incidencia') {
+    if (!f.subtipo_incidencia) {
+      errorForm.value = 'Debes seleccionar el tipo de incidencia.'
+      return
+    }
+    if (f.subtipo_incidencia === 'multa' && (!f.monto || f.monto <= 0)) {
+      errorForm.value = 'Debes ingresar el monto de la multa.'
+      return
+    }
+    if (!fotoBase64.value) {
+      errorForm.value = 'Para incidencias se requiere una foto.'
+      return
+    }
+  }
+  if (t === 'combustible') {
+    if (!f.monto || f.monto <= 0) {
+      errorForm.value = 'Debes ingresar un monto válido.'
+      return
+    }
+    if (!f.litros || f.litros <= 0) {
+      errorForm.value = 'Debes ingresar los litros recargados.'
+      return
+    }
+    if (!fotoBase64.value) {
+      errorForm.value = 'Para recargas de combustible es obligatorio adjuntar el comprobante (foto).'
+      return
+    }
   }
 
   let foto = null
@@ -213,6 +240,16 @@ async function enviarSolicitud() {
     titulo:      f.titulo,
     descripcion: f.descripcion,
     prioridad:   f.prioridad,
+  }
+  if (t === 'combustible') {
+    datos.monto = f.monto
+    datos.litros = f.litros
+  }
+  if (t === 'incidencia') {
+    datos.subtipo = f.subtipo_incidencia
+    if (f.subtipo_incidencia === 'multa') {
+      datos.monto = f.monto
+    }
   }
 
   const res = await store.crearSolicitud(datos, foto)
@@ -609,6 +646,70 @@ onMounted(async () => {
               />
             </div>
 
+            <!-- Incidencia: Subtipo y Monto Multa -->
+            <div v-if="tipoSeleccionado === 'incidencia'" class="mb-4 space-y-4">
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1">
+                  Tipo de incidencia <span class="text-red-400">*</span>
+                </label>
+                <select
+                  v-model="form.subtipo_incidencia"
+                  class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                         focus:outline-none focus:border-[var(--color-acento)] transition bg-white"
+                >
+                  <option value="" disabled>Selecciona una opción</option>
+                  <option value="accidente">Accidente o Siniestro</option>
+                  <option value="multa">Parte o Multa de tránsito</option>
+                  <option value="fiscalizacion">Fiscalización / Control</option>
+                  <option value="robo">Robo o Vandalismo</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
+
+              <!-- Monto Multa -->
+              <div v-if="form.subtipo_incidencia === 'multa'">
+                <label class="block text-xs font-semibold text-gray-600 mb-1">
+                  Monto de la Multa ($) <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model.number="form.monto"
+                  type="number"
+                  placeholder="Ej: 50000"
+                  class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                         focus:outline-none focus:border-[var(--color-acento)] transition"
+                />
+              </div>
+            </div>
+
+            <!-- Combustible: Monto y Litros -->
+            <div v-if="tipoSeleccionado === 'combustible'" class="flex gap-3 mb-4">
+              <div class="flex-1">
+                <label class="block text-xs font-semibold text-gray-600 mb-1">
+                  Monto ($) <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model.number="form.monto"
+                  type="number"
+                  placeholder="Ej: 20000"
+                  class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                         focus:outline-none focus:border-[var(--color-acento)] transition"
+                />
+              </div>
+              <div class="flex-1">
+                <label class="block text-xs font-semibold text-gray-600 mb-1">
+                  Litros <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model.number="form.litros"
+                  type="number"
+                  step="0.01"
+                  placeholder="Ej: 15.5"
+                  class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                         focus:outline-none focus:border-[var(--color-acento)] transition"
+                />
+              </div>
+            </div>
+
             <!-- Prioridad (no para combustible) -->
             <div v-if="tipoSeleccionado !== 'combustible'" class="mb-4">
               <label class="block text-xs font-semibold text-gray-600 mb-2">Prioridad</label>
@@ -632,7 +733,7 @@ onMounted(async () => {
             <div class="mb-5">
               <label class="block text-xs font-semibold text-gray-600 mb-2">
                 Foto
-                <span v-if="tipoSeleccionado === 'incidencia'" class="text-red-400">* (requerida)</span>
+                <span v-if="tipoSeleccionado === 'incidencia' || tipoSeleccionado === 'combustible'" class="text-red-400">* (requerida)</span>
                 <span v-else class="text-gray-400">(opcional)</span>
               </label>
 
