@@ -1,5 +1,8 @@
 import json
 import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Count, Max, Subquery, OuterRef, IntegerField, Q, Sum
@@ -1039,6 +1042,24 @@ def usuarios_crear(request):
         user = serializer.save()
         registrar_log('ACTIVIDAD', 'usuario_creado', request,
                       detalle={'usuario_email': user.email, 'rol': user.rol})
+
+        # ── Email de bienvenida ──────────────────────────────────────────────
+        try:
+            from .email_service import email_bienvenida
+            from django.conf import settings as _settings
+            email_bienvenida(
+                email=user.email,
+                nombre=user.nombre or user.email,
+                empresa_nombre=user.empresa.nombre if user.empresa else '',
+                plan_nombre=(
+                    user.empresa.plan.get_nombre_display()
+                    if user.empresa and user.empresa.plan else 'Sin plan'
+                ),
+                url_login=f"{_settings.FRONTEND_URL}/login",
+            )
+        except Exception:
+            pass
+
         return Response(UsuarioListSerializer(user).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1101,28 +1122,77 @@ def usuarios_detalle(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def usuario_reset_password(request, pk):
+    import secrets
+    import string
+
     if not es_superadmin(request.user):
         return Response({"error": "Solo el Superadmin puede resetear contraseñas."}, status=403)
-    
+
     try:
         usuario = Usuario.objects.get(pk=pk)
     except Usuario.DoesNotExist:
         return Response({"error": "Usuario no encontrado."}, status=404)
 
-    rut_plain = usuario.rut
-    if not rut_plain:
-         return Response({"error": "No se pudo recuperar el RUT para el reset."}, status=400)
-    
-    usuario.set_password(rut_plain)
-    usuario.save()
+    # Generar contraseña temporal segura de 10 caracteres (letras + dígitos)
+    alfabeto    = string.ascii_letters + string.digits
+    clave_temp  = ''.join(secrets.choice(alfabeto) for _ in range(10))
+
+    usuario.set_password(clave_temp)
+    # Limpiar bloqueo y contadores — el reset debe dejar la cuenta usable de inmediato
+    usuario.is_blocked        = False
+    usuario.intentos_fallidos = 0
+    usuario.save(update_fields=['password', 'is_blocked', 'intentos_fallidos'])
+
     registrar_log('SEGURIDAD', 'cambio_password', request,
                   detalle={'usuario_email': usuario.email, 'usuario_id': pk})
+
     notificar(usuario, TipoNotificacion.SEGURIDAD,
               "Contraseña restablecida",
-              "Un administrador restableció tu contraseña. Si no lo solicitaste, contacta al soporte.",
+              "Un administrador restableció tu contraseña. Revisa tu correo para obtener la clave temporal.",
               url_accion='')
 
-    return Response({"message": f"Contraseña reseteada exitosamente al RUT del usuario: {rut_plain}"})
+    # Enviar clave temporal por correo (fire-and-forget)
+    email_enviado = False
+    email_error   = ''
+    try:
+        from g_de_flota.email_service import email_reset_password
+        from django.conf import settings as dj_settings
+        from g_de_flota.models import ConfiguracionSistema
+
+        config = ConfiguracionSistema.get()
+        if not config.email_activo:
+            email_error = 'El sistema de correo está desactivado en Configuración → Correo.'
+        elif not usuario.email:
+            email_error = 'El usuario no tiene email registrado.'
+        else:
+            empresa_nombre = (
+                usuario.empresa.nombre
+                if usuario.empresa_id and usuario.empresa
+                else 'FlotaSystem'
+            )
+            url_login = getattr(dj_settings, 'FRONTEND_URL', '') + '/login'
+            enviado = email_reset_password(
+                email=usuario.email,
+                nombre=usuario.nombre or usuario.email,
+                empresa_nombre=empresa_nombre,
+                clave_temporal=clave_temp,
+                url_login=url_login,
+            )
+            if enviado is False:
+                email_error = 'Error SMTP al enviar el correo. Revisa la configuración en Configuración → Correo.'
+            else:
+                email_enviado = True
+    except Exception as e:
+        logger.exception(f"[RESET_PASSWORD] Error al enviar correo a usuario {pk}: {e}")
+        email_error = f'Error inesperado al enviar el correo: {e}'
+
+    msg = 'Contraseña restablecida correctamente.'
+    if email_enviado:
+        msg += f' Se envió la clave temporal a {usuario.email}.'
+    else:
+        msg += f' ⚠ El correo no pudo enviarse: {email_error}'
+
+    return Response({"message": msg, "email_enviado": email_enviado, "clave_temp": clave_temp})
 
 
 @api_view(['POST'])

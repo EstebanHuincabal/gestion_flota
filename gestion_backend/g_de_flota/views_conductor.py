@@ -460,6 +460,26 @@ def conductor_solicitudes(request):
         except Exception:
             pass  # WS no disponible — no interrumpir el flujo
 
+    # ── Email a los admins: nueva solicitud ──────────────────────────────────
+    if empresa:
+        try:
+            from .email_service import email_solicitud_nueva
+            from django.conf import settings as _settings
+            conductor_nombre = request.user.nombre or request.user.email
+            admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
+            for admin in admins:
+                email_solicitud_nueva(
+                    email=admin.email,
+                    nombre_admin=admin.nombre or admin.email,
+                    empresa_nombre=empresa.nombre,
+                    tipo=tipo,
+                    titulo_sol=titulo,
+                    conductor_nombre=conductor_nombre,
+                    url_solicitudes=f"{_settings.FRONTEND_URL}/empresa/solicitudes",
+                )
+        except Exception:
+            pass
+
     return Response({'ok': True, 'solicitud': _serializar_solicitud(solicitud)}, status=201)
 
 
@@ -1017,6 +1037,29 @@ def conductor_checklist(request, ruta_id):
             enviar_push(request.user, 'Checklist enviado ⚠', 'Se notificó al administrador sobre las fallas.')
     except Exception:
         registrar_log('ERROR', 'checklist_push_fallido', request, detalle={'ruta_id': ruta.id})
+
+    # 7b. Email a los admins cuando hay fallas ────────────────────────────────
+    if tiene_fallas and empresa:
+        try:
+            from .email_service import email_checklist_fallas
+            from django.conf import settings as _settings
+            admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
+            lista_fallas = [
+                f"{ITEMS_MAP.get(iid, iid)}: {resumen_fallas}"
+                for iid in fallas
+            ]
+            for admin in admins:
+                email_checklist_fallas(
+                    email=admin.email,
+                    nombre_admin=admin.nombre or admin.email,
+                    empresa_nombre=empresa.nombre,
+                    conductor_nombre=nombre_conductor,
+                    patente=patente,
+                    fallas=lista_fallas or [resumen_fallas],
+                    url_solicitudes=f"{_settings.FRONTEND_URL}/empresa/solicitudes/{sol.id}",
+                )
+        except Exception:
+            pass
 
     # 8. Registrar log
     registrar_log('ACTIVIDAD', 'checklist_completado', request, detalle={

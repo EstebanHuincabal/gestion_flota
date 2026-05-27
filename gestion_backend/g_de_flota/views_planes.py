@@ -7,6 +7,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.shortcuts import redirect
 from django.conf import settings as django_settings
+from django.core.mail import EmailMultiAlternatives
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
@@ -578,7 +579,7 @@ class PagoIniciarView(APIView):
             child_order = f"CHD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
             sus, _ = Suscripcion.objects.get_or_create(
                 empresa=empresa,
-                defaults={'plan': plan, 'ciclo': ciclo, 'estado': 'trial'},
+                defaults={'plan': plan, 'ciclo': ciclo, 'estado': 'pendiente'},
             )
 
             try:
@@ -783,6 +784,26 @@ class PagoRetornoView(View):
                     extra={'pago_id': pago.id},
                 )
 
+                # ── Email de pago aprobado ───────────────────────────────────
+                try:
+                    from .email_service import email_pago_aprobado
+                    admins = Usuario.objects.filter(
+                        empresa=pago.empresa, rol=Rol.USUARIO, is_active=True,
+                    )
+                    for admin in admins:
+                        email_pago_aprobado(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=pago.empresa.nombre,
+                            plan_nombre=pago.plan_nombre,
+                            monto=pago.monto,
+                            ciclo=pago.ciclo,
+                            fecha_proximo_cobro=sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
+                            orden_compra=pago.orden_compra,
+                        )
+                except Exception:
+                    pass
+
                 registrar_log('ACTIVIDAD', 'pago_aprobado', request, detalle={
                     'empresa_id': pago.empresa.id,
                     'monto':      pago.monto,
@@ -802,6 +823,23 @@ class PagoRetornoView(View):
                     mensaje='Tu pago fue rechazado por Transbank. Intenta nuevamente.',
                     extra={'pago_id': pago.id},
                 )
+
+                # ── Email de pago rechazado ──────────────────────────────────
+                try:
+                    from .email_service import email_pago_rechazado
+                    admins = Usuario.objects.filter(
+                        empresa=pago.empresa, rol=Rol.USUARIO, is_active=True,
+                    )
+                    for admin in admins:
+                        email_pago_rechazado(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=pago.empresa.nombre,
+                            monto=pago.monto,
+                            url_reintentar=f"{django_settings.FRONTEND_URL}/empresa/pago",
+                        )
+                except Exception:
+                    pass
 
                 return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")
 
@@ -1334,3 +1372,165 @@ class TarjetaEliminarView(APIView):
             'empresa': empresa.nombre,
         })
         return Response({'ok': True})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Configuración de email SMTP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class EmailConfigView(APIView):
+    """
+    GET /api/admin/email/  — Devuelve la config SMTP (contraseña enmascarada).
+    PUT /api/admin/email/  — Actualiza la config SMTP.
+    Solo SUPERADMIN.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        config = ConfiguracionSistema.get()
+        return Response({
+            'email_host':         config.email_host,
+            'email_port':         config.email_port,
+            'email_host_user':    config.email_host_user,
+            'email_host_password': '••••••••' if config.email_host_password else '',
+            'email_use_tls':      config.email_use_tls,
+            'email_use_ssl':      config.email_use_ssl,
+            'email_from_name':    config.email_from_name,
+            'email_from_address': config.email_from_address,
+            'email_activo':       config.email_activo,
+            'notificaciones': {
+                'pago_aprobado':         config.notif_pago_aprobado,
+                'pago_rechazado':        config.notif_pago_rechazado,
+                'suscripcion_vence':     config.notif_suscripcion_vence,
+                'suscripcion_gracia':    config.notif_suscripcion_gracia,
+                'suscripcion_bloqueada': config.notif_suscripcion_bloqueada,
+                'documento_vence':       config.notif_documento_vence,
+                'mantencion_vence':      config.notif_mantencion_vence,
+                'solicitud_nueva':       config.notif_solicitud_nueva,
+                'solicitud_resuelta':    config.notif_solicitud_resuelta,
+                'ruta_asignada':         config.notif_ruta_asignada,
+                'checklist_fallas':      config.notif_checklist_fallas,
+                'bienvenida':            config.notif_bienvenida,
+                'reset_password':        config.notif_reset_password,
+                'recordatorio_pago':     config.notif_recordatorio_pago,
+            },
+        })
+
+    def put(self, request):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        body   = request.data
+        config = ConfiguracionSistema.get()
+
+        # Campos SMTP (solo actualizar si vienen en el body)
+        if 'email_host'         in body: config.email_host         = body['email_host']
+        if 'email_port'         in body: config.email_port         = int(body['email_port'])
+        if 'email_host_user'    in body: config.email_host_user    = body['email_host_user']
+        if 'email_use_tls'      in body: config.email_use_tls      = bool(body['email_use_tls'])
+        if 'email_use_ssl'      in body: config.email_use_ssl      = bool(body['email_use_ssl'])
+        if 'email_from_name'    in body: config.email_from_name    = body['email_from_name']
+        if 'email_from_address' in body: config.email_from_address = body['email_from_address']
+        if 'email_activo'       in body: config.email_activo       = bool(body['email_activo'])
+
+        # Contraseña: solo actualizar si no es el valor enmascarado
+        pwd = body.get('email_host_password', '')
+        if pwd and pwd != '••••••••':
+            config.set_email_password(pwd)
+
+        # Toggles de notificaciones
+        notif = body.get('notificaciones', {})
+        if 'pago_aprobado'         in notif: config.notif_pago_aprobado         = bool(notif['pago_aprobado'])
+        if 'pago_rechazado'        in notif: config.notif_pago_rechazado        = bool(notif['pago_rechazado'])
+        if 'suscripcion_vence'     in notif: config.notif_suscripcion_vence     = bool(notif['suscripcion_vence'])
+        if 'suscripcion_gracia'    in notif: config.notif_suscripcion_gracia    = bool(notif['suscripcion_gracia'])
+        if 'suscripcion_bloqueada' in notif: config.notif_suscripcion_bloqueada = bool(notif['suscripcion_bloqueada'])
+        if 'documento_vence'       in notif: config.notif_documento_vence       = bool(notif['documento_vence'])
+        if 'mantencion_vence'      in notif: config.notif_mantencion_vence      = bool(notif['mantencion_vence'])
+        if 'solicitud_nueva'       in notif: config.notif_solicitud_nueva       = bool(notif['solicitud_nueva'])
+        if 'solicitud_resuelta'    in notif: config.notif_solicitud_resuelta    = bool(notif['solicitud_resuelta'])
+        if 'ruta_asignada'         in notif: config.notif_ruta_asignada         = bool(notif['ruta_asignada'])
+        if 'checklist_fallas'      in notif: config.notif_checklist_fallas      = bool(notif['checklist_fallas'])
+        if 'bienvenida'            in notif: config.notif_bienvenida            = bool(notif['bienvenida'])
+        if 'reset_password'        in notif: config.notif_reset_password        = bool(notif['reset_password'])
+        if 'recordatorio_pago'     in notif: config.notif_recordatorio_pago     = bool(notif['recordatorio_pago'])
+
+        config.save()
+        registrar_log('ACTIVIDAD', 'email_config_guardada', request, detalle={
+            'email_host': config.email_host,
+            'email_activo': config.email_activo,
+        })
+        return Response({'ok': True})
+
+
+class EmailTestView(APIView):
+    """
+    POST /api/admin/email/test/
+    Envía un email de prueba al destinatario indicado.
+    Retorna el error SMTP si falla (para diagnóstico).
+    Solo SUPERADMIN.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if getattr(request.user, 'rol', None) != 'SUPERADMIN':
+            return Response({'error': 'Sin acceso.'}, status=403)
+
+        destino = request.data.get('email_destino', '').strip()
+        if not destino:
+            return Response({'error': 'email_destino es requerido.'}, status=400)
+
+        config = ConfiguracionSistema.get()
+
+        from .email_service import _base_template, get_email_backend
+        html = _base_template(
+            'Email de prueba',
+            f"""
+            <p style="color:#444;font-size:15px;">
+              Este es un email de prueba enviado desde FlotaSystem.
+            </p>
+            <p style="color:#888;font-size:13px;">
+              Si recibes este mensaje, la configuración SMTP es correcta.
+            </p>
+            <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+              <tr>
+                <td style="color:#666;font-size:13px;padding:4px 0;">Servidor SMTP:</td>
+                <td style="color:#1a1a1a;font-size:13px;">{config.email_host}:{config.email_port}</td>
+              </tr>
+              <tr>
+                <td style="color:#666;font-size:13px;padding:4px 0;">Usuario:</td>
+                <td style="color:#1a1a1a;font-size:13px;">{config.email_host_user}</td>
+              </tr>
+            </table>
+            """,
+        )
+
+        try:
+            backend   = get_email_backend()
+            if not backend:
+                return Response({
+                    'ok': False,
+                    'error': 'El envío de emails no está configurado o está desactivado.',
+                }, status=400)
+
+            remitente = f"{config.email_from_name} <{config.email_from_address}>"
+            msg = EmailMultiAlternatives(
+                subject='Email de prueba — FlotaSystem',
+                body='Email de prueba desde FlotaSystem.',
+                from_email=remitente,
+                to=[destino],
+                connection=backend,
+            )
+            msg.attach_alternative(html, 'text/html')
+            msg.send()
+
+            registrar_log('ACTIVIDAD', 'email_test_enviado', request, detalle={
+                'destino': destino,
+            })
+            return Response({'ok': True, 'mensaje': f'Email de prueba enviado a {destino}'})
+
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=400)

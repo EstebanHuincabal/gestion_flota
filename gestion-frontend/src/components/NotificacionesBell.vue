@@ -115,6 +115,8 @@ function conectarWS() {
         if (data.notificacion && !abierto.value) {
           recientes.value = [data.notificacion, ...recientes.value].slice(0, 10)
         }
+        // Emitir evento global para que otros componentes reaccionen en tiempo real
+        window.dispatchEvent(new CustomEvent('ws:notificacion', { detail: data.notificacion || {} }))
       }
     } catch (e) {
       if (import.meta.env.DEV) console.error('[WS notif] error:', e)

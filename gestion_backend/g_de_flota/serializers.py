@@ -227,10 +227,7 @@ class UsuarioCrearSerializer(serializers.Serializer):
         return value.strip().title()
 
     def validate_email(self, value):
-        value = value.strip().lower()
-        if Usuario.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Ya existe un usuario con ese email.")
-        return value
+        return value.strip().lower()
 
     def validate_rut(self, value):
         rut_norm = normalizar_rut(value)
@@ -287,12 +284,7 @@ class UsuarioEditarSerializer(serializers.Serializer):
         return value.strip().title()
 
     def validate_email(self, value):
-        qs = Usuario.objects.filter(email=value)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError("Ya existe un usuario con ese email.")
-        return value
+        return value.strip().lower()
 
     def validate(self, data):
         rol        = data.get('rol') or self.instance.rol
@@ -497,10 +489,7 @@ class ConductorCrearSerializer(serializers.Serializer):
         return value.strip().title()
 
     def validate_email(self, value):
-        value = value.strip().lower()
-        if Usuario.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Ya existe un usuario con ese email.")
-        return value
+        return value.strip().lower()
 
     def validate_rut(self, value):
         rut_norm = normalizar_rut(value)
@@ -637,13 +626,7 @@ class ConductorEditarSerializer(serializers.Serializer):
         return value.strip().title()
 
     def validate_email(self, value):
-        value = value.strip().lower()
-        qs = Usuario.objects.filter(email=value)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError("Ya existe un usuario con ese email.")
-        return value
+        return value.strip().lower()
 
     def validate_telefono(self, value):
         if not value: return value

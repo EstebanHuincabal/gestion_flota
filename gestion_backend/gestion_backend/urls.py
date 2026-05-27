@@ -33,6 +33,8 @@ from g_de_flota.views_planes import (
     # OneClick — tarjeta guardada
     TarjetaEstadoView, TarjetaInscribirView,
     TarjetaInscripcionRetornoView, TarjetaEliminarView,
+    # Email
+    EmailConfigView, EmailTestView,
 )
 from g_de_flota.views_config import (
     usuario_perfil, usuario_cambiar_password, plan_historial,
@@ -209,6 +211,10 @@ urlpatterns = [
     path('api/empresa/suscripcion/',                   SuscripcionEmpresaView.as_view(),  name='empresa-suscripcion'),
     path('api/admin/suscripciones/',                   SuscripcionesAdminView.as_view(),  name='admin-suscripciones'),
     path('api/admin/suscripciones/<int:sus_id>/',      SuscripcionesAdminView.as_view(),  name='admin-suscripciones-detalle'),
+
+    # ── Configuración de email ──────────────────────────────────────────────────
+    path('api/admin/email/',                           EmailConfigView.as_view(),    name='admin-email-config'),
+    path('api/admin/email/test/',                      EmailTestView.as_view(),      name='admin-email-test'),
 
     # ── OneClick Mall — tarjeta guardada ────────────────────────────────────────
     path('api/empresa/tarjeta/',                       TarjetaEstadoView.as_view(),              name='empresa-tarjeta'),

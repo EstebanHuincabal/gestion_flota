@@ -1,7 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from django.conf import settings
 
-from g_de_flota.models import Documento, TipoNotificacion, Notificacion
+from g_de_flota.models import Documento, TipoNotificacion, Notificacion, Usuario
 from g_de_flota.notificaciones import notificar_admins_empresa
 
 UMBRALES_DIAS = [30, 15, 7, 1]
@@ -50,6 +51,25 @@ class Command(BaseCommand):
                     url_accion='/empresa/documentos',
                     extra={'doc_key': doc_key, 'documento_id': doc.id, 'dias': dias},
                 )
+                # Email documento vencido
+                try:
+                    from g_de_flota.email_service import email_documento_vence
+                    admins = Usuario.objects.filter(
+                        empresa=doc.empresa, rol='USUARIO', is_active=True,
+                    )
+                    for admin in admins:
+                        email_documento_vence(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=doc.empresa.nombre,
+                            tipo_documento=doc.get_tipo_display(),
+                            entidad_nombre=entidad_nombre,
+                            dias=dias,
+                            fecha_vencimiento=doc.fecha_vencimiento.strftime('%d/%m/%Y'),
+                            url_documentos=f"{settings.FRONTEND_URL}/empresa/documentos",
+                        )
+                except Exception:
+                    pass
                 notificadas += 1
 
             elif dias in UMBRALES_DIAS:
@@ -73,6 +93,25 @@ class Command(BaseCommand):
                     url_accion='/empresa/documentos',
                     extra={'doc_key': doc_key, 'documento_id': doc.id, 'dias': dias, 'dias_umbral': dias},
                 )
+                # Email documento por vencer
+                try:
+                    from g_de_flota.email_service import email_documento_vence
+                    admins = Usuario.objects.filter(
+                        empresa=doc.empresa, rol='USUARIO', is_active=True,
+                    )
+                    for admin in admins:
+                        email_documento_vence(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=doc.empresa.nombre,
+                            tipo_documento=doc.get_tipo_display(),
+                            entidad_nombre=entidad_nombre,
+                            dias=dias,
+                            fecha_vencimiento=doc.fecha_vencimiento.strftime('%d/%m/%Y'),
+                            url_documentos=f"{settings.FRONTEND_URL}/empresa/documentos",
+                        )
+                except Exception:
+                    pass
                 notificadas += 1
 
         self.stdout.write(self.style.SUCCESS(

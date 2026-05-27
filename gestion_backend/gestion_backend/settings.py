@@ -135,6 +135,10 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend', # login admin:    username + password
 ]
 
+# El email no es único (varios usuarios pueden compartir dirección de contacto).
+# El login siempre usa RUT, no email, por lo que auth.W004 no aplica.
+SILENCED_SYSTEM_CHECKS = ['auth.W004']
+
 # ── JWT ────────────────────────────────────────────────────────────────────────
 from datetime import timedelta
 

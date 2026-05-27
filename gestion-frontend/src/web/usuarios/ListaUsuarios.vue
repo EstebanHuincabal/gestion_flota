@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
@@ -10,7 +10,9 @@ const empresas = ref([])
 const cargando = ref(true)
 const error    = ref('')
 const toast = useToast()
-const confirm  = ref({ visible: false, usuario: null, accion: 'desactivar' })
+const confirm      = ref({ visible: false, usuario: null, accion: 'desactivar' })
+const confirmReset = ref({ visible: false, usuario: null })
+const claveModal   = ref({ visible: false, usuario: null, clave: '', copiada: false })
 
 const filtros = ref({ q: '', empresa_id: '', rol: '', estado: '' })
 const historialModal = ref({ visible: false, items: [], usuario: null })
@@ -48,14 +50,32 @@ const cargar = async () => {
   }
 }
 
-const resetPassword = async (u) => {
-  if (!confirm(`¿Resetear la contraseña de "${u.nombre}"? La nueva clave será su RUT.`)) return
+const resetPassword = (u) => {
+  confirmReset.value = { visible: true, usuario: u }
+}
+
+const confirmarReset = async () => {
+  const u = confirmReset.value.usuario
+  confirmReset.value = { visible: false, usuario: null }
   try {
     const res = await apiFetch(`/api/usuarios/${u.id}/reset-password/`, { method: 'POST' })
     if (!res.ok) throw new Error('Error al resetear clave')
-    toast.agregar('Contraseña reseteada al RUT exitosamente.', 'success')
+    const data = await res.json()
+    // Mostrar modal con la clave para que el admin pueda copiarla
+    claveModal.value = { visible: true, usuario: u, clave: data.clave_temp, copiada: false }
+    if (!data.email_enviado) toast.agregar(data.message, 'warning')
   } catch (e) {
     toast.agregar(e.message, 'error')
+  }
+}
+
+const copiarClave = async () => {
+  try {
+    await navigator.clipboard.writeText(claveModal.value.clave)
+    claveModal.value.copiada = true
+    setTimeout(() => { claveModal.value.copiada = false }, 2000)
+  } catch {
+    toast.agregar('No se pudo copiar. Selecciona el texto manualmente.', 'warning')
   }
 }
 
@@ -111,9 +131,20 @@ const confirmarAccion = async () => {
   }
 }
 
+// Recargar la lista cuando llegue una notificación de seguridad por WS
+// (ej: usuario bloqueado automáticamente por intentos fallidos)
+const onWsNotificacion = (e) => {
+  if (e.detail?.tipo === 'seguridad') cargar()
+}
+
 onMounted(() => {
   cargar()
   cargarEmpresas()
+  window.addEventListener('ws:notificacion', onWsNotificacion)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('ws:notificacion', onWsNotificacion)
 })
 </script>
 
@@ -130,6 +161,51 @@ onMounted(() => {
     @confirmar="confirmarAccion"
     @cancelar="cancelar"
   />
+
+  <ConfirmModal
+    v-if="confirmReset.visible"
+    titulo="Restablecer contraseña"
+    :mensaje="`Se generará una contraseña temporal y se enviará al correo de &quot;${confirmReset.usuario?.nombre}&quot; (${confirmReset.usuario?.email || 'sin email registrado'}).`"
+    label-ok="Restablecer"
+    :peligroso="false"
+    @confirmar="confirmarReset"
+    @cancelar="confirmReset.visible = false"
+  />
+
+  <!-- Modal contraseña temporal -->
+  <Teleport to="body">
+    <div v-if="claveModal.visible" class="clave-overlay" @click.self="claveModal.visible = false">
+      <div class="clave-modal">
+        <div class="clave-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+              d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+          </svg>
+        </div>
+        <h3 class="clave-titulo">Contraseña restablecida</h3>
+        <p class="clave-desc">
+          Contraseña temporal para <strong>{{ claveModal.usuario?.nombre }}</strong>:
+        </p>
+        <div class="clave-box">
+          <span class="clave-texto">{{ claveModal.clave }}</span>
+        </div>
+        <p class="clave-hint">Sin espacios, respeta mayúsculas y minúsculas</p>
+        <div class="clave-acciones">
+          <button class="btn-copiar" @click="copiarClave">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;margin-right:6px">
+              <path v-if="claveModal.copiada" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+            {{ claveModal.copiada ? '¡Copiada!' : 'Copiar clave' }}
+          </button>
+          <button class="btn-cerrar-clave" @click="claveModal.visible = false">Cerrar</button>
+        </div>
+        <p v-if="claveModal.usuario?.email" class="clave-email-hint">
+          También se envió al correo: {{ claveModal.usuario.email }}
+        </p>
+      </div>
+    </div>
+  </Teleport>
 
   <div class="page">
     <div class="page-header">
@@ -239,7 +315,7 @@ onMounted(() => {
               <button class="btn-accion btn-historial" @click="verHistorial(u)" title="Ver Historial de Acceso">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               </button>
-              <button class="btn-accion btn-reset" @click="resetPassword(u)" title="Resetear Contraseña al RUT">
+              <button class="btn-accion btn-reset" @click="resetPassword(u)" title="Enviar contraseña temporal por correo">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
               </button>
               <button v-if="yo.rol === 'SUPERADMIN' && u.rol !== 'SUPERADMIN'" 
@@ -425,4 +501,57 @@ onMounted(() => {
   animation: modal-in 0.3s ease-out;
 }
 @keyframes modal-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ── Modal contraseña temporal ────────────────────────────── */
+.clave-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+  backdrop-filter: blur(4px); display: flex; align-items: center;
+  justify-content: center; z-index: 1100; padding: 1rem;
+  animation: fade-in 0.15s ease;
+}
+.clave-modal {
+  background: #fff; border-radius: 18px; padding: 2rem;
+  width: 100%; max-width: 380px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center; animation: slide-up 0.2s ease;
+}
+.clave-icon {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: #EEF2FF; color: #4F46E5;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 1rem;
+}
+.clave-icon svg { width: 24px; height: 24px; }
+.clave-titulo { font-size: 1.0625rem; font-weight: 700; color: #111827; margin: 0 0 0.4rem; }
+.clave-desc   { font-size: 0.875rem; color: #6B7280; margin: 0 0 1rem; }
+.clave-box {
+  background: #F0F4FF; border: 2px dashed #A5B4FC;
+  border-radius: 10px; padding: 14px 24px; margin-bottom: 6px; width: 100%;
+}
+.clave-texto {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 1.75rem; font-weight: 700; color: #4F46E5;
+  letter-spacing: 0; word-break: break-all;
+}
+.clave-hint  { font-size: 0.75rem; color: #9CA3AF; margin: 0 0 1.25rem; }
+.clave-email-hint { font-size: 0.75rem; color: #9CA3AF; margin: 0.75rem 0 0; }
+.clave-acciones { display: flex; gap: 0.75rem; width: 100%; }
+.btn-copiar {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 0.65rem 1rem; border-radius: 10px; font-size: 0.875rem;
+  font-weight: 600; cursor: pointer; font-family: inherit; border: none;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
+  color: #fff; transition: opacity 0.15s;
+}
+.btn-copiar:hover { opacity: 0.9; }
+.btn-cerrar-clave {
+  flex: 1; padding: 0.65rem 1rem; border-radius: 10px; font-size: 0.875rem;
+  font-weight: 600; cursor: pointer; font-family: inherit;
+  background: #F3F4F6; color: #374151; border: 1.5px solid #E5E7EB;
+  transition: background 0.15s;
+}
+.btn-cerrar-clave:hover { background: #E5E7EB; }
+@keyframes fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
 </style>

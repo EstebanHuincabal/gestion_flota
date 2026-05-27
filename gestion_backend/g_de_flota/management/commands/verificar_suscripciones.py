@@ -17,12 +17,51 @@ class Command(BaseCommand):
     help = 'Verifica el estado de las suscripciones y aplica bloqueos / cobros automáticos'
 
     def handle(self, *args, **kwargs):
-        from g_de_flota.models import Suscripcion, ConfiguracionSistema, PagoTransbank, TarjetaGuardada
+        from g_de_flota.models import Suscripcion, ConfiguracionSistema, PagoTransbank, TarjetaGuardada, Usuario
         from g_de_flota.notificaciones import notificar_admins_empresa
         import uuid
 
         config = ConfiguracionSistema.get()
         ahora  = timezone.now()
+
+        # ── Recordatorios de pago para suscripciones pendientes ──────────────
+        DIAS_RECORDATORIO_PENDIENTE = [3, 7, 14, 30]
+        pendientes = Suscripcion.objects.filter(
+            estado='pendiente',
+        ).select_related('empresa', 'plan')
+
+        for sus in pendientes:
+            dias_pendiente = (ahora - sus.created_at).days
+            if dias_pendiente in DIAS_RECORDATORIO_PENDIENTE:
+                notificar_admins_empresa(
+                    empresa=sus.empresa,
+                    tipo='actividad',
+                    titulo='Recuerda activar tu plan',
+                    mensaje=(
+                        f'Han pasado {dias_pendiente} días desde que creaste tu cuenta y aún '
+                        f'no has completado el pago para el plan {sus.plan.get_nombre_display()}. '
+                        f'Activa tu plan para acceder a todas las funciones.'
+                    ),
+                )
+                try:
+                    from g_de_flota.email_service import email_recordatorio_pago
+                    admins = Usuario.objects.filter(
+                        empresa=sus.empresa, rol='USUARIO', is_active=True,
+                    )
+                    for admin in admins:
+                        email_recordatorio_pago(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=sus.empresa.nombre,
+                            plan_nombre=sus.plan.get_nombre_display(),
+                            dias_pendiente=dias_pendiente,
+                            url_pago=f"{settings.FRONTEND_URL}/empresa/pago",
+                        )
+                except Exception:
+                    pass
+                self.stdout.write(
+                    f'  [RECORDATORIO] {sus.empresa.nombre} — pendiente hace {dias_pendiente} días.'
+                )
 
         suscripciones = Suscripcion.objects.filter(
             estado__in=['activa', 'gracia'],
@@ -50,6 +89,22 @@ class Command(BaseCommand):
                         f'regularizar el pago antes de que el servicio sea suspendido.'
                     ),
                 )
+                # Email período de gracia
+                try:
+                    from g_de_flota.email_service import email_suscripcion_gracia
+                    admins = Usuario.objects.filter(
+                        empresa=sus.empresa, rol='USUARIO', is_active=True,
+                    )
+                    for admin in admins:
+                        email_suscripcion_gracia(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=sus.empresa.nombre,
+                            dias_gracia_restantes=config.dias_gracia_pago,
+                            url_pago=f"{settings.FRONTEND_URL}/empresa/pago",
+                        )
+                except Exception:
+                    pass
                 self.stdout.write(
                     f'  [GRACIA]    {sus.empresa.nombre} — venció, período de gracia iniciado.'
                 )
@@ -69,6 +124,21 @@ class Command(BaseCommand):
                         titulo='Servicio suspendido por falta de pago',
                         mensaje=config.mensaje_pago_pendiente,
                     )
+                    # Email servicio suspendido
+                    try:
+                        from g_de_flota.email_service import email_suscripcion_bloqueada
+                        admins = Usuario.objects.filter(
+                            empresa=sus.empresa, rol='USUARIO', is_active=True,
+                        )
+                        for admin in admins:
+                            email_suscripcion_bloqueada(
+                                email=admin.email,
+                                nombre=admin.nombre or admin.email,
+                                empresa_nombre=sus.empresa.nombre,
+                                url_pago=f"{settings.FRONTEND_URL}/empresa/pago",
+                            )
+                    except Exception:
+                        pass
                     self.stdout.write(
                         f'  [SUSPENDIDA] {sus.empresa.nombre} — suspendida por falta de pago.'
                     )
@@ -114,6 +184,24 @@ class Command(BaseCommand):
                         f'Renueva para evitar interrupciones.'
                     ),
                 )
+                # Email vencimiento próximo
+                try:
+                    from g_de_flota.email_service import email_suscripcion_vence
+                    admins = Usuario.objects.filter(
+                        empresa=sus.empresa, rol='USUARIO', is_active=True,
+                    )
+                    for admin in admins:
+                        email_suscripcion_vence(
+                            email=admin.email,
+                            nombre=admin.nombre or admin.email,
+                            empresa_nombre=sus.empresa.nombre,
+                            plan_nombre=sus.plan.get_nombre_display(),
+                            dias=dias,
+                            fecha_vencimiento=sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
+                            url_pago=f"{settings.FRONTEND_URL}/empresa/pago",
+                        )
+                except Exception:
+                    pass
                 self.stdout.write(
                     f'  [AVISO]     {sus.empresa.nombre} — vence en {dias} días.'
                 )

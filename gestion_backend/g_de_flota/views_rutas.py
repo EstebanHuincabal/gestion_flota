@@ -536,6 +536,28 @@ class RutasListView(APIView):
                         cuerpo=f"{ruta.nombre}{_fecha_ruta}",
                         data={'tipo': 'ruta_asignada', 'ruta_id': str(ruta.id)})
 
+            # ── Email al conductor ───────────────────────────────────────────
+            try:
+                from .email_service import email_ruta_asignada
+                from django.conf import settings as _settings
+                _origen  = ruta.paradas.filter(tipo='origen').first()
+                _destino = ruta.paradas.filter(tipo='destino').first()
+                email_ruta_asignada(
+                    email=ruta.conductor.email,
+                    nombre_conductor=ruta.conductor.nombre or ruta.conductor.email,
+                    empresa_nombre=empresa.nombre,
+                    nombre_ruta=ruta.nombre,
+                    origen=_origen.nombre if _origen else '—',
+                    destino=_destino.nombre if _destino else '—',
+                    fecha=(
+                        ruta.fecha_programada.strftime('%d/%m/%Y %H:%M')
+                        if ruta.fecha_programada else '—'
+                    ),
+                    url_app=f"{_settings.FRONTEND_URL}/app",
+                )
+            except Exception:
+                pass
+
         resp = _ruta_dict(ruta, detalle=True)
         if aviso:
             resp['aviso'] = aviso

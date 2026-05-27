@@ -1407,6 +1407,46 @@ El componente `AppToast.vue` escucha este evento globalmente y muestra la alerta
 
 ---
 
+## 16. Sistema de emails transaccionales
+
+### Arquitectura
+
+La configuración SMTP es **dinámica** — se almacena cifrada en la base de datos (modelo `ConfiguracionSistema`) y se administra desde el panel del SUPERADMIN en **Configuración → Email**. No requiere reiniciar el servidor al cambiar credenciales.
+
+### Archivo principal
+`g_de_flota/email_service.py`
+
+### Funciones disponibles
+
+| Función | Trigger |
+|---|---|
+| `email_bienvenida()` | Crear usuario nuevo |
+| `email_pago_aprobado()` | Pago Webpay / OneClick aprobado |
+| `email_pago_rechazado()` | Pago rechazado por Transbank |
+| `email_suscripcion_vence()` | Cron: 30/15/7/1 días antes del vencimiento |
+| `email_suscripcion_gracia()` | Cron: suscripción pasa a estado "gracia" |
+| `email_suscripcion_bloqueada()` | Cron: empresa suspendida |
+| `email_documento_vence()` | Cron: documento vencido o por vencer |
+| `email_mantencion_vence()` | Futuro hook en gestión de mantenciones |
+| `email_solicitud_nueva()` | Conductor crea solicitud |
+| `email_solicitud_resuelta()` | Admin aprueba o rechaza solicitud |
+| `email_ruta_asignada()` | Ruta asignada a conductor |
+| `email_checklist_fallas()` | Conductor reporta fallas en checklist pre-viaje |
+
+### Reglas de uso
+- Todas las llamadas están envueltas en `try/except` — nunca interrumpen el flujo HTTP.
+- La contraseña SMTP se cifra con Fernet antes de guardar; nunca se retorna en texto plano.
+- Cada evento tiene su toggle individual en `ConfiguracionSistema` (ej: `notif_pago_aprobado`).
+- Si `email_activo = False`, no se envía ningún email.
+
+### Endpoints
+| Método | URL | Descripción |
+|---|---|---|
+| `GET/PUT` | `/api/admin/email/` | Leer/actualizar configuración SMTP y toggles |
+| `POST` | `/api/admin/email/test/` | Enviar email de prueba (body: `{ email_destino }`) |
+
+---
+
 ## 15. Variables de entorno
 
 ### Archivo centralizado
@@ -1424,13 +1464,11 @@ Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No 
 | `DEBUG` | No | Django | `True` para desarrollo, `False` para producción |
 | `ALLOWED_HOSTS` | No | Django | Hosts permitidos (separados por coma) |
 | `VITE_API_URL` | No | Vite | URL base de la API; vacío = peticiones relativas (proxy Vite) |
-| `EMAIL_BACKEND` | No | Django | Backend de email (por defecto: consola) |
-| `EMAIL_HOST` | No | Django | Servidor SMTP |
-| `EMAIL_PORT` | No | Django | Puerto SMTP (por defecto: 587) |
-| `EMAIL_USE_TLS` | No | Django | Usar TLS (por defecto: `True`) |
-| `EMAIL_HOST_USER` | No | Django | Usuario SMTP |
-| `EMAIL_HOST_PASSWORD` | No | Django | Contraseña SMTP |
-| `DEFAULT_FROM_EMAIL` | No | Django | Dirección remitente de emails |
+| `EMAIL_BACKEND` | No | Django | Backend de email (por defecto: consola; en producción no se usa — la config es dinámica en BD) |
+| `FRONTEND_URL` | No | Django | URL pública del frontend para links en emails (por defecto: `http://localhost:7183`) |
+| `TRANSBANK_ENVIRONMENT` | No | Django | `integration` (por defecto) o `production` |
+| `TRANSBANK_COMMERCE_CODE` | No | Django | Código de comercio Webpay Plus |
+| `TRANSBANK_API_KEY` | No | Django | API key de Transbank |
 
 ### Configuración CORS
 

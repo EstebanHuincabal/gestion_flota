@@ -322,6 +322,22 @@ class SolicitudAprobarView(APIView):
             **({'fecha_programada': extra.get('fecha_programada'), 'taller': extra.get('taller')} if sol.tipo == 'mantencion' else {}),
         })
 
+        # ── Email al conductor ───────────────────────────────────────────────
+        try:
+            from .email_service import email_solicitud_resuelta
+            from django.conf import settings as _settings
+            email_solicitud_resuelta(
+                email=sol.conductor.email,
+                nombre_conductor=sol.conductor.nombre or sol.conductor.email,
+                empresa_nombre=sol.empresa.nombre if sol.empresa else '',
+                titulo_sol=sol.titulo,
+                estado='aprobado',
+                respuesta=sol.respuesta,
+                url_app=f"{_settings.FRONTEND_URL}/app",
+            )
+        except Exception:
+            pass
+
         resp = {
             'ok': True,
             'solicitud': SolicitudConductorSerializer(sol, context={'request': request}).data,
@@ -378,6 +394,22 @@ class SolicitudRechazarView(APIView):
         registrar_log('ACTIVIDAD', 'solicitud_rechazada', request, detalle={
             'solicitud_id': sol.id, 'tipo': sol.tipo, 'titulo': sol.titulo,
         })
+
+        # ── Email al conductor ───────────────────────────────────────────────
+        try:
+            from .email_service import email_solicitud_resuelta
+            from django.conf import settings as _settings
+            email_solicitud_resuelta(
+                email=sol.conductor.email,
+                nombre_conductor=sol.conductor.nombre or sol.conductor.email,
+                empresa_nombre=sol.empresa.nombre if sol.empresa else '',
+                titulo_sol=sol.titulo,
+                estado='rechazado',
+                respuesta=sol.respuesta,
+                url_app=f"{_settings.FRONTEND_URL}/app",
+            )
+        except Exception:
+            pass
 
         return Response({
             'ok': True,

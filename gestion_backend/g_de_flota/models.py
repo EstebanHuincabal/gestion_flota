@@ -257,7 +257,7 @@ class Usuario(AbstractUser):
     first_name = None
     last_name  = None
 
-    email          = models.EmailField(unique=True)
+    email          = models.EmailField()
     rut_cifrado    = models.TextField(null=True, blank=True)
     rut_hash       = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     nombre_cifrado = models.TextField(null=True, blank=True)
@@ -887,14 +887,40 @@ class ConfiguracionSistema(models.Model):
     terminos_version       = models.CharField(max_length=20, blank=True, default='1.0')
     terminos_updated_at    = models.DateTimeField(null=True, blank=True)
 
-    # Configuración de trial y pagos
-    dias_trial             = models.PositiveSmallIntegerField(default=14)
+    # Configuración de pagos
     dias_gracia_pago       = models.PositiveSmallIntegerField(default=7)
     bloqueo_automatico     = models.BooleanField(default=True)
     mensaje_pago_pendiente = models.TextField(
         blank=True,
         default='Tu suscripción tiene un pago pendiente. Por favor regulariza tu situación para continuar usando el servicio.'
     )
+
+    # ── Configuración SMTP ───────────────────────────────────────────────────
+    email_host             = models.CharField(max_length=200, blank=True, default='smtp.gmail.com')
+    email_port             = models.PositiveIntegerField(default=587)
+    email_host_user        = models.CharField(max_length=200, blank=True, default='')
+    email_host_password    = models.TextField(blank=True, default='')  # cifrado con Fernet
+    email_use_tls          = models.BooleanField(default=True)
+    email_use_ssl          = models.BooleanField(default=False)
+    email_from_name        = models.CharField(max_length=200, blank=True, default='FlotaSystem')
+    email_from_address     = models.EmailField(blank=True, default='')
+    email_activo           = models.BooleanField(default=False)
+
+    # ── Toggles de eventos que disparan email ───────────────────────────────
+    notif_pago_aprobado         = models.BooleanField(default=True)
+    notif_pago_rechazado        = models.BooleanField(default=True)
+    notif_suscripcion_vence     = models.BooleanField(default=True)
+    notif_suscripcion_gracia    = models.BooleanField(default=True)
+    notif_suscripcion_bloqueada = models.BooleanField(default=True)
+    notif_documento_vence       = models.BooleanField(default=True)
+    notif_mantencion_vence      = models.BooleanField(default=True)
+    notif_solicitud_nueva       = models.BooleanField(default=True)
+    notif_solicitud_resuelta    = models.BooleanField(default=True)
+    notif_ruta_asignada         = models.BooleanField(default=True)
+    notif_checklist_fallas      = models.BooleanField(default=True)
+    notif_bienvenida            = models.BooleanField(default=True)
+    notif_reset_password        = models.BooleanField(default=True)
+    notif_recordatorio_pago     = models.BooleanField(default=True)
 
     class Meta:
         verbose_name        = 'Configuración del Sistema'
@@ -904,6 +930,19 @@ class ConfiguracionSistema(models.Model):
     def get(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+    def set_email_password(self, valor):
+        """Cifra y guarda la contraseña SMTP."""
+        self.email_host_password = cifrar(valor)
+
+    def get_email_password(self):
+        """Descifra y retorna la contraseña SMTP."""
+        if not self.email_host_password:
+            return ''
+        try:
+            return descifrar(self.email_host_password)
+        except Exception:
+            return ''
 
     def __str__(self):
         return 'Configuración del Sistema'

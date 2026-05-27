@@ -1,496 +1,603 @@
-Vas a implementar la integración completa de Transbank Webpay Plus como pasarela de pago para el sistema SaaS multiempresas. Todo lo nuevo va en views_planes.py salvo indicación explícita.
+Vas a implementar el sistema completo de comunicación por correo electrónico del sistema. Incluye configuración SMTP desde el panel, plantillas de email por evento y envío automático en todos los flujos críticos.
 
 ---
 
-## CONTEXTO DEL SISTEMA
+## CONTEXTO
 
-- El sistema ya tiene PlanSuscripcion, Empresa, Suscripcion (o similar) en models.py
-- Ya existe ConfiguracionSistema como singleton con get()
-- Ya existe notificar_admins_empresa() y registrar_log()
-- El SUPERADMIN gestiona empresas y planes desde el panel web
-- Las empresas pagan mensual o anualmente por su plan
-- Puerto backend: 8000 · Frontend: 7183
-
----
-
-## PARTE 1 — INSTALACIÓN Y CONFIGURACIÓN
-
-```bash
-pip install transbank-sdk
-```
-Agregar en requirements.txt: transbank-sdk>=4.0.0
-
-Agregar en settings.py:
-```python
-TRANSBANK_ENVIRONMENT = os.environ.get('TRANSBANK_ENVIRONMENT', 'integration')  # 'integration' | 'production'
-TRANSBANK_COMMERCE_CODE = os.environ.get('TRANSBANK_COMMERCE_CODE', '597055555532')  # código de integración por defecto
-TRANSBANK_API_KEY = os.environ.get('TRANSBANK_API_KEY', '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C')  # key de integración por defecto
-```
-
-Agregar en .env:
-TRANSBANK_ENVIRONMENT=integration
-TRANSBANK_COMMERCE_CODE=597055555532
-TRANSBANK_API_KEY=579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C
-
-Los valores de integración (597055555532 y la API key) son los oficiales de Transbank para pruebas — funcionan sin registro previo.
+El sistema ya tiene:
+- ConfiguracionSistema (singleton con get()) en models.py
+- notificar_admins_empresa() y notificar() en notificaciones.py
+- registrar_log() en audit.py
+- Todos los modelos: Empresa, Usuario, Suscripcion, PagoTransbank, Ruta, SolicitudConductor, Documento, Mantencion
 
 ---
 
-## PARTE 2 — MODELOS NUEVOS (agregar en models.py)
+## PARTE 1 — CAMPOS NUEVOS EN ConfiguracionSistema (models.py)
 
-### Suscripcion
+Agregar en la clase ConfiguracionSistema existente:
+
 ```python
-class Suscripcion(models.Model):
-    ESTADOS = [
-        ('trial',      'Trial'),
-        ('activa',     'Activa'),
-        ('gracia',     'Período de gracia'),
-        ('suspendida', 'Suspendida'),
-        ('cancelada',  'Cancelada'),
-    ]
-    CICLOS = [('mensual', 'Mensual'), ('anual', 'Anual')]
+# SMTP
+email_host        = models.CharField(max_length=200, blank=True, default='smtp.gmail.com')
+email_port        = models.PositiveIntegerField(default=587)
+email_host_user   = models.CharField(max_length=200, blank=True, default='')
+email_host_password = models.TextField(blank=True, default='')  # cifrado con Fernet
+email_use_tls     = models.BooleanField(default=True)
+email_use_ssl     = models.BooleanField(default=False)
+email_from_name   = models.CharField(max_length=200, blank=True, default='FlotaSystem')
+email_from_address = models.EmailField(blank=True, default='')
+email_activo      = models.BooleanField(default=False)
 
-    empresa           = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name='suscripcion')
-    plan              = models.ForeignKey(PlanSuscripcion, on_delete=models.PROTECT)
-    ciclo             = models.CharField(max_length=10, choices=CICLOS, default='mensual')
-    estado            = models.CharField(max_length=20, choices=ESTADOS, default='trial')
-    fecha_inicio      = models.DateTimeField(null=True, blank=True)
-    fecha_fin_periodo = models.DateTimeField(null=True, blank=True)
-    fecha_cancelacion = models.DateTimeField(null=True, blank=True)
-    trial_hasta       = models.DateTimeField(null=True, blank=True)
-    dias_gracia       = models.PositiveSmallIntegerField(default=7)
-    created_at        = models.DateTimeField(auto_now_add=True)
-    updated_at        = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = 'Suscripción'
-
-    @property
-    def esta_bloqueada(self):
-        return self.estado in ('suspendida', 'cancelada')
-
-    @property
-    def dias_para_vencer(self):
-        if not self.fecha_fin_periodo:
-            return None
-        from django.utils import timezone
-        return (self.fecha_fin_periodo.date() - timezone.now().date()).days
+# Qué eventos disparan emails (cada uno es un toggle)
+notif_pago_aprobado       = models.BooleanField(default=True)
+notif_pago_rechazado      = models.BooleanField(default=True)
+notif_suscripcion_vence   = models.BooleanField(default=True)
+notif_suscripcion_gracia  = models.BooleanField(default=True)
+notif_suscripcion_bloqueada = models.BooleanField(default=True)
+notif_documento_vence     = models.BooleanField(default=True)
+notif_mantencion_vence    = models.BooleanField(default=True)
+notif_solicitud_nueva     = models.BooleanField(default=True)
+notif_solicitud_resuelta  = models.BooleanField(default=True)
+notif_ruta_asignada       = models.BooleanField(default=True)
+notif_checklist_fallas    = models.BooleanField(default=True)
+notif_bienvenida          = models.BooleanField(default=True)
 ```
 
-### PagoTransbank
+La contraseña SMTP se cifra con Fernet antes de guardar y se descifra al leer.
+Agregar métodos:
 ```python
-class PagoTransbank(models.Model):
-    ESTADOS = [
-        ('iniciado',   'Iniciado'),
-        ('aprobado',   'Aprobado'),
-        ('rechazado',  'Rechazado'),
-        ('anulado',    'Anulado'),
-        ('fallido',    'Fallido'),
-    ]
+def set_email_password(self, valor):
+    from .models import cifrar
+    self.email_host_password = cifrar(valor)
 
-    empresa         = models.ForeignKey(Empresa, on_delete=models.PROTECT, related_name='pagos')
-    suscripcion     = models.ForeignKey(Suscripcion, on_delete=models.PROTECT, related_name='pagos')
-    token           = models.CharField(max_length=200, unique=True)
-    orden_compra    = models.CharField(max_length=64, unique=True)
-    monto           = models.PositiveIntegerField()
-    estado          = models.CharField(max_length=20, choices=ESTADOS, default='iniciado')
-    ciclo           = models.CharField(max_length=10, default='mensual')
-    plan_nombre     = models.CharField(max_length=50, blank=True, default='')
-    respuesta_tb    = models.JSONField(default=dict, blank=True)
-    fecha_pago      = models.DateTimeField(null=True, blank=True)
-    created_at      = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering     = ['-created_at']
-        verbose_name = 'Pago Transbank'
-```
-
-### Agregar a ConfiguracionSistema (ya existe — solo estos campos nuevos)
-```python
-# Agregar en la clase ConfiguracionSistema existente:
-terminos_condiciones   = models.TextField(blank=True, default='')
-terminos_version       = models.CharField(max_length=20, blank=True, default='1.0')
-terminos_updated_at    = models.DateTimeField(null=True, blank=True)
-dias_gracia_pago       = models.PositiveSmallIntegerField(default=7)
-bloqueo_automatico     = models.BooleanField(default=True)
-mensaje_pago_pendiente = models.TextField(
-    blank=True,
-    default='Tu suscripción tiene un pago pendiente. Por favor regulariza tu situación para continuar usando el servicio.'
-)
+def get_email_password(self):
+    from .models import descifrar
+    if not self.email_host_password:
+        return ''
+    try:
+        return descifrar(self.email_host_password)
+    except Exception:
+        return ''
 ```
 
 ---
 
-## PARTE 3 — MIDDLEWARE DE BLOQUEO (nuevo archivo)
+## PARTE 2 — SERVICIO DE EMAIL (nuevo archivo)
 
-Crear gestion_backend/g_de_flota/middleware.py (o agregar al existente si ya existe):
+Crear gestion_backend/g_de_flota/email_service.py
+
+### Configuración dinámica del backend SMTP
 
 ```python
-from django.http import JsonResponse
-from django.utils import timezone
+import logging
+from django.core.mail import EmailMultiAlternatives
+from django.core.mail.backends.smtp import EmailBackend
+from .models import ConfiguracionSistema
 
-RUTAS_LIBRES = [
-    '/api/login/',
-    '/api/token/',
-    '/api/token/refresh/',
-    '/api/pago/',           # checkout Transbank
-    '/api/pago/retorno/',   # retorno Transbank
-    '/api/terminos/',       # ver términos
-    '/admin/',
-]
+logger = logging.getLogger(__name__)
 
-class BloqueoSuscripcionMiddleware:
+def get_email_backend():
+    """Retorna un backend SMTP configurado con los datos de ConfiguracionSistema."""
+    config = ConfiguracionSistema.get()
+    if not config.email_activo or not config.email_host_user:
+        return None
+    return EmailBackend(
+        host=config.email_host,
+        port=config.email_port,
+        username=config.email_host_user,
+        password=config.get_email_password(),
+        use_tls=config.email_use_tls,
+        use_ssl=config.email_use_ssl,
+        fail_silently=False,
+    )
+
+def enviar_email(destinatario, asunto, html, texto_plano=None, cc=None):
     """
-    Bloquea el acceso a la API si la empresa tiene suscripción suspendida.
-    Solo aplica a usuarios con rol USUARIO (no SUPERADMIN ni CONDUCTOR).
+    Envía un email usando la configuración SMTP de ConfiguracionSistema.
+    Fail-silent: si falla, loguea el error y retorna False.
     """
-    def __init__(self, get_response):
-        self.get_response = get_response
+    config = ConfiguracionSistema.get()
+    if not config.email_activo:
+        logger.info(f"Email desactivado — no se envió a {destinatario}")
+        return False
 
-    def __call__(self, request):
-        if any(request.path.startswith(r) for r in RUTAS_LIBRES):
-            return self.get_response(request)
+    backend = get_email_backend()
+    if not backend:
+        logger.warning("Email no configurado correctamente.")
+        return False
 
-        if not hasattr(request, 'user') or not request.user.is_authenticated:
-            return self.get_response(request)
+    remitente = f"{config.email_from_name} <{config.email_from_address}>"
 
-        if request.user.rol != 'USUARIO':
-            return self.get_response(request)
+    try:
+        msg = EmailMultiAlternatives(
+            subject=asunto,
+            body=texto_plano or _strip_html(html),
+            from_email=remitente,
+            to=[destinatario] if isinstance(destinatario, str) else destinatario,
+            cc=cc or [],
+            connection=backend,
+        )
+        msg.attach_alternative(html, 'text/html')
+        msg.send()
+        logger.info(f"Email enviado a {destinatario}: {asunto}")
+        return True
+    except Exception as e:
+        logger.error(f"Error al enviar email a {destinatario}: {e}")
+        return False
 
-        empresa = request.user.empresa
-        if not empresa:
-            return self.get_response(request)
-
-        try:
-            sus = empresa.suscripcion
-        except Exception:
-            return self.get_response(request)
-
-        if sus.esta_bloqueada:
-            from .models import ConfiguracionSistema
-            config = ConfiguracionSistema.get()
-            return JsonResponse({
-                'error':  config.mensaje_pago_pendiente,
-                'codigo': 'SUSCRIPCION_BLOQUEADA',
-                'estado': sus.estado,
-            }, status=402)
-
-        # Advertencia si está en período de gracia
-        response = self.get_response(request)
-        if sus.estado == 'gracia':
-            dias = sus.dias_para_vencer
-            response['X-Gracia-Dias'] = str(dias or 0)
-
-        return response
+def _strip_html(html):
+    """Versión texto plano eliminando tags HTML básicos."""
+    import re
+    return re.sub(r'<[^>]+>', '', html).strip()
 ```
 
-Registrar en settings.py en MIDDLEWARE (después de AuthenticationMiddleware):
+### Plantillas de email
+
+Todas las plantillas usan una función base que retorna HTML consistente:
+
 ```python
-'g_de_flota.middleware.BloqueoSuscripcionMiddleware',
+def _base_template(titulo, contenido_html, empresa_nombre='', color_acento='#534AB7'):
+    """Plantilla base responsiva para todos los emails."""
+    return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{titulo}</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:32px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e5e5;">
+        <tr>
+          <td style="background:{color_acento};padding:24px 32px;">
+            <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">
+              {empresa_nombre or 'FlotaSystem'}
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px;">
+            <h1 style="margin:0 0 16px;font-size:22px;color:#1a1a1a;font-weight:600;">{titulo}</h1>
+            {contenido_html}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 32px;background:#f9f9f9;border-top:1px solid #e5e5e5;">
+            <p style="margin:0;font-size:12px;color:#888888;text-align:center;">
+              Este email fue enviado automáticamente por FlotaSystem.<br>
+              Por favor no respondas a este correo.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+def _btn(texto, url, color='#534AB7'):
+    return f'<a href="{url}" style="display:inline-block;background:{color};color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;margin:16px 0;">{texto}</a>'
+
+def _info_row(label, valor):
+    return f'<tr><td style="padding:8px 0;color:#666;font-size:14px;width:180px;">{label}</td><td style="padding:8px 0;color:#1a1a1a;font-size:14px;font-weight:600;">{valor}</td></tr>'
+```
+
+### Una función por evento — todas con la misma firma: (destinatario_email, **datos)
+
+```python
+# ── Bienvenida ────────────────────────────────────────────────────────────────
+def email_bienvenida(email, nombre, empresa_nombre, plan_nombre, url_login):
+    config = ConfiguracionSistema.get()
+    if not config.notif_bienvenida: return
+    html = _base_template('Bienvenido a FlotaSystem', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">Tu cuenta en <strong>{empresa_nombre}</strong> ha sido creada exitosamente.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:16px 0;">
+            {_info_row('Plan activo:', plan_nombre)}
+            {_info_row('Email:', email)}
+        </table>
+        {_btn('Ingresar al panel', url_login)}
+        <p style="color:#888;font-size:13px;">Si no solicitaste esta cuenta, ignora este mensaje.</p>
+    """, empresa_nombre)
+    enviar_email(email, f'Bienvenido a FlotaSystem — {empresa_nombre}', html)
+
+# ── Pagos ─────────────────────────────────────────────────────────────────────
+def email_pago_aprobado(email, nombre, empresa_nombre, plan_nombre, monto, ciclo, fecha_proximo_cobro, orden_compra):
+    config = ConfiguracionSistema.get()
+    if not config.notif_pago_aprobado: return
+    monto_fmt = f'${int(monto):,}'.replace(',', '.')
+    html = _base_template('Pago procesado correctamente', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>, tu pago fue procesado exitosamente.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+            {_info_row('Orden de compra:', orden_compra)}
+            {_info_row('Plan:', plan_nombre)}
+            {_info_row('Ciclo:', ciclo.capitalize())}
+            {_info_row('Monto pagado:', monto_fmt + ' CLP')}
+            {_info_row('Próximo cobro:', fecha_proximo_cobro)}
+        </table>
+        <div style="background:#E1F5EE;border-radius:8px;padding:16px;margin:16px 0;">
+            <p style="margin:0;color:#085041;font-size:14px;">✓ Tu plan está activo y todos los módulos están disponibles.</p>
+        </div>
+    """, empresa_nombre)
+    enviar_email(email, f'Pago aprobado — {monto_fmt} CLP', html)
+
+def email_pago_rechazado(email, nombre, empresa_nombre, monto, url_reintentar):
+    config = ConfiguracionSistema.get()
+    if not config.notif_pago_rechazado: return
+    monto_fmt = f'${int(monto):,}'.replace(',', '.')
+    html = _base_template('Tu pago no pudo ser procesado', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">Lamentablemente tu pago de <strong>{monto_fmt} CLP</strong> fue rechazado por Transbank.</p>
+        <p style="color:#444;font-size:14px;">Posibles causas: fondos insuficientes, tarjeta bloqueada o datos incorrectos.</p>
+        {_btn('Reintentar pago', url_reintentar, '#E24B4A')}
+        <p style="color:#888;font-size:13px;">Si el problema persiste, contacta a tu banco.</p>
+    """, empresa_nombre)
+    enviar_email(email, 'Pago rechazado — acción requerida', html)
+
+# ── Suscripción ───────────────────────────────────────────────────────────────
+def email_suscripcion_vence(email, nombre, empresa_nombre, plan_nombre, dias, fecha_vencimiento, url_pago):
+    config = ConfiguracionSistema.get()
+    if not config.notif_suscripcion_vence: return
+    html = _base_template(f'Tu suscripción vence en {dias} días', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">Tu plan <strong>{plan_nombre}</strong> vence el <strong>{fecha_vencimiento}</strong>.</p>
+        <div style="background:#FAEEDA;border-radius:8px;padding:16px;margin:16px 0;">
+            <p style="margin:0;color:#633806;font-size:14px;">⚠ Renueva antes de esa fecha para evitar interrupciones en el servicio.</p>
+        </div>
+        {_btn('Renovar ahora', url_pago, '#BA7517')}
+    """, empresa_nombre)
+    enviar_email(email, f'Tu suscripción vence en {dias} días', html)
+
+def email_suscripcion_gracia(email, nombre, empresa_nombre, dias_gracia_restantes, url_pago):
+    config = ConfiguracionSistema.get()
+    if not config.notif_suscripcion_gracia: return
+    html = _base_template('Período de gracia — pago pendiente', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">Tu suscripción ha vencido. Tienes <strong>{dias_gracia_restantes} días</strong> para regularizar el pago.</p>
+        <div style="background:#FCEBEB;border-radius:8px;padding:16px;margin:16px 0;">
+            <p style="margin:0;color:#791F1F;font-size:14px;">Si no pagas antes de que termine el período de gracia, el servicio será suspendido automáticamente.</p>
+        </div>
+        {_btn('Pagar ahora', url_pago, '#E24B4A')}
+    """, empresa_nombre)
+    enviar_email(email, 'Acción requerida — pago pendiente', html)
+
+def email_suscripcion_bloqueada(email, nombre, empresa_nombre, url_pago):
+    config = ConfiguracionSistema.get()
+    if not config.notif_suscripcion_bloqueada: return
+    html = _base_template('Servicio suspendido', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">El acceso a <strong>{empresa_nombre}</strong> ha sido suspendido por falta de pago.</p>
+        <p style="color:#444;font-size:14px;">Para reactivar el servicio, regulariza el pago a través del siguiente enlace:</p>
+        {_btn('Reactivar servicio', url_pago, '#E24B4A')}
+    """, empresa_nombre)
+    enviar_email(email, 'Servicio suspendido — acción requerida', html)
+
+# ── Documentos ────────────────────────────────────────────────────────────────
+def email_documento_vence(email, nombre, empresa_nombre, tipo_documento, entidad_nombre, dias, fecha_vencimiento, url_documentos):
+    config = ConfiguracionSistema.get()
+    if not config.notif_documento_vence: return
+    nivel = 'vencido' if dias < 0 else 'por vencer'
+    titulo = f'Documento {nivel}: {tipo_documento}'
+    html = _base_template(titulo, f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+            {_info_row('Documento:', tipo_documento)}
+            {_info_row('Asociado a:', entidad_nombre)}
+            {_info_row('Vencimiento:', fecha_vencimiento)}
+            {_info_row('Estado:', f'Vencido hace {abs(dias)} días' if dias < 0 else f'Vence en {dias} días')}
+        </table>
+        {_btn('Gestionar documentos', url_documentos)}
+    """, empresa_nombre)
+    enviar_email(email, titulo, html)
+
+# ── Mantención ────────────────────────────────────────────────────────────────
+def email_mantencion_vence(email, nombre, empresa_nombre, tipo_mantencion, patente, dias, url_mantenciones):
+    config = ConfiguracionSistema.get()
+    if not config.notif_mantencion_vence: return
+    html = _base_template(f'Mantención pendiente: {tipo_mantencion}', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">El vehículo <strong>{patente}</strong> tiene una mantención pendiente.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+            {_info_row('Tipo:', tipo_mantencion)}
+            {_info_row('Vehículo:', patente)}
+            {_info_row('Días restantes:', str(dias) if dias >= 0 else f'{abs(dias)} días vencida')}
+        </table>
+        {_btn('Ver mantenciones', url_mantenciones)}
+    """, empresa_nombre)
+    enviar_email(email, f'Mantención pendiente — {patente}', html)
+
+# ── Solicitudes ───────────────────────────────────────────────────────────────
+def email_solicitud_nueva(email, nombre_admin, empresa_nombre, tipo, titulo_sol, conductor_nombre, url_solicitudes):
+    config = ConfiguracionSistema.get()
+    if not config.notif_solicitud_nueva: return
+    html = _base_template(f'Nueva solicitud de conductor', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre_admin}</strong>,</p>
+        <p style="color:#444;font-size:15px;"><strong>{conductor_nombre}</strong> envió una nueva solicitud.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+            {_info_row('Tipo:', tipo.capitalize())}
+            {_info_row('Descripción:', titulo_sol)}
+            {_info_row('Conductor:', conductor_nombre)}
+        </table>
+        {_btn('Ver solicitud', url_solicitudes)}
+    """, empresa_nombre)
+    enviar_email(email, f'Nueva solicitud: {titulo_sol}', html)
+
+def email_solicitud_resuelta(email, nombre_conductor, empresa_nombre, titulo_sol, estado, respuesta, url_app):
+    config = ConfiguracionSistema.get()
+    if not config.notif_solicitud_resuelta: return
+    color  = '#1D9E75' if estado == 'aprobado' else '#E24B4A'
+    icono  = '✓' if estado == 'aprobado' else '✗'
+    html = _base_template(f'Solicitud {estado}', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre_conductor}</strong>,</p>
+        <p style="color:#444;font-size:15px;">Tu solicitud <strong>"{titulo_sol}"</strong> fue <strong style="color:{color};">{estado}</strong>.</p>
+        {'<div style="background:#f5f5f5;border-radius:8px;padding:16px;margin:16px 0;"><p style="margin:0;color:#444;font-size:14px;"><strong>Respuesta del administrador:</strong><br>' + respuesta + '</p></div>' if respuesta else ''}
+        {_btn('Ver en la app', url_app)}
+    """, empresa_nombre)
+    enviar_email(email, f'Solicitud {estado}: {titulo_sol}', html)
+
+# ── Ruta ─────────────────────────────────────────────────────────────────────
+def email_ruta_asignada(email, nombre_conductor, empresa_nombre, nombre_ruta, origen, destino, fecha, url_app):
+    config = ConfiguracionSistema.get()
+    if not config.notif_ruta_asignada: return
+    html = _base_template(f'Nueva ruta asignada: {nombre_ruta}', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre_conductor}</strong>,</p>
+        <p style="color:#444;font-size:15px;">Se te asignó una nueva ruta.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+            {_info_row('Ruta:', nombre_ruta)}
+            {_info_row('Origen:', origen)}
+            {_info_row('Destino:', destino)}
+            {_info_row('Fecha:', fecha)}
+        </table>
+        {_btn('Ver en la app', url_app)}
+    """, empresa_nombre)
+    enviar_email(email, f'Nueva ruta asignada: {nombre_ruta}', html)
+
+def email_checklist_fallas(email, nombre_admin, empresa_nombre, conductor_nombre, patente, fallas, url_solicitudes):
+    config = ConfiguracionSistema.get()
+    if not config.notif_checklist_fallas: return
+    fallas_html = ''.join(f'<li style="color:#791F1F;font-size:14px;margin-bottom:4px;">{f}</li>' for f in fallas)
+    html = _base_template('Checklist pre-viaje con fallas', f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre_admin}</strong>,</p>
+        <p style="color:#444;font-size:15px;"><strong>{conductor_nombre}</strong> detectó fallas en el vehículo <strong>{patente}</strong> antes de partir.</p>
+        <div style="background:#FCEBEB;border-radius:8px;padding:16px;margin:16px 0;">
+            <p style="margin:0 0 8px;color:#791F1F;font-size:14px;font-weight:600;">Fallas detectadas:</p>
+            <ul style="margin:0;padding-left:20px;">{fallas_html}</ul>
+        </div>
+        {_btn('Ver solicitud', url_solicitudes)}
+    """, empresa_nombre)
+    enviar_email(email, f'⚠ Fallas en checklist — {patente}', html)
 ```
 
 ---
 
-## PARTE 4 — VISTAS DE PAGO (en views_planes.py)
+## PARTE 3 — INTEGRAR EMAILS EN LOS FLUJOS EXISTENTES
 
-Importar al inicio de views_planes.py:
+En cada archivo indicado, agregar el import y llamar a la función correspondiente.
+Todas las llamadas a email_* son fire-and-forget — no bloquean la respuesta.
+
+### views_planes.py — PagoRetornoView
+Después de `sus.save()` en pago aprobado:
 ```python
-import uuid
-from django.utils import timezone
-from transbank.webpay.webpay_plus.transaction import Transaction
-from transbank.common.options import WebpayOptions
-from transbank.common.integration_type import IntegrationType
-from django.conf import settings
-
-def get_webpay_transaction():
-    if settings.TRANSBANK_ENVIRONMENT == 'production':
-        options = WebpayOptions(
-            commerce_code=settings.TRANSBANK_COMMERCE_CODE,
-            api_key=settings.TRANSBANK_API_KEY,
-            integration_type=IntegrationType.LIVE,
+from .email_service import email_pago_aprobado
+try:
+    admins = Usuario.objects.filter(empresa=pago.empresa, rol='USUARIO', is_active=True)
+    for admin in admins:
+        email_pago_aprobado(
+            email=admin.email,
+            nombre=descifrar(admin.nombre_cifrado),
+            empresa_nombre=pago.empresa.nombre,
+            plan_nombre=pago.plan_nombre,
+            monto=pago.monto,
+            ciclo=pago.ciclo,
+            fecha_proximo_cobro=sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
+            orden_compra=pago.orden_compra,
         )
-    else:
-        options = WebpayOptions(
-            commerce_code=settings.TRANSBANK_COMMERCE_CODE,
-            api_key=settings.TRANSBANK_API_KEY,
-            integration_type=IntegrationType.TEST,
-        )
-    return Transaction(options)
+except Exception: pass
 ```
 
-### POST /api/pago/iniciar/
-Solo rol USUARIO con empresa activa.
-Body: { plan_id, ciclo }
+Después de `pago.estado = 'rechazado'`:
+```python
+from .email_service import email_pago_rechazado
+try:
+    for admin in admins:
+        email_pago_rechazado(
+            email=admin.email,
+            nombre=descifrar(admin.nombre_cifrado),
+            empresa_nombre=pago.empresa.nombre,
+            monto=pago.monto,
+            url_reintentar=f"{settings.FRONTEND_URL}/empresa/pago",
+        )
+except Exception: pass
+```
+
+### management/commands/verificar_suscripciones.py
+En cada bloque de notificación, agregar el email correspondiente:
+- Al pasar a gracia: email_suscripcion_gracia()
+- Al suspender: email_suscripcion_bloqueada()
+- Al avisar vencimiento próximo: email_suscripcion_vence()
+
+### management/commands/verificar_documentos.py
+En cada notificación de documento vencido o por vencer:
+```python
+from .email_service import email_documento_vence
+try:
+    admins = Usuario.objects.filter(empresa=doc.empresa, rol='USUARIO', is_active=True)
+    for admin in admins:
+        email_documento_vence(
+            email=admin.email,
+            nombre=descifrar(admin.nombre_cifrado),
+            empresa_nombre=doc.empresa.nombre,
+            tipo_documento=doc.get_tipo_display(),
+            entidad_nombre=doc.vehiculo.patente if doc.vehiculo else descifrar(doc.conductor.nombre_cifrado),
+            dias=dias,
+            fecha_vencimiento=doc.fecha_vencimiento.strftime('%d/%m/%Y'),
+            url_documentos=f"{settings.FRONTEND_URL}/empresa/documentos",
+        )
+except Exception: pass
+```
+
+### views.py — crear usuario
+Al crear un usuario nuevo con rol USUARIO:
+```python
+from .email_service import email_bienvenida
+try:
+    email_bienvenida(
+        email=nuevo_usuario.email,
+        nombre=descifrar(nuevo_usuario.nombre_cifrado),
+        empresa_nombre=nuevo_usuario.empresa.nombre if nuevo_usuario.empresa else '',
+        plan_nombre=nuevo_usuario.empresa.plan.get_nombre_display() if nuevo_usuario.empresa and nuevo_usuario.empresa.plan else 'Sin plan',
+        url_login=f"{settings.FRONTEND_URL}/login",
+    )
+except Exception: pass
+```
+
+### views.py — crear ruta
+Al crear una ruta y asignar conductor:
+```python
+from .email_service import email_ruta_asignada
+if ruta.conductor:
+    try:
+        email_ruta_asignada(
+            email=ruta.conductor.email,
+            nombre_conductor=descifrar(ruta.conductor.nombre_cifrado),
+            empresa_nombre=ruta.empresa.nombre,
+            nombre_ruta=ruta.nombre,
+            origen=ruta.paradas.filter(tipo='origen').first().nombre if ruta.paradas.exists() else '—',
+            destino=ruta.paradas.filter(tipo='destino').first().nombre if ruta.paradas.exists() else '—',
+            fecha=ruta.fecha_programada.strftime('%d/%m/%Y %H:%M') if ruta.fecha_programada else '—',
+            url_app=f"{settings.FRONTEND_URL}/app",
+        )
+    except Exception: pass
+```
+
+### views.py — aprobar/rechazar solicitud
+Al aprobar:
+```python
+from .email_service import email_solicitud_resuelta
+try:
+    email_solicitud_resuelta(
+        email=sol.conductor.email,
+        nombre_conductor=descifrar(sol.conductor.nombre_cifrado),
+        empresa_nombre=sol.empresa.nombre,
+        titulo_sol=sol.titulo,
+        estado='aprobado',
+        respuesta=sol.respuesta,
+        url_app=f"{settings.FRONTEND_URL}/app",
+    )
+except Exception: pass
+```
+
+### views.py — nueva solicitud de conductor
+Al crear solicitud:
+```python
+from .email_service import email_solicitud_nueva
+try:
+    admins = Usuario.objects.filter(empresa=sol.empresa, rol='USUARIO', is_active=True)
+    for admin in admins:
+        email_solicitud_nueva(
+            email=admin.email,
+            nombre_admin=descifrar(admin.nombre_cifrado),
+            empresa_nombre=sol.empresa.nombre,
+            tipo=sol.tipo,
+            titulo_sol=sol.titulo,
+            conductor_nombre=descifrar(sol.conductor.nombre_cifrado),
+            url_solicitudes=f"{settings.FRONTEND_URL}/empresa/solicitudes",
+        )
+except Exception: pass
+```
+
+### views.py — checklist con fallas
+En ChecklistView POST cuando tiene_fallas:
+```python
+from .email_service import email_checklist_fallas
+try:
+    admins = Usuario.objects.filter(empresa=ruta.empresa, rol='USUARIO', is_active=True)
+    for admin in admins:
+        email_checklist_fallas(
+            email=admin.email,
+            nombre_admin=descifrar(admin.nombre_cifrado),
+            empresa_nombre=ruta.empresa.nombre,
+            conductor_nombre=descifrar(request.user.nombre_cifrado),
+            patente=ruta.vehiculo.patente if ruta.vehiculo else '—',
+            fallas=resumen_fallas,
+            url_solicitudes=f"{settings.FRONTEND_URL}/empresa/solicitudes",
+        )
+except Exception: pass
+```
+
+---
+
+## PARTE 4 — ENDPOINT DE CONFIGURACIÓN EMAIL (views_planes.py)
+
+### GET/PUT /api/admin/email/
+Solo SUPERADMIN.
+
+GET retorna la configuración con la contraseña enmascarada:
+```json
+{
+  "email_host": "smtp.gmail.com",
+  "email_port": 587,
+  "email_host_user": "notif@empresa.cl",
+  "email_host_password": "••••••••",
+  "email_use_tls": true,
+  "email_use_ssl": false,
+  "email_from_name": "FlotaSystem",
+  "email_from_address": "notif@empresa.cl",
+  "email_activo": true,
+  "notificaciones": {
+    "pago_aprobado": true,
+    "pago_rechazado": true,
+    "suscripcion_vence": true,
+    ...
+  }
+}
+```
+
+PUT actualiza los campos. Si email_host_password viene como "••••••••" ignorarlo (no actualizar).
+
+### POST /api/admin/email/test/
+Solo SUPERADMIN.
+Body: { email_destino }
+Envía un email de prueba al destinatario indicado usando la configuración actual.
+Si falla retorna el error específico de SMTP para que el admin pueda diagnosticar.
 
 ```python
-class PagoIniciarView(View):
+class EmailTestView(View):
     def post(self, request):
-        if not request.user.is_authenticated or request.user.rol != 'USUARIO':
-            return JsonResponse({'error': 'Sin acceso.'}, status=403)
-
-        body    = json.loads(request.body)
-        plan_id = body.get('plan_id')
-        ciclo   = body.get('ciclo', 'mensual')
-        empresa = request.user.empresa
-
-        try:
-            plan = PlanSuscripcion.objects.get(id=plan_id, activo=True)
-        except PlanSuscripcion.DoesNotExist:
-            return JsonResponse({'error': 'Plan no encontrado.'}, status=404)
-
-        monto = int(plan.precio_anual if ciclo == 'anual' else plan.precio_mensual)
-        if not monto:
-            return JsonResponse({'error': 'Este plan no tiene precio configurado.'}, status=400)
-
-        orden_compra = f"ORD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
-        session_id   = f"SES-{request.user.id}-{uuid.uuid4().hex[:6]}"
-        return_url   = f"{settings.FRONTEND_URL}/empresa/pago/retorno"
-
-        tx = get_webpay_transaction()
-        response = tx.create(
-            buy_order=orden_compra,
-            session_id=session_id,
-            amount=monto,
-            return_url=return_url,
-        )
-
-        # Obtener o crear suscripción
-        sus, _ = Suscripcion.objects.get_or_create(
-            empresa=empresa,
-            defaults={'plan': plan, 'ciclo': ciclo, 'estado': 'trial'}
-        )
-
-        PagoTransbank.objects.create(
-            empresa=empresa,
-            suscripcion=sus,
-            token=response['token'],
-            orden_compra=orden_compra,
-            monto=monto,
-            ciclo=ciclo,
-            plan_nombre=plan.get_nombre_display(),
-        )
-
-        registrar_log(request, 'ACTIVIDAD', 'pago_iniciado', {
-            'plan': plan.nombre, 'monto': monto, 'ciclo': ciclo
-        })
-
-        return JsonResponse({
-            'url':   response['url'],
-            'token': response['token'],
-        })
-```
-
-### POST /api/pago/retorno/ (retorno de Transbank)
-Esta vista recibe el token_ws de Transbank después del pago.
-Decorar con @csrf_exempt porque Transbank hace POST directo.
-
-```python
-@method_decorator(csrf_exempt, name='dispatch')
-class PagoRetornoView(View):
-    def post(self, request):
-        token_ws = request.POST.get('token_ws') or request.GET.get('token_ws')
-
-        if not token_ws:
-            return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=sin_token")
-
-        try:
-            pago = PagoTransbank.objects.select_related(
-                'empresa', 'suscripcion', 'suscripcion__plan'
-            ).get(token=token_ws)
-        except PagoTransbank.DoesNotExist:
-            return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=token_invalido")
-
-        try:
-            tx       = get_webpay_transaction()
-            response = tx.commit(token_ws)
-
-            pago.respuesta_tb = dict(response)
-            pago.fecha_pago   = timezone.now()
-
-            # response_code 0 = aprobado
-            if response.get('response_code') == 0:
-                pago.estado = 'aprobado'
-                pago.save()
-
-                sus = pago.suscripcion
-                sus.plan   = sus.plan  # mantener o actualizar si cambió
-                sus.ciclo  = pago.ciclo
-                sus.estado = 'activa'
-                sus.fecha_inicio      = timezone.now()
-                sus.fecha_fin_periodo = (
-                    timezone.now() + timezone.timedelta(days=365)
-                    if pago.ciclo == 'anual'
-                    else timezone.now() + timezone.timedelta(days=30)
-                )
-                sus.save()
-
-                # Actualizar plan de la empresa
-                sus.empresa.plan = sus.plan
-                sus.empresa.save()
-
-                notificar_admins_empresa(
-                    empresa=pago.empresa,
-                    tipo='actividad',
-                    titulo='Pago procesado correctamente',
-                    mensaje=f'Tu plan {sus.plan.get_nombre_display()} está activo. Próximo cobro: {sus.fecha_fin_periodo.strftime("%d/%m/%Y")}.',
-                    extra={'pago_id': pago.id}
-                )
-
-                registrar_log(None, 'ACTIVIDAD', 'pago_aprobado', {
-                    'empresa_id': pago.empresa.id, 'monto': pago.monto, 'plan': pago.plan_nombre
-                })
-
-                return redirect(f"{settings.FRONTEND_URL}/empresa/pago/exitoso?orden={pago.orden_compra}")
-
-            else:
-                pago.estado = 'rechazado'
-                pago.save()
-
-                notificar_admins_empresa(
-                    empresa=pago.empresa,
-                    tipo='seguridad',
-                    titulo='Pago rechazado',
-                    mensaje='Tu pago fue rechazado por Transbank. Intenta nuevamente.',
-                    extra={'pago_id': pago.id}
-                )
-
-                return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")
-
-        except Exception as e:
-            pago.estado = 'fallido'
-            pago.save()
-            registrar_log(None, 'SEGURIDAD', 'pago_error', {'error': str(e), 'pago_id': pago.id})
-            return redirect(f"{settings.FRONTEND_URL}/empresa/pago/fallido?error=error_sistema")
-```
-
-### GET /api/pago/historial/
-Solo USUARIO — historial de pagos de su empresa:
-```python
-class PagoHistorialView(View):
-    def get(self, request):
-        if request.user.rol not in ('USUARIO', 'SUPERADMIN'):
-            return JsonResponse({'error': 'Sin acceso.'}, status=403)
-
-        empresa = request.user.empresa if request.user.rol == 'USUARIO' else None
-        empresa_id = request.GET.get('empresa_id')
-
-        if request.user.rol == 'SUPERADMIN' and empresa_id:
-            empresa = Empresa.objects.get(id=empresa_id)
-
-        pagos = PagoTransbank.objects.filter(
-            empresa=empresa, estado='aprobado'
-        ).select_related('suscripcion__plan')
-
-        data = [{
-            'id':           p.id,
-            'orden_compra': p.orden_compra,
-            'monto':        p.monto,
-            'plan':         p.plan_nombre,
-            'ciclo':        p.ciclo,
-            'fecha':        p.fecha_pago.strftime('%d/%m/%Y %H:%M') if p.fecha_pago else None,
-            'estado':       p.estado,
-        } for p in pagos]
-
-        return JsonResponse({'pagos': data})
-```
-
-### GET/PUT /api/admin/terminos/
-Solo SUPERADMIN:
-```python
-class TerminosView(View):
-    def get(self, request):
-        config = ConfiguracionSistema.get()
-        return JsonResponse({
-            'terminos':         config.terminos_condiciones,
-            'version':          config.terminos_version,
-            'updated_at':       config.terminos_updated_at.isoformat() if config.terminos_updated_at else None,
-            'dias_gracia':      config.dias_gracia_pago,
-            'bloqueo_auto':     config.bloqueo_automatico,
-            'mensaje_bloqueo':  config.mensaje_pago_pendiente,
-        })
-
-    def put(self, request):
         if request.user.rol != 'SUPERADMIN':
             return JsonResponse({'error': 'Sin acceso.'}, status=403)
-        body   = json.loads(request.body)
+        body    = json.loads(request.body)
+        destino = body.get('email_destino')
+        if not destino:
+            return JsonResponse({'error': 'Email destino requerido.'}, status=400)
         config = ConfiguracionSistema.get()
-        if 'terminos' in body:
-            config.terminos_condiciones = body['terminos']
-            config.terminos_version     = body.get('version', config.terminos_version)
-            config.terminos_updated_at  = timezone.now()
-        if 'dias_gracia'     in body: config.dias_gracia_pago       = body['dias_gracia']
-        if 'bloqueo_auto'    in body: config.bloqueo_automatico      = body['bloqueo_auto']
-        if 'mensaje_bloqueo' in body: config.mensaje_pago_pendiente  = body['mensaje_bloqueo']
-        config.save()
-        registrar_log(request, 'ACTIVIDAD', 'terminos_actualizados', {'version': config.terminos_version})
-        return JsonResponse({'ok': True})
-
-# Endpoint público para que cualquier empresa pueda leer los términos:
-class TerminosPublicosView(View):
-    def get(self, request):
-        config = ConfiguracionSistema.get()
-        return JsonResponse({
-            'terminos': config.terminos_condiciones,
-            'version':  config.terminos_version,
-            'fecha':    config.terminos_updated_at.strftime('%d/%m/%Y') if config.terminos_updated_at else None,
-        })
-```
-
-### Management command: verificar_suscripciones
-Crear g_de_flota/management/commands/verificar_suscripciones.py
-Ejecutar diariamente con cron: 0 9 * * *
-
-Lógica:
-```python
-def handle(self, *args, **kwargs):
-    from django.utils import timezone
-    config = ConfiguracionSistema.get()
-    hoy    = timezone.now()
-
-    suscripciones = Suscripcion.objects.filter(
-        estado__in=['activa', 'gracia']
-    ).select_related('empresa', 'plan')
-
-    for sus in suscripciones:
-        if not sus.fecha_fin_periodo:
-            continue
-
-        dias = (sus.fecha_fin_periodo - hoy).days
-
-        if sus.estado == 'activa' and dias <= 0:
-            # Vencida → pasar a gracia
-            sus.estado = 'gracia'
-            sus.save()
-            notificar_admins_empresa(
-                empresa=sus.empresa,
-                tipo='seguridad',
-                titulo='Suscripción vencida — período de gracia iniciado',
-                mensaje=f'Tu suscripción venció. Tienes {config.dias_gracia_pago} días para regularizar el pago antes de que el servicio sea suspendido.',
+        from .email_service import _base_template, enviar_email
+        html = _base_template('Email de prueba', f"""
+            <p style="color:#444;font-size:15px;">Este es un email de prueba enviado desde FlotaSystem.</p>
+            <p style="color:#888;font-size:13px;">Si recibes este mensaje, la configuración SMTP es correcta.</p>
+            <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+                <tr><td style="color:#666;font-size:13px;padding:4px 0;">Servidor SMTP:</td><td style="color:#1a1a1a;font-size:13px;">{config.email_host}:{config.email_port}</td></tr>
+                <tr><td style="color:#666;font-size:13px;padding:4px 0;">Usuario:</td><td style="color:#1a1a1a;font-size:13px;">{config.email_host_user}</td></tr>
+            </table>
+        """)
+        try:
+            from .email_service import get_email_backend, EmailMultiAlternatives
+            backend  = get_email_backend()
+            remitente = f"{config.email_from_name} <{config.email_from_address}>"
+            msg = EmailMultiAlternatives(
+                subject='Email de prueba — FlotaSystem',
+                body='Email de prueba desde FlotaSystem.',
+                from_email=remitente,
+                to=[destino],
+                connection=backend,
             )
-
-        elif sus.estado == 'gracia':
-            dias_en_gracia = (hoy - sus.fecha_fin_periodo).days
-            if dias_en_gracia >= config.dias_gracia_pago and config.bloqueo_automatico:
-                sus.estado = 'suspendida'
-                sus.empresa.estado = 'suspendida'
-                sus.empresa.save()
-                sus.save()
-                notificar_admins_empresa(
-                    empresa=sus.empresa,
-                    tipo='seguridad',
-                    titulo='Servicio suspendido por falta de pago',
-                    mensaje=config.mensaje_pago_pendiente,
-                )
-
-        elif sus.estado == 'activa' and dias in [30, 15, 7, 3, 1]:
-            notificar_admins_empresa(
-                empresa=sus.empresa,
-                tipo='actividad',
-                titulo=f'Tu suscripción vence en {dias} días',
-                mensaje=f'El plan {sus.plan.get_nombre_display()} vence el {sus.fecha_fin_periodo.strftime("%d/%m/%Y")}. Renueva para evitar interrupciones.',
-            )
-
-    self.stdout.write(self.style.SUCCESS('Suscripciones verificadas.'))
+            msg.attach_alternative(html, 'text/html')
+            msg.send()
+            return JsonResponse({'ok': True, 'mensaje': f'Email de prueba enviado a {destino}'})
+        except Exception as e:
+            return JsonResponse({'ok': False, 'error': str(e)}, status=400)
 ```
 
 ---
@@ -498,208 +605,95 @@ def handle(self, *args, **kwargs):
 ## PARTE 5 — URLS (agregar en urls.py)
 
 ```python
-path('api/pago/iniciar/',           PagoIniciarView.as_view()),
-path('api/pago/retorno/',           PagoRetornoView.as_view()),
-path('api/pago/historial/',         PagoHistorialView.as_view()),
-path('api/admin/terminos/',         TerminosView.as_view()),
-path('api/terminos/',               TerminosPublicosView.as_view()),
-path('api/admin/suscripciones/',    SuscripcionesAdminView.as_view()),
-path('api/empresa/suscripcion/',    SuscripcionEmpresaView.as_view()),
+path('api/admin/email/',       EmailConfigView.as_view()),
+path('api/admin/email/test/',  EmailTestView.as_view()),
 ```
 
 ---
 
-## PARTE 6 — FRONTEND WEB
+## PARTE 6 — VARIABLE FRONTEND_URL EN SETTINGS
 
-### src/web/pago/IniciarPago.vue
-Vista para que la empresa seleccione plan y ciclo antes de pagar.
-Tabs mensual / anual con ahorro calculado.
-Cards de planes disponibles (traídas de GET /api/configuracion/planes/).
-Al seleccionar plan y ciclo → POST /api/pago/iniciar/ → redirigir a response.url con window.location.href.
-Mostrar spinner mientras redirige.
-Nota: "Serás redirigido a Webpay de Transbank para completar el pago de forma segura."
-
-### src/web/pago/PagoExitoso.vue
-Ruta: /empresa/pago/exitoso
-Leer ?orden= de la URL y mostrar resumen del pago.
-Botón "Ir al panel" → router.push('/empresa/dashboard').
-Llamar GET /api/empresa/suscripcion/ para mostrar el estado actualizado.
-
-### src/web/pago/PagoFallido.vue
-Ruta: /empresa/pago/fallido
-Leer ?error= de la URL y mostrar mensaje apropiado según el código:
-- rechazado: "Tu pago fue rechazado. Verifica los datos de tu tarjeta."
-- sin_token: "Ocurrió un error en la sesión de pago."
-- error_sistema: "Error del sistema. Intenta nuevamente."
-Botón "Reintentar pago" → router.push('/empresa/pago').
-
-### src/web/pago/HistorialPagos.vue
-Vista para el USUARIO: tabla de pagos aprobados con columnas orden, plan, ciclo, monto, fecha.
-Formatear monto en CLP: $149.000.
-Botón exportar CSV.
-
-### src/web/admin/PagosSuperAdmin.vue
-Vista para el SUPERADMIN con:
-
-KPI cards: MRR del mes, total cobrado este mes, empresas activas, empresas en gracia/suspendidas.
-
-Tabla de todas las empresas con columnas:
-Empresa · Plan · Ciclo · Estado suscripción · Próximo cobro · Último pago · Acciones
-
-Badges de estado:
-- activa: verde
-- trial: azul
-- gracia: naranja con días restantes
-- suspendida: rojo
-- cancelada: gris
-
-Acciones por fila:
-- suspendida: botón "Reactivar" → PUT /api/admin/suscripciones/:id/reactivar/
-- gracia: botón "Extender gracia" (N días más)
-- activa: botón "Ver pagos"
-
-Filtros: estado, plan, búsqueda por nombre.
-
-### src/web/configuracion/TerminosCondiciones.vue
-Vista dentro del módulo de configuración del SUPERADMIN.
-Tab "Términos y condiciones":
-- Editor de texto enriquecido (usar textarea grande, no WYSIWYG — mantener simple)
-- Campo versión (ej: "1.2")
-- Botón "Guardar y publicar" → PUT /api/admin/terminos/
-- Fecha de última actualización
-
-Tab "Configuración de pagos":
-- Input: días de gracia antes del bloqueo (número)
-- Toggle: bloqueo automático activado/desactivado
-- Textarea: mensaje de bloqueo (lo que ve la empresa bloqueada)
-- Badge de ambiente: TEST o PRODUCCIÓN según TRANSBANK_ENVIRONMENT
-
-### src/web/empresa/BannerSuscripcion.vue
-Banner que aparece en EmpresaLayout.vue cuando la suscripción está por vencer o en gracia.
-
-Leer estado desde GET /api/empresa/suscripcion/ al montar. Refrescar cada 10 minutos.
-
-Variantes:
-- gracia (naranja): "Tu suscripción venció. Tienes X días para pagar antes de que el servicio sea suspendido. [Pagar ahora]"
-- por_vencer ≤7 días (amarillo): "Tu suscripción vence en X días. [Renovar]"
-- suspendida (rojo, pantalla completa bloqueante): overlay que cubre todo el contenido con el mensaje de bloqueo y botón "Regularizar pago"
-
-El overlay de suspensión usa position:fixed con z-index alto para bloquear toda interacción. Solo permite ir a /empresa/pago.
-
-### Interceptor en api.js
-En apiFetch, después del manejo de 401/403 existente, agregar:
-```javascript
-if (res.status === 402) {
-  const data = await res.json()
-  if (data.codigo === 'SUSCRIPCION_BLOQUEADA') {
-    window.dispatchEvent(new CustomEvent('suscripcion-bloqueada', { detail: data }))
-    throw new Error(data.error)
-  }
-}
-```
-
-En EmpresaLayout.vue al montar:
-```javascript
-window.addEventListener('suscripcion-bloqueada', () => {
-  router.push('/empresa/pago')
-})
-```
-
----
-
-## PARTE 7 — TÉRMINOS Y CONDICIONES EN ONBOARDING
-
-En el login web de la empresa (cuando primer_login=true), antes de acceder al panel mostrar pantalla de aceptación de términos:
-
-GET /api/terminos/ → mostrar el texto con scroll obligatorio
-Checkbox "He leído y acepto los términos y condiciones (versión X.X)"
-Botón "Aceptar y continuar" — deshabilitado hasta que se marque el checkbox y se llegue al final del scroll
-POST /api/empresa/terminos/aceptar/ → guarda version aceptada y fecha en Usuario.extra
-
-Si los términos se actualizan (nueva versión), mostrar nuevamente la pantalla de aceptación al próximo login.
-
----
-
-## URLS adicionales para términos
-
+Agregar en settings.py:
 ```python
-path('api/empresa/terminos/aceptar/', TerminosAceptarView.as_view()),
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:7183')
 ```
 
-Vista TerminosAceptarView:
-- POST con { version }
-- Guardar en request.user.extra = { ..., terminos_version: version, terminos_aceptado_at: now().isoformat() }
-- Si Usuario no tiene campo extra: agregar extra = models.JSONField(default=dict, blank=True) en models.py
+Agregar en .env:
+FRONTEND_URL=http://localhost:7183
 
 ---
 
-## TARJETAS DE PRUEBA TRANSBANK (ambiente integration)
+## PARTE 7 — FRONTEND: módulo de configuración de email
 
-Agregar en la vista de configuración del SUPERADMIN como sección informativa:
+### Agregar tab "Email" en la vista de Configuracion.vue del SUPERADMIN
 
-| Número | Resultado | CVC | Fecha exp |
-|---|---|---|---|
-| 4051 8856 0044 6623 | Aprobado | 123 | Cualquier fecha futura |
-| 4051 8842 3993 7763 | Rechazado | 123 | Cualquier fecha futura |
-| 5186 0595 5959 0568 | Aprobado (débito) | 123 | Cualquier fecha futura |
+El tab tiene dos secciones:
 
-RUT para autenticación en ambiente test: 11.111.111-1, clave: 123
+#### Sección 1 — Configuración SMTP
+Campos:
+- Servidor SMTP (input text, default smtp.gmail.com)
+- Puerto (input number, default 587)
+- Usuario (input email)
+- Contraseña (input password con toggle mostrar/ocultar)
+- Nombre del remitente (input text, ej: "FlotaSystem")
+- Email del remitente (input email)
+- Toggle TLS / Toggle SSL (mutuamente excluyentes)
+- Toggle "Envío de emails activado"
 
----
+Botones: "Guardar configuración" y "Enviar email de prueba"
 
-## NAVEGACIÓN
+Al "Enviar email de prueba": modal pequeño que pide el email destino, luego POST /api/admin/email/test/ y muestra resultado.
 
-Agregar en sidebar USUARIO:
-- Ítem: "Suscripción y pagos" · ícono: ti-credit-card · ruta: /empresa/pago
+Guías rápidas de configuración (texto colapsable):
+- Gmail: smtp.gmail.com · puerto 587 · TLS activado · requiere "contraseña de aplicación" (no la contraseña normal)
+- Outlook: smtp.office365.com · puerto 587 · TLS activado
+- IONOS/1&1: smtp.ionos.es · puerto 587 · TLS activado
 
-Agregar en sidebar SUPERADMIN:
-- Ítem: "Pagos" · ícono: ti-report-money · ruta: /admin/pagos
-- En módulo Configuración: tab "Términos y condiciones"
+#### Sección 2 — Notificaciones por evento
+Tabla con toggle por cada evento:
+Evento                          | Email activo
+──────────────────────────────────────────────
+Bienvenida a nuevo usuario      | [toggle]
+Pago aprobado                   | [toggle]
+Pago rechazado                  | [toggle]
+Suscripción por vencer          | [toggle]
+Período de gracia               | [toggle]
+Servicio suspendido             | [toggle]
+Documento por vencer / vencido  | [toggle]
+Mantención pendiente            | [toggle]
+Nueva solicitud de conductor    | [toggle]
+Solicitud aprobada/rechazada    | [toggle]
+Ruta asignada a conductor       | [toggle]
+Checklist con fallas            | [toggle]
 
-Agregar en router/index.js:
-```javascript
-{ path: '/empresa/pago',          component: () => import('@/web/pago/IniciarPago.vue'),        meta: { roles: ['USUARIO'] } },
-{ path: '/empresa/pago/exitoso',  component: () => import('@/web/pago/PagoExitoso.vue'),         meta: { roles: ['USUARIO'] } },
-{ path: '/empresa/pago/fallido',  component: () => import('@/web/pago/PagoFallido.vue'),         meta: { roles: ['USUARIO'] } },
-{ path: '/empresa/pagos',         component: () => import('@/web/pago/HistorialPagos.vue'),      meta: { roles: ['USUARIO'] } },
-{ path: '/admin/pagos',           component: () => import('@/web/admin/PagosSuperAdmin.vue'),    meta: { roles: ['SUPERADMIN'] } },
-```
+Botón "Guardar notificaciones" al pie.
 
 ---
 
 ## CONVENCIONES
-- Montos siempre en CLP entero sin decimales: $149.000
-- @csrf_exempt solo en PagoRetornoView
-- registrar_log en: pago iniciado, pago aprobado, pago rechazado, suspensión, reactivación, términos actualizados
-- notificar_admins_empresa en: pago aprobado, vencimiento próximo, período de gracia, suspensión
-- Fail-silent en BannerSuscripcion si el endpoint falla
-- SUPERADMIN nunca es bloqueado por el middleware
-- El bloqueo opera a nivel de API — el frontend muestra el overlay pero el backend igual rechaza las peticiones
-- Cron diario obligatorio: 0 9 * * * python manage.py verificar_suscripciones
-- Textos en español es-CL
+- Todas las llamadas a email_* envueltas en try/except — nunca romper el flujo principal
+- Contraseña SMTP cifrada con Fernet en DB, nunca en texto plano
+- La contraseña nunca se retorna completa en el GET — siempre "••••••••"
+- Solo actualizar la contraseña en el PUT si el valor enviado no es "••••••••"
+- registrar_log en: guardar config email, enviar test
+- Los emails no bloquean la respuesta HTTP — si fallan, solo loguear
+- Textos en español es-CL en todos los templates
+- FRONTEND_URL se lee de settings en todos los links de los emails
+- Sin "# resto igual"
 
 ---
 
 ## ARCHIVOS A ENTREGAR
 
 Backend:
-1. models_patch.py — Suscripcion, PagoTransbank + campos nuevos en ConfiguracionSistema + campo extra en Usuario
-2. views_pago_patch.py — PagoIniciarView, PagoRetornoView, PagoHistorialView, TerminosView, TerminosPublicosView, TerminosAceptarView, SuscripcionEmpresaView, SuscripcionesAdminView con indicación de dónde van en views_planes.py
-3. middleware_patch.py — BloqueoSuscripcionMiddleware con indicación de dónde va y cómo registrar en settings.py
-4. management/commands/verificar_suscripciones.py — completo
-5. urls_patch.py — todas las rutas nuevas
-6. settings_patch.py — líneas a agregar en settings.py y MIDDLEWARE
+1. models_patch.py — campos nuevos en ConfiguracionSistema
+2. email_service.py — completo
+3. views_email_patch.py — EmailConfigView y EmailTestView con indicación de dónde van en views_planes.py
+4. integraciones_patch.py — fragmentos exactos a agregar en cada vista existente (con indicación de archivo y función)
+5. urls_patch.py — las 2 rutas nuevas
+6. settings_patch.py — FRONTEND_URL a agregar
 
 Frontend:
-7. IniciarPago.vue — completo
-8. PagoExitoso.vue — completo
-9. PagoFallido.vue — completo
-10. HistorialPagos.vue — completo
-11. PagosSuperAdmin.vue — completo
-12. TerminosCondiciones.vue — completo
-13. BannerSuscripcion.vue — completo
-14. api_js_patch.js — solo el bloque 402 a agregar
-15. router_patch.js — rutas nuevas
-16. nav_patch.md — ítems a agregar en sidebars
+7. configuracion_email_tab.vue — el tab completo de email para agregar en Configuracion.vue con indicación de dónde insertar
 
 Sin "# resto igual".
