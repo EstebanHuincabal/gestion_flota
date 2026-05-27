@@ -73,7 +73,6 @@ const mantEstadoCanvas   = ref(null)
 const alertasTipoCanvas  = ref(null)
 const docsEstadoCanvas   = ref(null)
 const kmMesCanvas        = ref(null)
-const costoRutasCanvas   = ref(null)
 
 // ── Chart instances ──────────────────────────────────────────
 let crecimientoChart = null; let distribucionChart = null; let planesChart = null
@@ -82,7 +81,7 @@ let mrrHistChart = null; let usuariosNuevosChart = null; let marcasGlobalChart =
 let vehiculosChart = null; let mantencionesChart = null; let flotaChart = null
 let gastosChart = null; let rutasChart = null; let conductoresChart = null
 let gastos12mChart = null; let marcasFlotaChart = null; let mantEstadoChart = null
-let alertasTipoChart = null; let docsEstadoChart = null; let kmMesChart = null; let costoRutasChart = null
+let alertasTipoChart = null; let docsEstadoChart = null; let kmMesChart = null
 
 const pctActivas = computed(() => {
   const total = kpisGlobal.value.empresas_activas + kpisGlobal.value.empresas_inactivas
@@ -260,7 +259,7 @@ const renderGraficosGlobal = (charts) => {
 const renderGraficosEmpresa = (charts) => {
   ;[vehiculosChart, mantencionesChart, flotaChart, gastosChart, rutasChart, conductoresChart,
     gastos12mChart, marcasFlotaChart, mantEstadoChart, alertasTipoChart,
-    docsEstadoChart, kmMesChart, costoRutasChart
+    docsEstadoChart, kmMesChart
   ].forEach(c => c?.destroy())
 
   const ac = accentActual()
@@ -356,13 +355,7 @@ const renderGraficosEmpresa = (charts) => {
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9CA3AF' } }, y: { beginAtZero: true, ticks: { font: { size: 10 }, color: '#9CA3AF', callback: v => `${v.toFixed(0)} km` }, grid: { color: '#F3F4F6' } } } }
     })
   }
-  if (costoRutasCanvas.value && charts.costo_rutas_mes?.data?.length) {
-    costoRutasChart = new Chart(costoRutasCanvas.value, {
-      type: 'line',
-      data: { labels: charts.costo_rutas_mes.labels, datasets: [{ data: charts.costo_rutas_mes.data, borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.07)', tension: 0.4, fill: true, pointRadius: 3, pointBackgroundColor: '#8B5CF6', pointHoverRadius: 5 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9CA3AF' } }, y: { beginAtZero: true, ticks: { font: { size: 10 }, color: '#9CA3AF', callback: v => `$${(v/1000).toFixed(0)}k` }, grid: { color: '#F3F4F6' } } } }
-    })
-  }
+
 
   // Conductores
   hayConductoresKm.value = (charts.top_conductores_km?.length || 0) > 0
@@ -382,7 +375,7 @@ onUnmounted(() => {
     mrrHistChart, usuariosNuevosChart, marcasGlobalChart, activosChart,
     vehiculosChart, mantencionesChart, flotaChart, gastosChart, rutasChart, conductoresChart,
     gastos12mChart, marcasFlotaChart, mantEstadoChart, alertasTipoChart,
-    docsEstadoChart, kmMesChart, costoRutasChart
+    docsEstadoChart, kmMesChart
   ].forEach(c => c?.destroy())
 })
 </script>
@@ -735,14 +728,6 @@ onUnmounted(() => {
         <div class="card">
           <div class="card-header"><div><h2 class="card-title">Kilómetros recorridos</h2><p class="card-subtitle">Rutas finalizadas — últimos 6 meses</p></div></div>
           <div class="chart-wrap" style="height:260px"><canvas ref="kmMesCanvas"/></div>
-        </div>
-      </div>
-
-      <!-- RUTAS: costo estimado rutas -->
-      <div v-if="permisosDash.rutas" class="charts-row" style="margin-bottom:1.25rem;grid-template-columns:1fr">
-        <div class="card">
-          <div class="card-header"><div><h2 class="card-title">Costo estimado de rutas por mes</h2><p class="card-subtitle">Suma del costo total estimado de rutas finalizadas</p></div></div>
-          <div class="chart-wrap" style="height:220px"><canvas ref="costoRutasCanvas"/></div>
         </div>
       </div>
 

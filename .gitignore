@@ -24,3 +24,11 @@ env/
 node_modules/
 dist/
 dist-ssr/
+
+# Archivos locales de desarrollo
+Mejoras.md
+contexto.md
+build_apk.bat
+build_apk.ps1
+iniciar.bat
+iniciar.ps1

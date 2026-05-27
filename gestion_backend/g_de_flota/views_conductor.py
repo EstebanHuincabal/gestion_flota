@@ -8,11 +8,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
-from .models import Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo, Documento
+from .models import EventoRuta, Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo, Documento
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
 from .firebase_push import enviar_push
 from .checklist_items import get_items, ITEMS_MAP, MAP_DOC_ITEM
+from .views_rutas import _validar_anticipacion_inicio
 
 
 # ─────────────────────────────────────────
@@ -123,61 +124,40 @@ def _serializar_ruta(ruta, detallado=False):
     destino_p = next((p for p in paradas if p.tipo == 'destino'), None)
 
     result = {
-        'id':                    ruta.id,
-        'nombre':                ruta.nombre,
-        'tipo':                  ruta.tipo,
-        'estado':                ruta.estado,
-        'descripcion':           ruta.descripcion,
-        'origen':                origen_p.nombre  if origen_p  else '',
-        'destino':               destino_p.nombre if destino_p else '',
-        'fecha_programada':      ruta.fecha_programada.isoformat() if ruta.fecha_programada else None,
-        'fecha_inicio':          ruta.fecha_inicio.isoformat()     if ruta.fecha_inicio     else None,
-        'fecha_fin':             ruta.fecha_fin.isoformat()        if ruta.fecha_fin        else None,
-        'distancia_km':          float(ruta.distancia_km) if ruta.distancia_km else None,
-        'duracion_min':          ruta.duracion_min,
-        'km_inicio':             ruta.km_inicio,
-        'km_fin':                ruta.km_fin,
-        'km_reales':             ruta.km_reales,
-        'costo_combustible_est': ruta.costo_combustible_est,
-        'costo_peajes_est':      ruta.costo_peajes_est,
-        'costo_total_est':       ruta.costo_total_est,
-        'costo_combustible_real': ruta.costo_combustible_real,
-        'costo_peajes_real':      ruta.costo_peajes_real,
-        'costo_total_real':       ruta.costo_total_real,
-        'notas':                 ruta.notas,
-        'extra':                 ruta.extra or {},
-        'polyline':              ruta.polyline or [],
-        'paradas':               paradas_list,
-        # Vehículo y conductor (siempre incluidos, ligeros)
+        'id':               ruta.id,
+        'nombre':           ruta.nombre,
+        'tipo':             ruta.tipo,
+        'estado':           ruta.estado,
+        'descripcion':      ruta.descripcion,
+        'origen':           origen_p.nombre  if origen_p  else '',
+        'destino':          destino_p.nombre if destino_p else '',
+        'fecha_programada': ruta.fecha_programada.isoformat() if ruta.fecha_programada else None,
+        'hora_programada':  ruta.hora_programada.strftime('%H:%M') if ruta.hora_programada else None,
+        'fecha_inicio':     ruta.fecha_inicio.isoformat()     if ruta.fecha_inicio     else None,
+        'fecha_fin':        ruta.fecha_fin.isoformat()        if ruta.fecha_fin        else None,
+        'distancia_km':     float(ruta.distancia_km) if ruta.distancia_km else None,
+        'duracion_min':     ruta.duracion_min,
+        'km_inicio':        ruta.km_inicio,
+        'km_fin':           ruta.km_fin,
+        'km_reales':        ruta.km_reales,
+        'notas':            ruta.notas,
+        'extra':            ruta.extra or {},
+        'polyline':         ruta.polyline or [],
+        'paradas':          paradas_list,
         'vehiculo': {
-            'id':              ruta.vehiculo.id,
-            'patente':         ruta.vehiculo.patente,
-            'marca':           ruta.vehiculo.marca,
-            'modelo':          ruta.vehiculo.modelo,
+            'id':           ruta.vehiculo.id,
+            'patente':      ruta.vehiculo.patente,
+            'marca':        ruta.vehiculo.marca,
+            'modelo':       ruta.vehiculo.modelo,
             'tipo_combustible': ruta.vehiculo.tipo_combustible,
-            'km_actuales':     ruta.vehiculo.km_actuales,
-            'consumo_l_100km': float(ruta.vehiculo.consumo_l_100km) if ruta.vehiculo.consumo_l_100km else None,
-            'en_mantencion':   ruta.vehiculo.en_mantencion,
+            'km_actuales':  ruta.vehiculo.km_actuales,
+            'en_mantencion': ruta.vehiculo.en_mantencion,
         } if ruta.vehiculo else None,
         'conductor': {
             'id':     ruta.conductor.id,
             'nombre': ruta.conductor.nombre,
         } if ruta.conductor else None,
     }
-
-    # Peajes: solo en vista de detalle individual
-    if detallado:
-        result['peajes_ruta'] = [
-            {
-                'id':       pr.id,
-                'nombre':   pr.peaje.nombre,
-                'ruta':     pr.peaje.ruta,
-                'tarifa':   int(pr.tarifa),
-                'latitud':  pr.peaje.latitud,
-                'longitud': pr.peaje.longitud,
-            }
-            for pr in ruta.peajesruta.select_related('peaje').all()
-        ]
 
     return result
 
@@ -228,7 +208,7 @@ def conductor_detalle_ruta(request, ruta_id):
         ruta = (
             Ruta.objects
             .select_related('vehiculo', 'conductor')
-            .prefetch_related('paradas', 'peajesruta__peaje')
+            .prefetch_related('paradas')
             .get(id=ruta_id, conductor=request.user)
         )
     except Ruta.DoesNotExist:
@@ -255,6 +235,11 @@ def conductor_iniciar_ruta(request, ruta_id):
     if ruta.estado != 'pendiente':
         return Response({'error': f'La ruta está en estado "{ruta.estado}", no se puede iniciar.'}, status=400)
 
+    # Validar anticipación de hora programada
+    error_hora = _validar_anticipacion_inicio(ruta)
+    if error_hora:
+        return Response({'error': error_hora}, status=400)
+
     km_inicio = request.data.get('km_inicio')
     ruta.estado       = 'activo'
     ruta.fecha_inicio = timezone.now()
@@ -265,6 +250,10 @@ def conductor_iniciar_ruta(request, ruta_id):
             ruta.vehiculo.km_actuales = int(km_inicio)
             ruta.vehiculo.save(update_fields=['km_actuales'])
     ruta.save()
+
+    # Evento automático
+    _km_txt = f" Km inicio: {ruta.km_inicio}." if ruta.km_inicio is not None else ""
+    EventoRuta.objects.create(ruta=ruta, tipo='auto', texto=f"Ruta iniciada por conductor.{_km_txt}")
 
     registrar_log('ACTIVIDAD', 'ruta_iniciada', request, detalle={
         'ruta_id': ruta.id, 'ruta_nombre': ruta.nombre, 'km_inicio': ruta.km_inicio
@@ -299,10 +288,8 @@ def conductor_finalizar_ruta(request, ruta_id):
     if ruta.estado != 'activo':
         return Response({'error': f'La ruta está en estado "{ruta.estado}", no se puede finalizar.'}, status=400)
 
-    km_fin                 = request.data.get('km_fin')
-    costo_combustible_real = request.data.get('costo_combustible_real')
-    costo_peajes_real      = request.data.get('costo_peajes_real')
-    notas                  = request.data.get('notas', '')
+    km_fin = request.data.get('km_fin')
+    notas  = request.data.get('notas', '')
 
     ruta.estado    = 'finalizado'
     ruta.fecha_fin = timezone.now()
@@ -313,18 +300,16 @@ def conductor_finalizar_ruta(request, ruta_id):
             ruta.vehiculo.km_actuales = int(km_fin)
             ruta.vehiculo.save(update_fields=['km_actuales'])
 
-    if costo_combustible_real is not None:
-        ruta.costo_combustible_real = int(costo_combustible_real)
-    if costo_peajes_real is not None:
-        ruta.costo_peajes_real = int(costo_peajes_real)
-        ruta.costo_total_real  = (ruta.costo_combustible_real or 0) + int(costo_peajes_real)
     if notas:
         ruta.notas = notas
     ruta.save()
 
+    # Evento automático
+    _km_recorridos = f" Km recorridos: {ruta.km_reales}." if ruta.km_reales is not None else ""
+    EventoRuta.objects.create(ruta=ruta, tipo='auto', texto=f"Ruta finalizada por conductor.{_km_recorridos}")
+
     registrar_log('ACTIVIDAD', 'ruta_finalizada', request, detalle={
-        'ruta_id': ruta.id, 'ruta_nombre': ruta.nombre,
-        'km_fin': ruta.km_fin, 'costo_total_real': ruta.costo_total_real,
+        'ruta_id': ruta.id, 'ruta_nombre': ruta.nombre, 'km_fin': ruta.km_fin,
     })
     # Notificar a los admins de la empresa
     _empresa_rf = request.user.empresa
@@ -1051,3 +1036,64 @@ def conductor_checklist(request, ruta_id):
             else 'Checklist enviado con fallas. El administrador fue notificado.'
         ),
     })
+
+
+# ─────────────────────────────────────────
+# GET  /api/conductor/rutas/:id/comentarios/
+# POST /api/conductor/rutas/:id/comentario/
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def conductor_eventos_ruta(request, ruta_id):
+    """Devuelve el historial de eventos de una ruta del conductor."""
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    try:
+        ruta = Ruta.objects.get(id=ruta_id, conductor=request.user)
+    except Ruta.DoesNotExist:
+        return Response({'error': 'Ruta no encontrada.'}, status=404)
+
+    eventos = EventoRuta.objects.filter(ruta=ruta).select_related('autor').order_by('created_at')
+    return Response([
+        {
+            'id':         e.id,
+            'tipo':       e.tipo,
+            'texto':      e.texto,
+            'autor':      e.autor.nombre if e.autor else None,
+            'created_at': e.created_at.isoformat(),
+        }
+        for e in eventos
+    ])
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def conductor_agregar_comentario(request, ruta_id):
+    """El conductor agrega un comentario al historial de la ruta."""
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    try:
+        ruta = Ruta.objects.get(id=ruta_id, conductor=request.user)
+    except Ruta.DoesNotExist:
+        return Response({'error': 'Ruta no encontrada.'}, status=404)
+
+    texto = request.data.get('texto', '').strip()
+    if not texto:
+        return Response({'error': 'El texto del comentario es requerido.'}, status=400)
+
+    evento = EventoRuta.objects.create(
+        ruta=ruta,
+        tipo='comentario',
+        texto=texto,
+        autor=request.user,
+    )
+    return Response({
+        'id':         evento.id,
+        'tipo':       evento.tipo,
+        'texto':      evento.texto,
+        'autor':      request.user.nombre,
+        'created_at': evento.created_at.isoformat(),
+    }, status=201)

@@ -1,6 +1,6 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 2.3 · **Última actualización:** Mayo 2026  
+> **Versión:** 2.4 · **Última actualización:** Mayo 2026  
 > **Stack:** Django 5 · Vue 3 · Capacitor 8 · SQLite · JWT
 
 ---
@@ -43,7 +43,7 @@ Un usuario **Superadmin** opera a nivel global: administra las empresas cliente,
 | **Documentos** | Control de vigencia para permisos, revisión técnica, SOAP y licencias |
 | **Finanzas** | Gastos operativos categorizados, presupuesto mensual y dashboard SaaS |
 | **Reportes** | Exportación XLSX y visualizaciones Chart.js por módulo |
-| **Rutas y Trabajos** | Planificación de rutas con mapa Leaflet, cálculo OSRM, detección de peajes y liquidación automática de costos |
+| **Rutas y Trabajos** | Planificación de rutas con mapa Leaflet, cálculo OSRM (distancia/duración/polyline), checklist pre-viaje, registro de km y notas al finalizar, historial de eventos y comentarios por ruta |
 | **Notificaciones** | Alertas in-app en tiempo real (WebSocket) + preferencias de canal |
 | **Permisos** | Una capa basada en el plan: módulos visibles y acciones disponibles se definen a nivel de plan de suscripción |
 | **App Conductores** | Aplicación móvil (Vue 3 + Capacitor 8) para conductores: consulta de rutas asignadas, inicio/finalización con km y costos reales, mapa Leaflet, solicitudes de mantención/combustible/incidencia/documento con foto, soporte offline con SQLite |
@@ -219,14 +219,11 @@ gestion_flota/
     │   ├── firebase_push.py      # Envío push FCM (inicialización lazy, falla silenciosamente si no configurado)
     │   ├── consumers.py          # WS consumers: NotificacionesConsumer, SolicitudesConsumer, ConductorConsumer
     │   ├── routing.py            # Rutas WebSocket (ws/solicitudes/, ws/conductor/)
-    │   ├── ruta_calculator.py    # Motor de cálculo (OSRM, peajes, costos)
+    │   ├── ruta_calculator.py    # Motor de cálculo OSRM (distancia, duración, polyline — sin costos ni peajes)
     │   ├── audit.py              # registrar_log() + _parse_navegador/so() + _diff_campos()
     │   ├── serializers.py        # Serializadores DRF (LogAuditoria incluye navegador/so)
     │   ├── backends.py           # Backend de autenticación por RUT
-    │   ├── middleware.py         # Middleware de seguridad
-    │   └── management/
-    │       └── commands/
-    │           └── seed_peajes.py  # Carga inicial de peajes de Chile
+    │   └── middleware.py         # Middleware de seguridad
     └── gestion_backend/
         ├── settings.py           # load_dotenv desde raíz del monorepo; FIREBASE_CREDENTIALS
         ├── urls.py               # Router principal (84+ endpoints)
@@ -272,9 +269,6 @@ pip install -r requirements.txt
 
 # Aplicar migraciones (primera vez)
 python manage.py migrate
-
-# Cargar datos iniciales de peajes (primera vez)
-python manage.py seed_peajes
 
 # Iniciar servidor ASGI
 python manage.py runserver
@@ -585,7 +579,9 @@ Exportación disponible en XLSX para estado de flota, mantenciones y conductores
 
 ### 9.13 Rutas y Trabajos
 
-Módulo de planificación y seguimiento de rutas vehiculares. Permite crear rutas con conductor, vehículo y paradas, calcular el trayecto óptimo, detectar peajes en la ruta y liquidar los costos operativos asociados al finalizar.
+Módulo de planificación y seguimiento de rutas vehiculares. Permite crear rutas con conductor, vehículo y paradas, calcular el trayecto óptimo con OSRM, registrar km al iniciar y finalizar, y mantener un historial de eventos automáticos y comentarios manuales por ruta.
+
+> **Cambio v2.4 (Mayo 2026):** Se eliminaron por completo los modelos `Peaje`, `PeajeRuta` y `ConfiguracionRuta`, así como todos los campos de costos (`costo_combustible_est/real`, `costo_peajes_est/real`, `costo_total_est/real`) en `Ruta` y los campos `consumo_l_100km` y `categoria_peaje` en `Vehiculo`. Se reemplazó la lógica de costos y peajes por el modelo `EventoRuta` (historial de la ruta).
 
 #### Flujo de una ruta
 
@@ -600,7 +596,7 @@ BORRADOR → PENDIENTE → ACTIVO → FINALIZADO
 | `borrador` | Guardado sin validar |
 | `pendiente` | Lista para ser ejecutada — conductor asignado, paradas definidas |
 | `activo` | En tránsito — se registra `km_inicio` |
-| `finalizado` | Completada — se registra `km_fin`, se crean gastos automáticos |
+| `finalizado` | Completada — se registra `km_fin` y notas |
 | `cancelado` | Cancelada con motivo registrado |
 
 #### Cálculo de ruta
@@ -608,53 +604,80 @@ BORRADOR → PENDIENTE → ACTIVO → FINALIZADO
 Al crear o calcular una ruta, el sistema:
 
 1. **Geocodificación:** Nominatim (`nominatim.openstreetmap.org`) resuelve cada dirección a coordenadas (debounce 500 ms).
-2. **Trazado OSRM:** El motor de enrutamiento `router.project-osrm.org` calcula el polilínea óptimo entre todas las paradas. Si OSRM no está disponible, se aplica el **cálculo fallback Haversine**: distancia en línea recta entre paradas × 1.3 (factor de sinuosidad) y velocidad media de 60 km/h para la duración. La ruta se guarda con los costos estimados y muestra un aviso amarillo al usuario.
-3. **Detección de peajes:** Se filtran los peajes activos cuya `categoria` coincide con la `categoria_peaje` del vehículo, usando el radio de detección individual de cada peaje (`radio_metros` — entre 400 m y 1000 m según la ruta).
-4. **Estimación de costos:**
-   - Combustible: `(km / 100) × consumo_l_100km × precio_litro`
-   - Peajes: suma de tarifas de los peajes detectados (tarifa_normal o tarifa_punta según horario), ya filtradas por categoría del vehículo
-   - Se usan los precios configurados en `ConfiguracionRuta` de la empresa.
+2. **Trazado OSRM:** El motor de enrutamiento `router.project-osrm.org` calcula la polilínea óptima entre todas las paradas y devuelve `distancia_km`, `duracion_min` y `polyline`. Si OSRM no está disponible, se aplica el **cálculo fallback Haversine**: distancia en línea recta × 1.3 (factor de sinuosidad) y velocidad media de 60 km/h para la duración.
 
-#### Liquidación al finalizar
+#### Al iniciar / finalizar
 
-Al marcar una ruta como finalizada:
-- Se actualiza `vehiculo.km_actuales = km_fin`.
-- Se crea automáticamente un `GastoOperativo` de categoría `combustible`.
-- Si hubo peajes, se crea un segundo `GastoOperativo` de categoría `peaje`.
+- **Iniciar:** se registra `km_inicio`, se actualiza `km_actuales` del vehículo y se crea un `EventoRuta` automático.
+- **Finalizar:** solo acepta `km_fin` y `notas`. Se actualiza `vehiculo.km_actuales`. Se crea un `EventoRuta` automático.
+- No se generan gastos operativos de combustible ni peajes automáticamente.
+
+#### Historial (`EventoRuta`)
+
+Cada ruta mantiene una lista cronológica de eventos:
+
+| Campo | Descripción |
+|---|---|
+| `tipo` | `auto` (generado por el sistema) o `comentario` (escrito por admin o conductor) |
+| `texto` | Texto descriptivo del evento |
+| `autor` | FK a `Usuario` (nulo en eventos automáticos) |
+| `created_at` | Timestamp automático |
+
+Eventos automáticos creados en: creación de ruta, inicio, finalización y cancelación.
+
+#### Campo `hora_programada`
+
+La ruta acepta un campo opcional `hora_programada` (`TimeField`, formato `HH:MM`) que indica la hora de inicio prevista. Se muestra en:
+- La tabla del panel web (junto a la fecha, en color índigo)
+- El panel lateral de detalle de la ruta
+- El chip de resumen en la app móvil
+- La sección "Salida programada" del origen en el detalle de la app
 
 #### Validaciones al crear/editar una ruta
 
-Al crear o editar una ruta se aplican las siguientes reglas antes de guardar:
+El sistema aplica validaciones en dos momentos: un **pre-vuelo** (`POST /api/empresa/rutas/validar/`) antes de guardar y una validación definitiva al guardar.
 
-| Validación | Regla | Respuesta |
-|---|---|---|
-| **Fecha no pasada** | `fecha_programada` debe ser ≥ hoy | 400 `{fecha_programada: "La fecha no puede..."}` |
-| **Conflicto de conductor** | El conductor no puede tener otra ruta `pendiente` o `activa` el mismo día | 400 `{conductor_id: "El conductor ya tiene..."}` |
-| **Conflicto de vehículo** | El vehículo no puede estar asignado a otra ruta `pendiente` o `activa` el mismo día | 400 `{vehiculo_id: "El vehículo ya está..."}` |
+**Errores bloqueantes** (impiden guardar):
 
-Las rutas en estado `cancelado` o `finalizado` **no** cuentan como conflicto. Al editar una ruta, se excluye a sí misma del chequeo. Si no hay `fecha_programada`, no se aplica ninguna validación de conflicto.
-
-**Frontend:** la validación de fecha pasada también se aplica localmente en el paso 1 del asistente. Los errores de conflicto se muestran en un banner rojo dentro del modal, sin cerrarlo.
-
-#### Gestión de peajes
-
-Los peajes se cargan con el comando `seed_peajes` (21 ubicaciones × 5 categorías = 105 registros). Rutas cubiertas: Ruta 5 Norte/Sur, Ruta 68, Ruta 78, Ruta 60 CH, Ruta 57.
-
-**Categorías de peaje disponibles** (modelo `Vehiculo.categoria_peaje`):
-
-| Valor | Etiqueta |
+| Validación | Regla |
 |---|---|
-| `moto` | Moto / Motoneta |
-| `liviano` | Auto / Camioneta / SUV (default) |
-| `liviano_rem` | Auto/Camioneta con remolque |
-| `pesado_2` | Bus / Camión 2 ejes |
-| `pesado_3` | Camión 3+ ejes |
+| **Fecha no pasada** | `fecha_programada` debe ser ≥ hoy |
+| **Conflicto de conductor (activo)** | El conductor tiene una ruta actualmente en curso |
+| **Conflicto de conductor (pendiente)** | El conductor ya tiene una ruta pendiente en un margen de ±1 día respecto a la fecha solicitada |
+| **Conflicto de vehículo (activo)** | El vehículo está asignado a una ruta en curso |
+| **Conflicto de vehículo (pendiente)** | El vehículo está asignado a otra ruta pendiente dentro del margen de ±1 día |
+| **Vehículo inactivo** | `vehiculo.activo = False` |
+| **Vehículo en mantención** | `vehiculo.en_mantencion = True` |
+| **Conductor inactivo** | `conductor.is_active = False` |
+| **Conductor bloqueado** | `conductor.is_blocked = True` |
 
-Cada peaje tiene su propio `radio_metros` (400–1000 m según la ruta) para evitar falsos positivos en autopistas con carriles paralelos. El radio global de `ConfiguracionRuta` ya no se usa en la detección; se mantiene solo como referencia de configuración.
+**Advertencias (warnings)** — permiten continuar con "Programar de todas formas":
+
+| Advertencia | Regla |
+|---|---|
+| Mantención predictiva vencida | Existe `AlertaMantencion` con `nivel='vencida'` y `atendida=False` para el vehículo |
+| Mantención correctiva pendiente | Existe `Mantencion` activa sin fecha de fin para el vehículo |
+| Próxima mantención predictiva | `AlertaMantencion` con `nivel='por_vencer'` y ≤7 días |
+| SOAP vencido / por vencer | `Documento` tipo `seguro_soap` vencido o con ≤15 días de vigencia |
+| Revisión técnica vencida / por vencer | `Documento` tipo `revision_tecnica` con la misma lógica |
+| Permiso de circulación vencido / por vencer | `Documento` tipo `permiso_circulacion` con la misma lógica |
+| Licencia vencida / por vencer | `Documento` tipo `licencia` del conductor con ≤30 días de vigencia |
+
+Las rutas en estado `cancelado` o `finalizado` **no** cuentan como conflicto. Al editar, la ruta se excluye de su propio chequeo. Sin `fecha_programada`, no se aplican conflictos de fecha.
+
+**Frontend (panel web):** el paso 1 del asistente llama al endpoint `/validar/` al avanzar al paso 2; los errores se muestran en rojo (bloquean avanzar), las advertencias en amarillo (se puede continuar con "Programar de todas formas").
+
+#### Restricción de inicio por hora
+
+Si la ruta tiene `hora_programada`, **solo puede iniciarse con hasta 30 minutos de anticipación**. Si se intenta iniciar antes de ese margen:
+
+- **Backend (`RutaIniciarView`):** retorna HTTP 400 con el mensaje de tiempo restante.
+- **App móvil (`DetalleRuta.vue`):** el botón "Iniciar ruta" se reemplaza por un banner ámbar con el tiempo restante (calculado en el cliente). Al llegar al margen, el banner desaparece y el botón aparece sin necesidad de recargar.
+- **Panel web (`Rutas.vue`):** aplica la misma validación server-side; si el admin intenta iniciar prematuramente, recibe el error con el tiempo restante.
 
 **Vistas:** `Rutas.vue` · `MapaRuta.vue`  
-**Backend:** `views_rutas.py` · `ruta_calculator.py`  
-**Modelos:** `Ruta` · `Parada` · `Peaje` · `PeajeRuta` · `ConfiguracionRuta`  
+**Backend:** `views_rutas.py`  
+**Modelos:** `Ruta` · `Parada` · `EventoRuta`  
 **Permiso requerido:** `rutas.ver` (ver lista y detalle), `rutas.crear` (crear, editar, cambiar estado)
 
 ---
@@ -683,7 +706,7 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 |---|---|---|
 | `Login.vue` | `/login` | Autenticación por RUT chileno + contraseña. Validación módulo 11 en el cliente. |
 | `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. |
-| `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Costos / Detalles). Mapa Leaflet (carga dinámica desde CDN). Lista combinada de paradas + peajes. Bottom-sheet modales con validación para iniciar y finalizar ruta. Toast de confirmación. **Para rutas pendientes**, si el checklist pre-viaje no está completo muestra un botón morado "Completar checklist antes de iniciar"; una vez completado aparece el botón verde "Iniciar ruta". |
+| `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Detalles / Historial). Mapa Leaflet (carga dinámica desde CDN). Lista de paradas con tipo e ícono. Bottom-sheet modales con validación para iniciar (km_inicio) y finalizar (km_fin + notas). Tab Historial con lista de `EventoRuta` e input para agregar comentarios. Toast de confirmación. **Para rutas pendientes**, si el checklist pre-viaje no está completo muestra un botón morado "Completar checklist antes de iniciar"; una vez completado aparece el botón verde "Iniciar ruta". |
 | `ChecklistPreviaje.vue` | `/rutas/:id/checklist` | Checklist pre-viaje de 12 ítems agrupados (Documentos, Mecánica, Seguridad). Barra de progreso animada, ítems con estado visual (pendiente/ok/falla), documentos vigentes pre-marcados automáticamente, textarea de observación para fallas, firma digital por canvas (touch). Botón de envío deshabilitado hasta completar todos los ítems obligatorios y firmar. |
 | `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
 | `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. Al tocar una tarjeta se abre `ModalDetalleMantencion` con la acción correspondiente al estado. Toast de feedback tras iniciar o completar. |
@@ -697,7 +720,7 @@ Se realizó un rediseño completo de la UI de la app móvil (`v2.3`). Cambios pr
 |---|---|
 | `assets/main.css` | Nuevos tokens CSS: `--gradient-primary/hero/success/card`, `--shadow-xs/sm/md/lg/acento`, clases utilitarias `.card`, `.card-hero`, `.glass`, `.btn-primary`, `.skeleton`, `.badge` |
 | `BottomNav.vue` | Glassmorphism (`backdrop-filter: blur(20px)`), pill de indicador activo con sombra púrpura, íconos rellenos vs. contorno para estado activo/inactivo, altura nav aumentada a 64px (`--nav-h: 64px`) |
-| `RutaCard.vue` | Variante `activa`: tarjeta hero con gradiente verde, pulso animado, chips de costos. Variante `pendiente`: acento izquierdo con gradiente, sombra sutil. Variante `finalizada`: chip de check verde |
+| `RutaCard.vue` | Variante `activa`: tarjeta hero con gradiente verde + pulso animado. Variante `pendiente`: acento izquierdo con gradiente, fecha, distancia y duración. Variante `finalizada`: chip de check verde con km recorridos |
 | `ListaRutas.vue` | Header con gradiente `--gradient-hero` (azul-morado profundo), avatar con borde translúcido, stats row con chips de estado, botón sync e íconos ghost |
 | `ListaSolicitudes.vue` | Header hero con título grande, chips de resumen (activas/resueltas), FAB rediseñado con gradiente y sombra `var(--shadow-acento)`, sección labels estilo uppercase |
 | `MiMantencion.vue` | Header hero con ícono de llave decorativo, chip de información del vehículo, skeleton mejorado |
@@ -709,8 +732,8 @@ Se realizó un rediseño completo de la UI de la app móvil (`v2.3`). Cambios pr
 | Componente | Descripción |
 |---|---|
 | `BottomNav.vue` | Barra inferior con glassmorphism, pill activo con sombra `--shadow-acento`, íconos filled/outline según estado. Badge rojo `!` si hay mantención urgente; badge azul con cantidad si hay activas. Altura total: 64px + safe area. |
-| `RutaCard.vue` | Tarjeta de ruta con 3 variantes: `activa` (hero gradient verde + pulso animado), `pendiente` (borde izquierdo gradiente), `finalizada` (compacta con chip de check) |
-| `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino/peaje). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
+| `RutaCard.vue` | Tarjeta de ruta con 3 variantes: `activa` (hero gradient verde + pulso animado), `pendiente` (borde izquierdo gradiente, fecha y distancia), `finalizada` (compacta con chip de check y km recorridos) |
+| `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
 | `ModalDetalleMantencion.vue` | Bottom-sheet con el detalle completo de una mantención y las acciones disponibles por estado: **pendiente** → mini-confirm + botón azul "Iniciar mantención"; **en_proceso** → botón verde "Marcar como realizada" que abre `ModalCompletarMantencion`; **realizada** → solo lectura (precio, foto, quién la completó). |
 | `ModalCompletarMantencion.vue` | Bottom-sheet formulario para registrar la finalización de una mantención: costo final en CLP (con formato automático), fecha de realización, foto del recibo (captura de cámara con `capture="environment"`, opcional) y notas. Envía `multipart/FormData` al endpoint `/completar/`. |
 
@@ -759,16 +782,16 @@ def _modulos_desde_permisos(plan) -> list:
 2. **Polling automático:** cada 15 segundos `usePermisos` refresca los módulos. Si cambian, actualiza Preferences y los refs reactivos → todos los componentes se actualizan sin recargar.
 3. **Vuelta al primer plano:** `App.addListener('appStateChange', ...)` dispara un refresco inmediato al volver desde background.
 4. **Router guard:** antes de cada navegación lee `plan_modulos` desde Preferences. Si la ruta tiene `meta.modulo` y no está en el array, redirige silenciosamente al primer módulo disponible (rutas → solicitudes → mantenciones → ajustes).
-5. **Watch en cada vista protegida:** `ListaRutas`, `ListaSolicitudes`, `MiMantencion` y `HistorialMantenciones` contienen un `watch` que detecta si el módulo deja de estar activo **mientras el usuario está en la pantalla** y redirige automáticamente a `ajustes`.
+5. **Guard pasivo:** el router guard evalúa los módulos en cada cambio de ruta. Si el conductor está en pantalla cuando se le quita un módulo, el cambio se refleja sin redirección abrupta — la tab del BottomNav desaparece y el usuario puede navegar a otra sección libremente.
 6. **Logout:** `resetearPermisos()` limpia el singleton (interval + listener), luego `limpiarSesion()` borra Preferences.
 
 ##### Módulos de la app y lo que controlan
 
 | Módulo clave | Tab visible | Rutas protegidas | Redirect si removido |
 |---|---|---|---|
-| `rutas` | Rutas (BottomNav) | `/rutas`, `/rutas/:id`, `/rutas/:id/checklist` | → `ajustes` (vía watch) |
-| `solicitudes` | Solicitudes (BottomNav) | `/solicitudes` | → `ajustes` (vía watch) |
-| `mantenciones` | Mantención (BottomNav) | `/mantencion`, `/mantencion/historial` | → `ajustes` (vía watch) |
+| `rutas` | Rutas (BottomNav) | `/rutas`, `/rutas/:id`, `/rutas/:id/checklist` | Redirect al primer módulo disponible (guard de ruta) |
+| `solicitudes` | Solicitudes (BottomNav) | `/solicitudes` | Redirect al primer módulo disponible (guard de ruta) |
+| `mantenciones` | Mantención (BottomNav) | `/mantencion`, `/mantencion/historial` | Redirect al primer módulo disponible (guard de ruta) |
 | — | Ajustes (BottomNav) | `/ajustes` | Siempre visible |
 
 ##### Singleton `usePermisos`
@@ -835,9 +858,11 @@ La conexión se reconecta automáticamente si se cae (backoff 1 s → 2 s → 4 
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `GET` | `/api/conductor/rutas/` | Lista rutas del conductor autenticado (pendiente, activo, finalizado). Retorna `403` si el plan de la empresa no incluye el módulo `rutas`. |
-| `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, peajes, vehículo con `km_actuales` y `consumo_l_100km` |
-| `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo |
-| `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin`, costos reales, notas y actualiza `km_actuales` |
+| `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, vehículo con `km_actuales` |
+| `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo. Crea `EventoRuta` automático. |
+| `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin` y `notas`. Actualiza `km_actuales`. Crea `EventoRuta` automático. |
+| `GET` | `/api/conductor/rutas/:id/comentarios/` | Lista los `EventoRuta` de la ruta (historial) |
+| `POST` | `/api/conductor/rutas/:id/comentario/` | Agrega un comentario a la ruta. Body: `{ texto }` |
 | `GET` | `/api/conductor/solicitudes/` | Lista las solicitudes del conductor + campo `tipos_permitidos` (lista de tipos habilitados por el plan de la empresa) |
 | `POST` | `/api/conductor/solicitudes/` | Crea una solicitud. Acepta `multipart/form-data` si hay foto, JSON si no. Campos: `tipo`, `titulo`, `descripcion`, `prioridad`, `foto` (opcional). Retorna `403` con `codigo: "plan_sin_permiso"` si el tipo no está habilitado por el plan |
 | `GET` | `/api/conductor/mantenciones/` | Mantenciones `pendiente` y `en_proceso` del vehículo asignado. Incluye `dias_restantes`, `urgente` (bool), `vehiculo_en_mantencion`. Las `realizadas` ya no se muestran aquí. |
@@ -1153,14 +1178,13 @@ Authorization: Bearer <access_token>
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `GET/POST` | `/api/empresa/rutas/` | Listar / crear rutas |
+| `GET/POST` | `/api/empresa/rutas/` | Listar / crear rutas. GET incluye `resumen` con `finalizadas_mes`. |
 | `GET/PUT/DELETE` | `/api/empresa/rutas/<id>/` | Detalle, editar, eliminar |
-| `POST` | `/api/empresa/rutas/<id>/iniciar/` | Iniciar ruta (registra km_inicio, cambia a activo) |
-| `POST` | `/api/empresa/rutas/<id>/finalizar/` | Finalizar ruta (registra km_fin, crea gastos, actualiza vehículo) |
-| `POST` | `/api/empresa/rutas/<id>/cancelar/` | Cancelar ruta con motivo |
-| `POST` | `/api/empresa/rutas/calcular/` | Calcular trayecto (OSRM), detectar peajes y estimar costos |
-| `GET` | `/api/empresa/rutas/peajes/` | Listar peajes activos (filtrable por ruta/categoría) |
-| `GET/PUT` | `/api/empresa/rutas/configuracion/` | Configuración de precios y radio de detección |
+| `POST` | `/api/empresa/rutas/<id>/iniciar/` | Iniciar ruta (registra km_inicio, crea EventoRuta auto) |
+| `POST` | `/api/empresa/rutas/<id>/finalizar/` | Finalizar ruta (registra km_fin + notas, actualiza vehículo, crea EventoRuta auto) |
+| `POST` | `/api/empresa/rutas/<id>/cancelar/` | Cancelar ruta con motivo (crea EventoRuta auto) |
+| `POST` | `/api/empresa/rutas/calcular/` | Calcular trayecto OSRM — devuelve solo `distancia_km`, `duracion_min`, `polyline` |
+| `GET/POST` | `/api/empresa/rutas/<id>/comentarios/` | GET lista eventos de la ruta; POST crea comentario manual del admin |
 
 ### App conductores (endpoints exclusivos)
 
@@ -1169,9 +1193,11 @@ Authorization: Bearer <access_token>
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `GET` | `/api/conductor/rutas/` | Rutas asignadas al conductor (pendiente / activo / finalizado) |
-| `GET` | `/api/conductor/rutas/<id>/` | Detalle completo: paradas, peajes, vehículo |
-| `POST` | `/api/conductor/rutas/<id>/iniciar/` | Inicia la ruta — registra `km_inicio` y `fecha_inicio` |
-| `POST` | `/api/conductor/rutas/<id>/finalizar/` | Finaliza la ruta — registra `km_fin`, costos reales y notas |
+| `GET` | `/api/conductor/rutas/<id>/` | Detalle completo: paradas, vehículo |
+| `POST` | `/api/conductor/rutas/<id>/iniciar/` | Inicia la ruta — registra `km_inicio`, crea `EventoRuta` auto |
+| `POST` | `/api/conductor/rutas/<id>/finalizar/` | Finaliza la ruta — registra `km_fin` y `notas`, crea `EventoRuta` auto |
+| `GET` | `/api/conductor/rutas/<id>/comentarios/` | Historial de `EventoRuta` de la ruta |
+| `POST` | `/api/conductor/rutas/<id>/comentario/` | Agrega comentario manual. Body: `{ texto }` |
 | `GET` | `/api/conductor/solicitudes/` | Lista solicitudes del conductor, ordenadas por fecha desc |
 | `POST` | `/api/conductor/solicitudes/` | Crea solicitud — `multipart/form-data` si incluye foto, JSON si no |
 
@@ -1231,7 +1257,7 @@ Authorization: Bearer <access_token>
 PlanSuscripcion ──< Permiso (M2M)
       │
       └──< Empresa ──< CambioPlan
-                │       └──── ConfiguracionRuta (1:1)
+                │
                 │
                 ├──< Usuario ──< Permiso (M2M)
                 │       └──< Asignacion
@@ -1244,7 +1270,7 @@ PlanSuscripcion ──< Permiso (M2M)
                 │                 ├──< VehiculoPlan ──> PlanMantenimiento
                 │                 └──< Ruta (conductor, vehiculo)
                 │                           ├──< Parada
-                │                           └──< PeajeRuta ──> Peaje
+                │                           └──< EventoRuta
                 │
                 ├──< PlanMantenimiento ──< ReglaMantenimiento
                 ├──< GastoOperativo
@@ -1279,11 +1305,9 @@ Usuario (CONDUCTOR) ──< Documento (docs_c)
 | `AlertaMantencion` | Alerta generada por proximidad de vencimiento |
 | `Notificacion` | Notificación in-app por usuario |
 | `LogAuditoria` | Registro de eventos de seguridad y actividad — campos: tipo, accion, usuario (FK), detalle (JSON), ip, **user_agent**, fecha |
-| `Peaje` | Punto de cobro de peaje con coordenadas, tarifa y categoría vehicular |
-| `ConfiguracionRuta` | Precios de combustible y radio de detección de peajes por empresa (1:1) |
-| `Ruta` | Ruta planificada con conductor, vehículo, estado, costos estimados y reales |
+| `Ruta` | Ruta planificada con conductor, vehículo, estado, distancia, duración, polyline, km inicio/fin y notas |
 | `Parada` | Punto de parada de una ruta (origen, intermedia, destino) con coordenadas |
-| `PeajeRuta` | Peaje detectado en una ruta específica con la tarifa aplicada |
+| `EventoRuta` | Evento de historial de una ruta: tipo (`auto`/`comentario`), texto, autor opcional y timestamp |
 | `SolicitudConductor` | Solicitud creada por un conductor: tipo (`mantencion`, `combustible`, `incidencia`, `documento`), título, descripción, prioridad (`baja`, `media`, `alta`), estado (`pendiente`, `en_revision`, `aprobado`, `rechazado`), foto opcional (ImageField), respuesta del administrador |
 
 ---
@@ -1327,7 +1351,7 @@ Usuario (CONDUCTOR) ──< Documento (docs_c)
 | `PermisoToast.vue` | Aviso de permiso denegado |
 | `PlanUsageBanner.vue` | Banner de advertencia de límite de plan |
 | `LimitePlanModal.vue` | Modal bloqueante al alcanzar el límite del plan |
-| `MapaRuta.vue` | Mapa Leaflet reutilizable — renderiza polilínea, paradas y peajes |
+| `MapaRuta.vue` | Mapa Leaflet reutilizable — renderiza polilínea y marcadores de paradas (origen/parada/destino) |
 
 ---
 

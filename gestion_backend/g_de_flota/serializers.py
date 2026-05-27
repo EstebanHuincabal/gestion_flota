@@ -693,7 +693,7 @@ class VehiculoResumenSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Vehiculo
         fields = ['id', 'patente', 'marca', 'modelo', 'anio',
-                  'tipo_combustible', 'categoria_peaje', 'km_actuales', 'activo']
+                  'tipo_combustible', 'km_actuales', 'activo']
 
 
 class FlotaSerializer(serializers.ModelSerializer):
@@ -737,8 +737,8 @@ class VehiculoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Vehiculo
         fields = ['id', 'flota', 'flota_nombre', 'patente', 'marca', 'modelo',
-                  'anio', 'tipo_combustible', 'categoria_peaje', 'km_actuales',
-                  'consumo_l_100km', 'conductor_asignado', 'activo']
+                  'anio', 'tipo_combustible', 'km_actuales',
+                  'conductor_asignado', 'activo']
         read_only_fields = ['id']
 
     def get_flota_nombre(self, obj):
@@ -895,7 +895,7 @@ def _generar_descripcion(accion, detalle, nombre):
         'ruta_creada':            lambda: f'{u} creó la ruta "{d.get("nombre", "")}".',
         'ruta_eliminada':         lambda: f'{u} eliminó la ruta "{d.get("nombre", "")}".',
         'ruta_iniciada':          lambda: f'{u} inició la ruta #{d.get("ruta_id","")} (Km inicial: {d.get("km_inicio","")}).',
-        'ruta_finalizada':        lambda: f'{u} finalizó la ruta #{d.get("ruta_id","")} ({d.get("km_reales","")} km, costo: ${d.get("costo_total_real","")}).',
+        'ruta_finalizada':        lambda: f'{u} finalizó la ruta #{d.get("ruta_id","")} ({d.get("km_reales","")} km recorridos).',
         'ruta_cancelada':         lambda: f'{u} canceló la ruta #{d.get("ruta_id","")}. Motivo: {d.get("motivo","")}.',
         # Gastos
         'gasto_creado':           lambda: f'{u} registró un gasto de ${d.get("monto","")} en {d.get("categoria","")}.',

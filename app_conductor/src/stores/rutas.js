@@ -119,6 +119,15 @@ export const useRutasStore = defineStore('rutas', () => {
     }
   }
 
+  /** Agregar comentario a una ruta */
+  async function agregarComentario(rutaId, texto) {
+    const res = await apiFetch(`/api/conductor/rutas/${rutaId}/comentario/`, {
+      method: 'POST',
+      body:   JSON.stringify({ texto }),
+    })
+    return res
+  }
+
   return {
     rutas,
     cargando,
@@ -132,5 +141,6 @@ export const useRutasStore = defineStore('rutas', () => {
     cargarRutas,
     iniciarRuta,
     finalizarRuta,
+    agregarComentario,
   }
 })

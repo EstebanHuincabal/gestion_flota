@@ -558,7 +558,7 @@ def empresa_dashboard_view(request):
 
     # ── RUTAS ─────────────────────────────────────────────────────
     if p_rutas:
-        r_labels, r_fin, r_can, r_km, r_costo = [], [], [], [], []
+        r_labels, r_fin, r_can, r_km = [], [], [], []
         for i in range(5, -1, -1):
             dm = hoy.month - i
             mes_obj = hoy.replace(year=hoy.year - 1 if dm <= 0 else hoy.year,
@@ -570,11 +570,8 @@ def empresa_dashboard_view(request):
             r_can.append(base.filter(estado='cancelado').count())
             r_km.append(float(base.filter(estado='finalizado').aggregate(
                 t=Sum('distancia_km'))['t'] or 0))
-            r_costo.append(int(base.filter(estado='finalizado').aggregate(
-                t=Sum('costo_total_est'))['t'] or 0))
-        charts['rutas_6m']        = {'labels': r_labels, 'finalizadas': r_fin, 'canceladas': r_can}
-        charts['km_por_mes']      = {'labels': r_labels, 'data': r_km}
-        charts['costo_rutas_mes'] = {'labels': r_labels, 'data': r_costo}
+        charts['rutas_6m']   = {'labels': r_labels, 'finalizadas': r_fin, 'canceladas': r_can}
+        charts['km_por_mes'] = {'labels': r_labels, 'data': r_km}
 
     # ── CONDUCTORES ───────────────────────────────────────────────
     if p_conductores:

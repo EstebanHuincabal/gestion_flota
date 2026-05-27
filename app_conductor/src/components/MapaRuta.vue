@@ -4,7 +4,6 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 const props = defineProps({
   paradas:  { type: Array,  default: () => [] },
   polyline: { type: Array,  default: () => [] },
-  peajes:   { type: Array,  default: () => [] },
   altura:   { type: String, default: '220px'  },
 })
 
@@ -20,7 +19,6 @@ async function cargarLeaflet() {
 
   const CDN = `https://unpkg.com/leaflet@${LEAFLET_VER}/dist/`
 
-  // CSS (idempotente)
   if (!document.querySelector('[data-mapa-css]')) {
     const link     = document.createElement('link')
     link.rel       = 'stylesheet'
@@ -44,10 +42,9 @@ function crearIcono(tipo) {
     origen:  '#1D9E75',
     parada:  '#378ADD',
     destino: '#E24B4A',
-    peaje:   '#EF9F27',
   }
   const color = colores[tipo] || '#378ADD'
-  const sz    = tipo === 'peaje' ? 20 : 26
+  const sz    = 26
   const h     = Math.round(sz * 1.3)
 
   const html = `<svg width="${sz}" height="${h}" viewBox="0 0 24 32"
@@ -72,19 +69,17 @@ async function renderMapa() {
   mapaError.value = false
 
   const paradasConCoords = props.paradas.filter(p => p.latitud != null && p.longitud != null)
-  const peajesConCoords  = props.peajes.filter(p  => p.latitud != null && p.longitud != null)
 
-  if (!paradasConCoords.length && !peajesConCoords.length) return
+  if (!paradasConCoords.length) return
 
   const ok = await cargarLeaflet()
   if (!ok) { mapaError.value = true; return }
 
   const L = window.L
 
-  // Destruir instancia anterior
   if (mapa) { mapa.remove(); mapa = null }
 
-  const centro = paradasConCoords[0] || peajesConCoords[0]
+  const centro = paradasConCoords[0]
   mapa = L.map(contenedor.value, { zoomControl: false })
     .setView([centro.latitud, centro.longitud], 11)
 
@@ -100,14 +95,6 @@ async function renderMapa() {
       .addTo(mapa)
   })
 
-  // Marcadores peajes
-  peajesConCoords.forEach(p => {
-    const tarifa = p.tarifa ? `<br><span style="font-size:11px;color:#888">${Number(p.tarifa).toLocaleString('es-CL', { style:'currency', currency:'CLP', maximumFractionDigits:0 })}</span>` : ''
-    L.marker([p.latitud, p.longitud], { icon: crearIcono('peaje') })
-      .bindPopup(`<b style="font-size:12px">${p.nombre}</b>${tarifa}`)
-      .addTo(mapa)
-  })
-
   // Polilínea OSRM o línea punteada entre paradas
   if (props.polyline?.length > 1) {
     L.polyline(props.polyline, { color: '#378ADD', weight: 4, opacity: 0.8 }).addTo(mapa)
@@ -118,13 +105,12 @@ async function renderMapa() {
   }
 
   // Ajustar vista
-  const todos = [...paradasConCoords, ...peajesConCoords]
-  if (todos.length > 1) {
-    mapa.fitBounds(todos.map(p => [p.latitud, p.longitud]), { padding: [20, 20] })
+  if (paradasConCoords.length > 1) {
+    mapa.fitBounds(paradasConCoords.map(p => [p.latitud, p.longitud]), { padding: [20, 20] })
   }
 }
 
-watch(() => [props.paradas, props.polyline, props.peajes], renderMapa, { deep: true })
+watch(() => [props.paradas, props.polyline], renderMapa, { deep: true })
 onMounted(renderMapa)
 onUnmounted(() => { if (mapa) { mapa.remove(); mapa = null } })
 </script>
@@ -137,7 +123,7 @@ onUnmounted(() => { if (mapa) { mapa.remove(); mapa = null } })
     <div ref="contenedor" class="absolute inset-0" style="z-index:1"/>
 
     <!-- Sin coordenadas -->
-    <div v-if="!paradas.some(p => p.latitud) && !peajes.some(p => p.latitud)"
+    <div v-if="!paradas.some(p => p.latitud)"
          class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-gray-100">
       <svg class="w-10 h-10 text-gray-300 mb-1" fill="none" stroke="currentColor" stroke-width="1.3" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>

@@ -349,27 +349,14 @@ class Vehiculo(models.Model):
         ('hibrido',   'Híbrido'),
     ]
 
-    CATEGORIAS_PEAJE = [
-        ('moto',        'Moto / Motoneta'),
-        ('liviano',     'Auto / Camioneta / SUV'),
-        ('liviano_rem', 'Auto/Camioneta con remolque'),
-        ('pesado_2',    'Bus / Camión 2 ejes'),
-        ('pesado_3',    'Camión 3+ ejes'),
-    ]
-
     flota            = models.ForeignKey(Flota, on_delete=models.CASCADE, related_name="vehiculos")
     patente          = models.CharField(max_length=10, unique=True)
     marca            = models.CharField(max_length=100, blank=True, default='')
     modelo           = models.CharField(max_length=100, blank=True, default='')
     anio             = models.IntegerField(null=True, blank=True)
     tipo_combustible = models.CharField(max_length=20, choices=COMBUSTIBLE, default='bencina')
-    categoria_peaje  = models.CharField(
-        max_length=20, choices=CATEGORIAS_PEAJE, default='liviano',
-        help_text='Categoría de peaje del vehículo'
-    )
     km_actuales      = models.IntegerField(default=0)
     activo           = models.BooleanField(default=True)
-    consumo_l_100km  = models.DecimalField(max_digits=5, decimal_places=2, default=10.0)
     en_mantencion    = models.BooleanField(
         default=False,
         verbose_name='En mantención',
@@ -730,62 +717,6 @@ class Documento(models.Model):
 # Módulo de Rutas y Trabajos
 # ─────────────────────────────────────────
 
-class Peaje(models.Model):
-    CATEGORIAS = [
-        ('moto',        'Moto / Motoneta'),
-        ('liviano',     'Auto / Camioneta / SUV'),
-        ('liviano_rem', 'Auto/Camioneta con remolque'),
-        ('pesado_2',    'Bus / Camión 2 ejes'),
-        ('pesado_3',    'Camión 3+ ejes'),
-    ]
-
-    nombre        = models.CharField(max_length=200)
-    ruta          = models.CharField(max_length=100)
-    autopista     = models.CharField(max_length=200, blank=True, default='')
-    latitud       = models.FloatField()
-    longitud      = models.FloatField()
-    categoria     = models.CharField(max_length=20, choices=CATEGORIAS, default='liviano')
-    tarifa_normal = models.DecimalField(max_digits=8, decimal_places=0)
-    tarifa_punta  = models.DecimalField(max_digits=8, decimal_places=0, null=True, blank=True)
-    km_ruta       = models.DecimalField(
-        max_digits=7, decimal_places=2, null=True, blank=True,
-        help_text='Kilómetro en la ruta donde está el peaje'
-    )
-    radio_metros  = models.PositiveIntegerField(
-        default=800,
-        help_text='Radio de detección personalizado en metros'
-    )
-    activo        = models.BooleanField(default=True)
-    updated_at    = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together     = ('nombre', 'ruta', 'categoria')
-        verbose_name        = 'Peaje'
-        verbose_name_plural = 'Peajes'
-        ordering            = ['ruta', 'nombre', 'categoria']
-
-    def __str__(self):
-        return f"{self.nombre} ({self.ruta}) [{self.get_categoria_display()}]"
-
-
-class ConfiguracionRuta(models.Model):
-    empresa               = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name='config_ruta')
-    precio_bencina        = models.IntegerField(default=1380)
-    precio_diesel         = models.IntegerField(default=1250)
-    radio_deteccion_peaje = models.IntegerField(default=2000, help_text='Radio en metros')
-
-    class Meta:
-        verbose_name = 'Configuración de Ruta'
-
-    @classmethod
-    def get_for_empresa(cls, empresa):
-        obj, _ = cls.objects.get_or_create(empresa=empresa)
-        return obj
-
-    def __str__(self):
-        return f"Config rutas — {self.empresa.nombre}"
-
-
 class Ruta(models.Model):
     TIPOS = [
         ('carga',    'Carga'),
@@ -806,18 +737,13 @@ class Ruta(models.Model):
     conductor         = models.ForeignKey(Usuario,  on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas_conductor')
     vehiculo          = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas')
     fecha_programada  = models.DateField(null=True, blank=True)
+    hora_programada   = models.TimeField(null=True, blank=True, help_text='Hora de inicio programada')
     fecha_inicio      = models.DateTimeField(null=True, blank=True)
     fecha_fin         = models.DateTimeField(null=True, blank=True)
     km_inicio         = models.IntegerField(null=True, blank=True)
     km_fin            = models.IntegerField(null=True, blank=True)
     distancia_km      = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     duracion_min      = models.IntegerField(null=True, blank=True)
-    costo_combustible_est  = models.IntegerField(default=0)
-    costo_peajes_est       = models.IntegerField(default=0)
-    costo_total_est        = models.IntegerField(default=0)
-    costo_combustible_real = models.IntegerField(null=True, blank=True)
-    costo_peajes_real      = models.IntegerField(null=True, blank=True)
-    costo_total_real       = models.IntegerField(null=True, blank=True)
     polyline          = models.JSONField(default=list, blank=True)
     notas             = models.TextField(blank=True, default='')
     extra             = models.JSONField(default=dict, blank=True)
@@ -863,17 +789,26 @@ class Parada(models.Model):
         return f"{self.get_tipo_display()} — {self.nombre}"
 
 
-class PeajeRuta(models.Model):
-    ruta   = models.ForeignKey(Ruta,  on_delete=models.CASCADE, related_name='peajesruta')
-    peaje  = models.ForeignKey(Peaje, on_delete=models.CASCADE, related_name='rutaspeaje')
-    tarifa = models.DecimalField(max_digits=8, decimal_places=0)
+class EventoRuta(models.Model):
+    """Historial de eventos automáticos y comentarios manuales de una ruta."""
+    TIPO_CHOICES = [
+        ('auto',       'Automático'),
+        ('comentario', 'Comentario'),
+    ]
+    ruta       = models.ForeignKey(Ruta,    on_delete=models.CASCADE,  related_name='eventos')
+    tipo       = models.CharField(max_length=20, choices=TIPO_CHOICES, default='comentario')
+    texto      = models.TextField()
+    autor      = models.ForeignKey(
+        'Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='eventos_ruta'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together  = ('ruta', 'peaje')
-        verbose_name     = 'Peaje de Ruta'
+        ordering     = ['created_at']
+        verbose_name = 'Evento de Ruta'
 
     def __str__(self):
-        return f"{self.peaje.nombre} en {self.ruta.nombre}"
+        return f"[{self.tipo}] {self.ruta.nombre} — {self.texto[:50]}"
 
 
 # ─────────────────────────────────────────

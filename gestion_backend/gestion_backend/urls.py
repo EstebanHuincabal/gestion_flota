@@ -46,7 +46,7 @@ from g_de_flota.views_documentos import (
 from g_de_flota.views_rutas import (
     RutasListView, RutaDetailView,
     RutaIniciarView, RutaFinalizarView, RutaCancelarView,
-    RouteCalcularView, PeajesListView, RutaConfigView,
+    RouteCalcularView, RutaValidarView, RutaComentariosView,
 )
 from g_de_flota.views_conductor import (
     conductor_rutas, conductor_detalle_ruta,
@@ -58,6 +58,7 @@ from g_de_flota.views_conductor import (
     conductor_push_token,
     conductor_checklist,
     conductor_mi_plan,
+    conductor_eventos_ruta, conductor_agregar_comentario,
 )
 from g_de_flota.views_solicitudes import (
     SolicitudesListView, SolicitudesConteoView,
@@ -163,10 +164,12 @@ urlpatterns = [
     path('api/admin/reportes/empresas/',       reporte_admin_empresas, name='reporte-admin-empresas'),
 
     # App conductores — endpoints exclusivos para la app móvil
-    path('api/conductor/rutas/',                              conductor_rutas,           name='conductor-rutas'),
-    path('api/conductor/rutas/<int:ruta_id>/iniciar/',        conductor_iniciar_ruta,    name='conductor-iniciar-ruta'),
-    path('api/conductor/rutas/<int:ruta_id>/finalizar/',      conductor_finalizar_ruta,  name='conductor-finalizar-ruta'),
-    path('api/conductor/rutas/<int:ruta_id>/',                conductor_detalle_ruta,    name='conductor-detalle-ruta'),
+    path('api/conductor/rutas/',                                    conductor_rutas,              name='conductor-rutas'),
+    path('api/conductor/rutas/<int:ruta_id>/iniciar/',              conductor_iniciar_ruta,       name='conductor-iniciar-ruta'),
+    path('api/conductor/rutas/<int:ruta_id>/finalizar/',            conductor_finalizar_ruta,     name='conductor-finalizar-ruta'),
+    path('api/conductor/rutas/<int:ruta_id>/comentarios/',          conductor_eventos_ruta,       name='conductor-ruta-comentarios'),
+    path('api/conductor/rutas/<int:ruta_id>/comentario/',           conductor_agregar_comentario, name='conductor-ruta-agregar-comentario'),
+    path('api/conductor/rutas/<int:ruta_id>/',                      conductor_detalle_ruta,       name='conductor-detalle-ruta'),
     path('api/conductor/solicitudes/',                        conductor_solicitudes,     name='conductor-solicitudes'),
     path('api/conductor/mantenciones/',                               conductor_mantenciones,            name='conductor-mantenciones'),
     path('api/conductor/mantenciones/historial/',                     conductor_historial_mantenciones,  name='conductor-mantenciones-historial'),
@@ -185,12 +188,12 @@ urlpatterns = [
     path('api/empresa/solicitudes/<int:sol_id>/rechazar/',        SolicitudRechazarView.as_view(),  name='solicitudes-rechazar'),
 
     # Rutas y trabajos — rutas específicas ANTES de las rutas con :id
-    path('api/empresa/rutas/calcular/',                RouteCalcularView.as_view(),  name='rutas-calcular'),
-    path('api/empresa/rutas/peajes/',                  PeajesListView.as_view(),     name='rutas-peajes'),
-    path('api/empresa/rutas/configuracion/',           RutaConfigView.as_view(),     name='rutas-config'),
-    path('api/empresa/rutas/',                         RutasListView.as_view(),      name='rutas-lista'),
-    path('api/empresa/rutas/<int:ruta_id>/',           RutaDetailView.as_view(),     name='rutas-detalle'),
-    path('api/empresa/rutas/<int:ruta_id>/iniciar/',   RutaIniciarView.as_view(),    name='rutas-iniciar'),
-    path('api/empresa/rutas/<int:ruta_id>/finalizar/', RutaFinalizarView.as_view(),  name='rutas-finalizar'),
-    path('api/empresa/rutas/<int:ruta_id>/cancelar/',  RutaCancelarView.as_view(),   name='rutas-cancelar'),
+    path('api/empresa/rutas/calcular/',                          RouteCalcularView.as_view(),     name='rutas-calcular'),
+    path('api/empresa/rutas/validar/',                           RutaValidarView.as_view(),        name='rutas-validar'),
+    path('api/empresa/rutas/',                                   RutasListView.as_view(),         name='rutas-lista'),
+    path('api/empresa/rutas/<int:ruta_id>/',                     RutaDetailView.as_view(),        name='rutas-detalle'),
+    path('api/empresa/rutas/<int:ruta_id>/iniciar/',             RutaIniciarView.as_view(),       name='rutas-iniciar'),
+    path('api/empresa/rutas/<int:ruta_id>/finalizar/',           RutaFinalizarView.as_view(),     name='rutas-finalizar'),
+    path('api/empresa/rutas/<int:ruta_id>/cancelar/',            RutaCancelarView.as_view(),      name='rutas-cancelar'),
+    path('api/empresa/rutas/<int:ruta_id>/comentarios/',         RutaComentariosView.as_view(),   name='rutas-comentarios'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -5,30 +5,27 @@ import { useRutasStore } from '@/stores/rutas.js'
 import { apiFetch }      from '@/services/api.js'
 import BottomNav  from '@/components/BottomNav.vue'
 import MapaRuta   from '@/components/MapaRuta.vue'
-import { formatCLP, formatDuracion, formatFechaRuta } from '@/utils/formato.js'
+import { formatDuracion, formatFechaRuta } from '@/utils/formato.js'
 
 const vueRoute   = useRoute()
 const router     = useRouter()
 const rutasStore = useRutasStore()
 
-const rutaId  = computed(() => Number(vueRoute.params.id))
-const ruta    = ref(null)
+const rutaId   = computed(() => Number(vueRoute.params.id))
+const ruta     = ref(null)
 const cargando = ref(true)
 const errorMsg = ref('')
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
-const tab = ref('ruta') // 'ruta' | 'costos' | 'detalles'
+const tab = ref('ruta') // 'ruta' | 'detalles' | 'historial'
 
 // ── Modales ───────────────────────────────────────────────────────────────────
 const modalIniciar   = ref(false)
 const modalFinalizar = ref(false)
 const kmInicio       = ref('')
 const kmFin          = ref('')
-const combustibleReal = ref('')
-const peajesReal      = ref('')
-const notasModal      = ref('')
-const procesando      = ref(false)
-const errorModal      = ref('')
+const procesando     = ref(false)
+const errorModal     = ref('')
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 const toast = ref({ visible: false, mensaje: '', ok: true })
@@ -38,6 +35,53 @@ function mostrarToast(mensaje, ok = true) {
   clearTimeout(toastTimer)
   toast.value = { visible: true, mensaje, ok }
   toastTimer  = setTimeout(() => { toast.value.visible = false }, 3000)
+}
+
+// ── Historial / comentarios ───────────────────────────────────────────────────
+const eventos           = ref([])
+const cargandoEventos   = ref(false)
+const nuevoComentario   = ref('')
+const enviandoComentario = ref(false)
+
+async function cargarEventos() {
+  if (!rutaId.value) return
+  cargandoEventos.value = true
+  try {
+    const data = await apiFetch(`/api/conductor/rutas/${rutaId.value}/comentarios/`)
+    if (Array.isArray(data)) eventos.value = data
+  } catch {
+    // Fallo silencioso
+  } finally {
+    cargandoEventos.value = false
+  }
+}
+
+async function enviarComentario() {
+  if (!nuevoComentario.value.trim() || enviandoComentario.value) return
+  enviandoComentario.value = true
+  try {
+    const data = await rutasStore.agregarComentario(rutaId.value, nuevoComentario.value.trim())
+    if (data) {
+      eventos.value.push(data)
+      nuevoComentario.value = ''
+    }
+  } catch (e) {
+    mostrarToast('Error al enviar comentario', false)
+  } finally {
+    enviandoComentario.value = false
+  }
+}
+
+async function cambiarTab(t) {
+  tab.value = t
+  if (t === 'historial') await cargarEventos()
+}
+
+function formatTimestamp(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleDateString('es-CL', { day: '2-digit', month: 'short' }) +
+    ' ' + d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
 }
 
 // ── Drag handle del bottom sheet ─────────────────────────────────────────────
@@ -53,23 +97,28 @@ function onDragEnd(e) {
 
 // ── Acciones de modales ───────────────────────────────────────────────────────
 function abrirIniciar() {
-  errorModal.value = ''
-  kmInicio.value   = ruta.value?.vehiculo?.km_actuales?.toString() || ''
+  errorModal.value   = ''
+  kmInicio.value     = ruta.value?.vehiculo?.km_actuales?.toString() || ''
   modalIniciar.value = true
 }
 
 function abrirFinalizar() {
-  errorModal.value    = ''
-  kmFin.value         = ''
-  combustibleReal.value = ruta.value?.costo_combustible_est?.toString() || ''
-  peajesReal.value      = ruta.value?.costo_peajes_est?.toString()      || ''
-  notasModal.value      = ''
-  modalFinalizar.value  = true
+  errorModal.value     = ''
+  // Pre-completar con km estimado: km_inicio + distancia de ruta
+  const r = ruta.value
+  if (r?.km_inicio != null && r?.distancia_km != null) {
+    kmFin.value = String(Math.round(r.km_inicio + r.distancia_km))
+  } else if (r?.distancia_km != null) {
+    kmFin.value = String(Math.round(r.distancia_km))
+  } else {
+    kmFin.value = ''
+  }
+  modalFinalizar.value = true
 }
 
 async function confirmarIniciar() {
-  procesando.value  = true
-  errorModal.value  = ''
+  procesando.value = true
+  errorModal.value = ''
   try {
     await rutasStore.iniciarRuta(
       rutaId.value,
@@ -85,22 +134,18 @@ async function confirmarIniciar() {
 }
 
 async function confirmarFinalizar() {
-  // Validaciones
-  if (Number(combustibleReal.value) < 0 || Number(peajesReal.value) < 0) {
-    errorModal.value = 'Los costos no pueden ser negativos'
+  if (!kmFin.value && kmFin.value !== 0) {
+    errorModal.value = 'Ingresa el km final del vehículo.'
     return
   }
-
   procesando.value = true
   errorModal.value = ''
   try {
     await rutasStore.finalizarRuta(rutaId.value, {
-      costo_combustible_real: combustibleReal.value ? Number(combustibleReal.value) : undefined,
-      costo_peajes_real:      peajesReal.value      ? Number(peajesReal.value)      : undefined,
-      notas:                  notasModal.value       || undefined,
+      km_fin: Number(kmFin.value),
     })
     modalFinalizar.value = false
-    mostrarToast('Ruta finalizada. Se registraron los gastos.')
+    mostrarToast('Ruta finalizada correctamente.')
     setTimeout(() => router.push('/rutas'), 1600)
   } catch (e) {
     errorModal.value = e.message
@@ -111,15 +156,13 @@ async function confirmarFinalizar() {
 
 // ── Carga del detalle ─────────────────────────────────────────────────────────
 async function cargarDetalle() {
-  // Mostrar cache del store de inmediato si existe
   const cached = rutasStore.rutas.find(r => r.id === rutaId.value)
   if (cached && !ruta.value) ruta.value = cached
 
   try {
     const data = await apiFetch(`/api/conductor/rutas/${rutaId.value}/`)
     ruta.value = data
-    // Actualizar cache en el store
-    const idx = rutasStore.rutas.findIndex(r => r.id === rutaId.value)
+    const idx  = rutasStore.rutas.findIndex(r => r.id === rutaId.value)
     if (idx > -1) rutasStore.rutas[idx] = data
     else          rutasStore.rutas.push(data)
   } catch (e) {
@@ -143,86 +186,40 @@ onMounted(async () => {
   await cargarDetalle()
 })
 
-// ── Recorrido combinado (paradas + peajes intercalados) ───────────────────────
-function distPuntoSegmento(px, py, ax, ay, bx, by) {
-  const dx = bx - ax, dy = by - ay
-  if (!dx && !dy) return Math.hypot(px - ax, py - ay)
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
-}
-
-const recorridoCombinado = computed(() => {
-  if (!ruta.value) return []
-  const paradas = [...(ruta.value.paradas || [])].sort((a, b) => a.orden - b.orden)
-  const peajes  = (ruta.value.peajes_ruta || []).filter(p => p.latitud != null)
-
-  if (!peajes.length) return paradas.map(p => ({ ...p, _es: 'parada' }))
-
-  const result = []
-  for (let i = 0; i < paradas.length; i++) {
-    result.push({ ...paradas[i], _es: 'parada' })
-
-    if (i < paradas.length - 1 && paradas[i].latitud && paradas[i + 1].latitud) {
-      const enSegmento = peajes.filter(peaje => {
-        let minSeg = 0, minDist = Infinity
-        for (let s = 0; s < paradas.length - 1; s++) {
-          if (!paradas[s].latitud || !paradas[s + 1].latitud) continue
-          const d = distPuntoSegmento(
-            peaje.latitud, peaje.longitud,
-            paradas[s].latitud, paradas[s].longitud,
-            paradas[s + 1].latitud, paradas[s + 1].longitud,
-          )
-          if (d < minDist) { minDist = d; minSeg = s }
-        }
-        return minSeg === i
-      })
-      enSegmento.forEach(p => result.push({ ...p, _es: 'peaje' }))
-    }
-  }
-  return result
-})
-
-// ── Costos comparativos ───────────────────────────────────────────────────────
-const difCombustible = computed(() => {
-  if (ruta.value?.costo_combustible_real == null) return null
-  return ruta.value.costo_combustible_real - (ruta.value.costo_combustible_est || 0)
-})
-const difPeajes = computed(() => {
-  if (ruta.value?.costo_peajes_real == null) return null
-  return ruta.value.costo_peajes_real - (ruta.value.costo_peajes_est || 0)
-})
-const difTotal = computed(() => {
-  if (ruta.value?.costo_total_real == null) return null
-  return ruta.value.costo_total_real - (ruta.value.costo_total_est || 0)
-})
-
-function claseDif(dif) {
-  if (dif == null) return 'text-gray-300'
-  if (dif < 0)    return 'text-green-600'
-  if (dif > 0)    return 'text-red-500'
-  return 'text-gray-400'
-}
-function formatDif(dif) {
-  if (dif == null || dif === 0) return '—'
-  return (dif > 0 ? '+' : '-') + formatCLP(Math.abs(dif))
-}
-
-// ── Estimaciones de combustible ───────────────────────────────────────────────
-const litrosEst = computed(() => {
-  const km = ruta.value?.distancia_km
-  const c  = ruta.value?.vehiculo?.consumo_l_100km
-  if (!km || !c) return null
-  return ((km * c) / 100).toFixed(1)
-})
-const precioLitroEst = computed(() => {
-  if (!litrosEst.value || !ruta.value?.costo_combustible_est) return null
-  return Math.round(ruta.value.costo_combustible_est / parseFloat(litrosEst.value))
-})
-
 // ── Checklist pre-viaje ───────────────────────────────────────────────────────
 const checklistCompleto = computed(() =>
   ruta.value?.extra?.checklist_completo === true
 )
+
+// ── Bloqueo por hora programada ───────────────────────────────────────────────
+/**
+ * Si la ruta tiene hora_programada, calcula si todavía es demasiado temprano.
+ * Retorna null si ya se puede iniciar, o un objeto { hora, minRestantes } si no.
+ */
+const bloqueoHora = computed(() => {
+  const r = ruta.value
+  if (!r?.hora_programada || !r?.fecha_programada) return null
+
+  const [hh, mm]       = r.hora_programada.split(':').map(Number)
+  const dtProgramado   = new Date(`${r.fecha_programada}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`)
+  const limite         = new Date(dtProgramado.getTime() - 30 * 60 * 1000)
+  const ahora          = new Date()
+
+  if (ahora < limite) {
+    const diffMs  = dtProgramado - ahora
+    const diffMin = Math.ceil(diffMs / 60000)
+    const horas   = Math.floor(diffMin / 60)
+    const minutos = diffMin % 60
+    return {
+      hora:        r.hora_programada,
+      minRestantes: diffMin,
+      texto:       horas > 0
+        ? `Faltan ${horas}h ${minutos}min para las ${r.hora_programada}`
+        : `Faltan ${minutos} min para las ${r.hora_programada}`,
+    }
+  }
+  return null
+})
 
 // ── Helpers estáticos ─────────────────────────────────────────────────────────
 const ESTADO_LABEL = {
@@ -248,7 +245,7 @@ const COMBUSTIBLE = {
 <template>
   <div class="min-h-dvh bg-gray-50 flex flex-col">
 
-    <!-- ── Toast (safe-area-aware para notch / Dynamic Island) ───────────── -->
+    <!-- ── Toast ─────────────────────────────────────────────────────────── -->
     <Transition name="toast-slide">
       <div v-if="toast.visible"
            class="fixed left-4 right-4 z-[4000] rounded-2xl px-4 py-3 shadow-xl text-sm font-semibold flex items-center gap-2"
@@ -261,7 +258,7 @@ const COMBUSTIBLE = {
       </div>
     </Transition>
 
-    <!-- ── Skeleton carga inicial ─────────────────────────────────────────── -->
+    <!-- ── Skeleton carga inicial ──────────────────────────────────────────── -->
     <template v-if="cargando && !ruta">
       <div class="h-[68px] bg-white border-b border-gray-100 shrink-0"/>
       <div class="h-[220px] bg-gray-200 animate-pulse shrink-0"/>
@@ -272,7 +269,7 @@ const COMBUSTIBLE = {
       </div>
     </template>
 
-    <!-- ── Error ─────────────────────────────────────────────────────────── -->
+    <!-- ── Error ──────────────────────────────────────────────────────────── -->
     <template v-else-if="errorMsg && !ruta">
       <div class="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center text-gray-400">
         <svg class="w-14 h-14 text-gray-200" fill="none" stroke="currentColor" stroke-width="1.3" viewBox="0 0 24 24">
@@ -290,7 +287,7 @@ const COMBUSTIBLE = {
       </div>
     </template>
 
-    <!-- ── Vista principal ───────────────────────────────────────────────── -->
+    <!-- ── Vista principal ────────────────────────────────────────────────── -->
     <template v-else-if="ruta">
 
       <!-- Header fijo -->
@@ -312,17 +309,17 @@ const COMBUSTIBLE = {
         </span>
       </header>
 
-      <!-- Barra de tabs (fija debajo del header) -->
+      <!-- Barra de tabs -->
       <div class="fixed left-0 right-0 z-[1000] bg-white border-b border-gray-100 px-4 py-2 flex gap-2"
            style="top:calc(56px + max(0.75rem,env(safe-area-inset-top)))">
         <button
           v-for="t in [
-            { key:'ruta',     label:'Ruta'     },
-            { key:'costos',   label:'Costos'   },
-            { key:'detalles', label:'Detalles' },
+            { key:'ruta',      label:'Ruta'      },
+            { key:'detalles',  label:'Detalles'  },
+            { key:'historial', label:'Historial' },
           ]"
           :key="t.key"
-          @click="tab = t.key"
+          @click="cambiarTab(t.key)"
           :class="['px-4 py-1.5 rounded-full text-xs font-semibold transition-all min-h-[34px]',
                    tab === t.key
                      ? 'text-white'
@@ -333,8 +330,7 @@ const COMBUSTIBLE = {
         </button>
       </div>
 
-      <!-- Contenido scrollable (offset = header + tabs) -->
-      <!-- pb = nav(60px) + botón(54px) + padding(16px) + safe-area-bottom -->
+      <!-- Contenido scrollable -->
       <div
         class="flex-1 overflow-y-auto"
         style="
@@ -350,7 +346,6 @@ const COMBUSTIBLE = {
           <MapaRuta
             :paradas="ruta.paradas"
             :polyline="ruta.polyline"
-            :peajes="ruta.peajes_ruta || []"
             altura="220px"
           />
 
@@ -367,166 +362,46 @@ const COMBUSTIBLE = {
             <span v-if="ruta.fecha_programada"
                   class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1">
               📅 {{ formatFechaRuta(ruta.fecha_programada) }}
+              <span v-if="ruta.hora_programada" class="font-semibold text-indigo-600 ml-0.5">· {{ ruta.hora_programada }}</span>
             </span>
           </div>
 
-          <!-- Lista recorrido (paradas + peajes intercalados) -->
+          <!-- Lista paradas -->
           <div class="px-4 pb-4">
             <div class="bg-white rounded-2xl border border-gray-100 p-4">
               <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Recorrido</h3>
 
-              <div v-for="(item, i) in recorridoCombinado"
-                   :key="`${item._es}-${item.id}`"
+              <div v-for="(parada, i) in (ruta.paradas || []).slice().sort((a,b) => a.orden - b.orden)"
+                   :key="parada.id"
                    class="flex gap-3">
 
                 <!-- Conector vertical -->
                 <div class="flex flex-col items-center">
-                  <!-- Punto parada -->
-                  <span v-if="item._es === 'parada'"
-                        :class="['w-3 h-3 rounded-full shrink-0 mt-0.5',
-                                 PARADA_COLOR[item.tipo] || 'bg-gray-400']"/>
-                  <!-- Rombo peaje -->
-                  <span v-else
-                        class="w-3 h-3 shrink-0 mt-0.5 rotate-45 rounded-sm"
-                        style="background:#EF9F27"/>
-                  <!-- Línea punteada -->
-                  <div v-if="i < recorridoCombinado.length - 1"
+                  <span :class="['w-3 h-3 rounded-full shrink-0 mt-0.5',
+                                 PARADA_COLOR[parada.tipo] || 'bg-gray-400']"/>
+                  <div v-if="i < (ruta.paradas || []).length - 1"
                        class="w-px flex-1 my-1 min-h-[18px]"
                        style="border-left:2px dashed #E5E7EB"/>
                 </div>
 
-                <!-- Info del item -->
+                <!-- Info -->
                 <div class="pb-3 min-w-0 flex-1">
                   <div class="flex items-start justify-between gap-2">
-                    <p class="text-sm font-medium text-gray-800 leading-snug">{{ item.nombre }}</p>
-                    <!-- Badge tipo parada -->
-                    <span v-if="item._es === 'parada'"
-                          class="text-[10px] text-gray-400 shrink-0 capitalize">
-                      {{ item.tipo === 'origen'  ? 'Origen'
-                       : item.tipo === 'destino' ? 'Destino'
-                       : `Parada ${item.orden - 1}` }}
-                    </span>
-                    <!-- Badge peaje -->
-                    <span v-else class="text-[10px] font-semibold text-orange-500 shrink-0">
-                      Peaje
+                    <p class="text-sm font-medium text-gray-800 leading-snug">{{ parada.nombre }}</p>
+                    <span class="text-[10px] text-gray-400 shrink-0 capitalize">
+                      {{ parada.tipo === 'origen'  ? 'Origen'
+                       : parada.tipo === 'destino' ? 'Destino'
+                       : `Parada ${parada.orden}` }}
                     </span>
                   </div>
-
-                  <!-- Detalles parada -->
-                  <template v-if="item._es === 'parada'">
-                    <p v-if="item.direccion" class="text-xs text-gray-400 truncate">{{ item.direccion }}</p>
-                    <p v-if="item.tipo === 'origen' && ruta.fecha_programada"
-                       class="text-xs text-gray-400">
-                      Salida programada: {{ formatFechaRuta(ruta.fecha_programada) }}
-                    </p>
-                    <p v-if="item.notas" class="text-xs text-gray-400 italic">{{ item.notas }}</p>
-                  </template>
-
-                  <!-- Detalles peaje -->
-                  <p v-else class="text-xs text-gray-500">
-                    {{ item.ruta }} · {{ formatCLP(item.tarifa) }}
+                  <p v-if="parada.direccion" class="text-xs text-gray-400 truncate">{{ parada.direccion }}</p>
+                  <p v-if="parada.tipo === 'origen' && ruta.fecha_programada"
+                     class="text-xs text-gray-400">
+                    Salida programada: {{ formatFechaRuta(ruta.fecha_programada) }}
+                    <span v-if="ruta.hora_programada" class="font-semibold text-indigo-500 ml-0.5">{{ ruta.hora_programada }}</span>
                   </p>
+                  <p v-if="parada.notas" class="text-xs text-gray-400 italic">{{ parada.notas }}</p>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ═══ TAB: COSTOS ══════════════════════════════════════════════════ -->
-        <div v-show="tab === 'costos'" class="px-4 pt-4 flex flex-col gap-3">
-
-          <!-- Estimado vs. Real -->
-          <div class="bg-white rounded-2xl border border-gray-100 p-4">
-            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
-              {{ ruta.estado === 'finalizado' ? 'Estimado vs. Real' : 'Costos estimados' }}
-            </h3>
-
-            <!-- Cabecera (solo si finalizado) -->
-            <div v-if="ruta.estado === 'finalizado'"
-                 class="grid grid-cols-4 text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">
-              <span/>
-              <span class="text-right">Estimado</span>
-              <span class="text-right">Real</span>
-              <span class="text-right">Dif.</span>
-            </div>
-
-            <!-- Filas -->
-            <template v-for="row in [
-              { label:'Combustible', est:ruta.costo_combustible_est, real:ruta.costo_combustible_real, dif:difCombustible, bold:false },
-              { label:'Peajes',      est:ruta.costo_peajes_est,      real:ruta.costo_peajes_real,      dif:difPeajes,      bold:false },
-            ]" :key="row.label">
-              <div :class="['py-2 border-b border-gray-50',
-                            ruta.estado === 'finalizado' ? 'grid grid-cols-4 items-center' : 'flex justify-between']">
-                <span class="text-sm text-gray-500">{{ row.label }}</span>
-                <span class="text-sm font-medium text-gray-700 text-right">{{ formatCLP(row.est) }}</span>
-                <template v-if="ruta.estado === 'finalizado'">
-                  <span class="text-sm font-medium text-gray-700 text-right">{{ formatCLP(row.real) }}</span>
-                  <span :class="['text-xs font-bold text-right', claseDif(row.dif)]">{{ formatDif(row.dif) }}</span>
-                </template>
-              </div>
-            </template>
-
-            <!-- Total -->
-            <div :class="['pt-2 mt-1',
-                          ruta.estado === 'finalizado' ? 'grid grid-cols-4 items-center' : 'flex justify-between']">
-              <span class="text-sm font-bold text-gray-700">Total</span>
-              <span class="text-sm font-bold text-gray-800 text-right">{{ formatCLP(ruta.costo_total_est) }}</span>
-              <template v-if="ruta.estado === 'finalizado'">
-                <span class="text-sm font-bold text-gray-800 text-right">{{ formatCLP(ruta.costo_total_real) }}</span>
-                <span :class="['text-sm font-bold text-right', claseDif(difTotal)]">{{ formatDif(difTotal) }}</span>
-              </template>
-            </div>
-          </div>
-
-          <!-- Desglose de peajes -->
-          <div v-if="ruta.peajes_ruta?.length" class="bg-white rounded-2xl border border-gray-100 p-4">
-            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Peajes en ruta</h3>
-            <div v-for="peaje in ruta.peajes_ruta" :key="peaje.id"
-                 class="flex justify-between items-center py-2 border-b border-gray-50 last:border-0 text-sm">
-              <div>
-                <p class="font-medium text-gray-700">{{ peaje.nombre }}</p>
-                <p class="text-xs text-gray-400">{{ peaje.ruta }}</p>
-              </div>
-              <span class="font-semibold text-gray-700 shrink-0">{{ formatCLP(peaje.tarifa) }}</span>
-            </div>
-            <div class="flex justify-between text-sm font-bold border-t border-gray-100 pt-2 mt-1">
-              <span class="text-gray-600">Total peajes</span>
-              <span class="text-gray-800">
-                {{ formatCLP(ruta.peajes_ruta.reduce((s, p) => s + p.tarifa, 0)) }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Datos de combustible -->
-          <div v-if="ruta.distancia_km || ruta.vehiculo?.consumo_l_100km"
-               class="bg-white rounded-2xl border border-gray-100 p-4">
-            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Datos de combustible</h3>
-            <div class="flex flex-col gap-2">
-              <div v-if="ruta.distancia_km" class="flex justify-between text-sm">
-                <span class="text-gray-500">Distancia</span>
-                <span class="font-medium text-gray-700">{{ ruta.distancia_km }} km</span>
-              </div>
-              <div v-if="ruta.vehiculo?.consumo_l_100km" class="flex justify-between text-sm">
-                <span class="text-gray-500">Consumo est.</span>
-                <span class="font-medium text-gray-700">{{ ruta.vehiculo.consumo_l_100km }} L/100km</span>
-              </div>
-              <div v-if="litrosEst" class="flex justify-between text-sm">
-                <span class="text-gray-500">Litros est.</span>
-                <span class="font-medium text-gray-700">{{ litrosEst }} L</span>
-              </div>
-              <div v-if="precioLitroEst" class="flex justify-between text-sm">
-                <span class="text-gray-500">Precio/litro</span>
-                <span class="font-medium text-gray-700">
-                  {{ formatCLP(precioLitroEst) }}
-                  <span v-if="ruta.vehiculo?.tipo_combustible" class="text-gray-400 font-normal">
-                    ({{ COMBUSTIBLE[ruta.vehiculo.tipo_combustible] || ruta.vehiculo.tipo_combustible }})
-                  </span>
-                </span>
-              </div>
-              <div v-if="ruta.costo_combustible_est"
-                   class="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2">
-                <span class="text-gray-600">Total est.</span>
-                <span class="text-gray-800">{{ formatCLP(ruta.costo_combustible_est) }}</span>
               </div>
             </div>
           </div>
@@ -551,9 +426,7 @@ const COMBUSTIBLE = {
               <span class="text-sm text-gray-500 shrink-0">Vehículo</span>
               <div class="text-right">
                 <p class="text-sm font-semibold text-gray-700">{{ ruta.vehiculo.patente }}</p>
-                <p class="text-xs text-gray-400">
-                  {{ ruta.vehiculo.marca }} {{ ruta.vehiculo.modelo }}
-                </p>
+                <p class="text-xs text-gray-400">{{ ruta.vehiculo.marca }} {{ ruta.vehiculo.modelo }}</p>
                 <p class="text-xs text-gray-400">
                   {{ COMBUSTIBLE[ruta.vehiculo.tipo_combustible] || ruta.vehiculo.tipo_combustible }}
                 </p>
@@ -573,6 +446,10 @@ const COMBUSTIBLE = {
               <span class="text-sm text-gray-500">Fecha programada</span>
               <span class="text-sm font-medium text-gray-700">{{ formatFechaRuta(ruta.fecha_programada) }}</span>
             </div>
+            <div v-if="ruta.hora_programada" class="flex justify-between">
+              <span class="text-sm text-gray-500">Hora programada</span>
+              <span class="text-sm font-semibold text-indigo-600">🕐 {{ ruta.hora_programada }}</span>
+            </div>
             <div v-if="ruta.fecha_inicio" class="flex justify-between">
               <span class="text-sm text-gray-500">Inicio real</span>
               <span class="text-sm font-medium text-gray-700">{{ formatFechaRuta(ruta.fecha_inicio) }}</span>
@@ -587,15 +464,11 @@ const COMBUSTIBLE = {
               <div class="border-t border-gray-50"/>
               <div v-if="ruta.km_inicio" class="flex justify-between">
                 <span class="text-sm text-gray-500">KM inicio</span>
-                <span class="text-sm font-medium text-gray-700">
-                  {{ ruta.km_inicio.toLocaleString('es-CL') }}
-                </span>
+                <span class="text-sm font-medium text-gray-700">{{ ruta.km_inicio.toLocaleString('es-CL') }}</span>
               </div>
               <div v-if="ruta.km_fin" class="flex justify-between">
                 <span class="text-sm text-gray-500">KM fin</span>
-                <span class="text-sm font-medium text-gray-700">
-                  {{ ruta.km_fin.toLocaleString('es-CL') }}
-                </span>
+                <span class="text-sm font-medium text-gray-700">{{ ruta.km_fin.toLocaleString('es-CL') }}</span>
               </div>
               <div v-if="ruta.km_reales" class="flex justify-between font-semibold">
                 <span class="text-sm text-gray-600">KM recorridos</span>
@@ -604,17 +477,72 @@ const COMBUSTIBLE = {
             </template>
           </div>
 
-          <!-- Notas -->
-          <div v-if="ruta.notas" class="bg-white rounded-2xl border border-gray-100 p-4">
-            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Notas</h3>
-            <p class="text-sm text-gray-600 leading-relaxed">{{ ruta.notas }}</p>
+        </div>
+
+        <!-- ═══ TAB: HISTORIAL ═══════════════════════════════════════════════ -->
+        <div v-show="tab === 'historial'" class="px-4 pt-4 flex flex-col gap-3 pb-4">
+
+          <!-- Spinner -->
+          <div v-if="cargandoEventos" class="flex justify-center py-10">
+            <div class="w-7 h-7 border-4 border-[var(--color-acento)] border-t-transparent rounded-full animate-spin"/>
+          </div>
+
+          <!-- Lista -->
+          <div v-else class="bg-white rounded-2xl border border-gray-100 p-4">
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Historial</h3>
+
+            <div v-if="!eventos.length" class="text-center py-6 text-gray-400 text-sm">
+              No hay eventos aún.
+            </div>
+
+            <div v-for="e in eventos" :key="e.id" class="flex gap-3 mb-4 last:mb-0">
+              <!-- Icono -->
+              <div :class="['flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white',
+                e.tipo === 'auto' ? 'bg-indigo-500' : 'bg-green-500']">
+                <!-- auto: engranaje -->
+                <svg v-if="e.tipo === 'auto'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                <!-- comentario: burbuja -->
+                <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                </svg>
+              </div>
+              <!-- Contenido -->
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-gray-800">{{ e.texto }}</p>
+                <p class="text-xs text-gray-400 mt-0.5">
+                  {{ e.autor || 'Sistema' }} · {{ formatTimestamp(e.created_at) }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input nuevo comentario -->
+          <div class="bg-white rounded-2xl border border-gray-100 p-4">
+            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Agregar comentario</p>
+            <div class="flex gap-2">
+              <input v-model="nuevoComentario" type="text" placeholder="Escribe un comentario..."
+                class="flex-1 border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm bg-gray-50
+                       focus:border-[var(--color-acento)] focus:bg-white outline-none transition"
+                @keydown.enter="enviarComentario"/>
+              <button @click="enviarComentario"
+                :disabled="!nuevoComentario.trim() || enviandoComentario"
+                class="px-4 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 min-h-[44px]"
+                style="background:var(--color-acento)">
+                <span v-if="enviandoComentario" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block"/>
+                <span v-else>Enviar</span>
+              </button>
+            </div>
           </div>
         </div>
 
       </div><!-- fin scrollable -->
 
       <!-- ── Botón de acción fijo ──────────────────────────────────────────── -->
-      <!-- bottom = nav total (60px + safe-area-bottom) + 4px margen -->
       <div
         class="fixed left-0 right-0 px-4 pb-3 z-[500]"
         style="bottom: var(--nav-total, 60px)"
@@ -622,7 +550,6 @@ const COMBUSTIBLE = {
 
         <!-- [pendiente] → Checklist o Iniciar ruta -->
         <template v-if="ruta.estado === 'pendiente'">
-          <!-- Sin checklist: ir al checklist primero -->
           <button
             v-if="!checklistCompleto"
             @click="router.push(`/rutas/${rutaId}/checklist`)"
@@ -635,7 +562,20 @@ const COMBUSTIBLE = {
             </svg>
             Completar checklist antes de iniciar
           </button>
-          <!-- Con checklist: iniciar ruta normalmente -->
+          <!-- Bloqueado por anticipación de hora -->
+          <div
+            v-else-if="bloqueoHora"
+            class="w-full rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-3.5 flex flex-col items-center gap-1.5 min-h-[54px]"
+          >
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-amber-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <span class="text-sm font-bold text-amber-700">Ruta programada para las {{ bloqueoHora.hora }}</span>
+            </div>
+            <p class="text-xs text-amber-600 text-center">{{ bloqueoHora.texto }} — podrás iniciarla 30 min antes</p>
+          </div>
+          <!-- Listo para iniciar -->
           <button
             v-else
             @click="abrirIniciar"
@@ -690,8 +630,6 @@ const COMBUSTIBLE = {
           class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl"
           style="padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px))"
         >
-
-          <!-- Handle arrastrable -->
           <div class="flex justify-center pt-4 pb-2"
                @touchstart="onDragStart" @touchend="onDragEnd">
             <div class="w-10 h-1 bg-gray-200 rounded-full"/>
@@ -742,10 +680,9 @@ const COMBUSTIBLE = {
         <div class="absolute inset-0 bg-black/40" @click="modalFinalizar = false"/>
 
         <div
-          class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl scroll-hidden"
-          style="max-height: min(72vh, 72dvh); padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px))"
+          class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl"
+          style="max-height: min(65vh, 65dvh); padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px))"
         >
-
           <div class="flex justify-center pt-4 pb-2"
                @touchstart="onDragStart" @touchend="onDragEnd">
             <div class="w-10 h-1 bg-gray-200 rounded-full"/>
@@ -755,48 +692,18 @@ const COMBUSTIBLE = {
             <h3 class="text-lg font-bold text-gray-800 mb-0.5">Finalizar ruta</h3>
             <p class="text-sm text-gray-400 mb-5 truncate">{{ ruta?.nombre }}</p>
 
-            <!-- Costo combustible real -->
-            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Costo combustible real</label>
-            <div class="relative mb-3">
-              <span class="absolute left-4 top-1/2 -translate-y-1/2 text-sm text-gray-400">$</span>
-              <input
-                v-model="combustibleReal"
-                type="number" inputmode="numeric" min="0"
-                class="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl text-sm bg-gray-50
-                       focus:border-[var(--color-acento)] focus:bg-white outline-none transition"
-              />
-            </div>
-
-            <!-- Costo peajes real -->
-            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Costo peajes real</label>
-            <div class="relative mb-3">
-              <span class="absolute left-4 top-1/2 -translate-y-1/2 text-sm text-gray-400">$</span>
-              <input
-                v-model="peajesReal"
-                type="number" inputmode="numeric" min="0"
-                class="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl text-sm bg-gray-50
-                       focus:border-[var(--color-acento)] focus:bg-white outline-none transition"
-              />
-            </div>
-
-            <!-- Notas -->
+            <!-- Km final -->
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">
-              Notas <span class="text-gray-400 font-normal">(opcional)</span>
+              Odómetro final *
             </label>
-            <textarea
-              v-model="notasModal"
-              rows="2"
-              placeholder="Observaciones de la ruta…"
-              class="w-full px-4 py-3 border-2 border-gray-100 rounded-xl text-sm bg-gray-50
-                     focus:border-[var(--color-acento)] focus:bg-white outline-none transition resize-none mb-3"
-            />
-
-            <!-- Aviso gastos -->
-            <div class="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5 mb-4">
-              <span class="text-amber-500 mt-0.5">⚠</span>
-              <p class="text-xs text-amber-700 leading-relaxed">
-                Se crearán gastos operativos automáticamente al confirmar.
-              </p>
+            <div class="relative mb-4">
+              <input
+                v-model="kmFin"
+                type="number" inputmode="numeric" placeholder="Ej: 126000" min="0"
+                class="w-full px-4 py-3 pr-12 border-2 border-gray-100 rounded-xl text-sm bg-gray-50
+                       focus:border-[var(--color-acento)] focus:bg-white outline-none transition"
+              />
+              <span class="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-medium">km</span>
             </div>
 
             <p v-if="errorModal" class="text-sm text-red-500 mb-3">{{ errorModal }}</p>
@@ -806,7 +713,7 @@ const COMBUSTIBLE = {
                       class="flex-1 py-3 rounded-xl text-sm text-gray-500 bg-gray-100 font-semibold min-h-[48px]">
                 Cancelar
               </button>
-              <button @click="confirmarFinalizar" :disabled="procesando"
+              <button @click="confirmarFinalizar" :disabled="procesando || (!kmFin && kmFin !== 0)"
                       class="flex-[2] py-3 rounded-xl text-sm text-white font-bold disabled:opacity-60
                              min-h-[48px] flex items-center justify-center gap-2"
                       style="background:var(--color-acento)">
@@ -824,7 +731,6 @@ const COMBUSTIBLE = {
 </template>
 
 <style scoped>
-/* Bottom sheet */
 .sheet-enter-active,
 .sheet-leave-active { transition: opacity 0.28s ease; }
 .sheet-enter-from,
@@ -835,7 +741,6 @@ const COMBUSTIBLE = {
 .sheet-enter-from   .absolute:last-child,
 .sheet-leave-to     .absolute:last-child { transform: translateY(100%); }
 
-/* Toast */
 .toast-slide-enter-active,
 .toast-slide-leave-active { transition: all 0.25s ease; }
 .toast-slide-enter-from,

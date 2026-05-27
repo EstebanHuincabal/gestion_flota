@@ -8,7 +8,6 @@ import { onMounted, onUnmounted, watch } from 'vue'
 const props = defineProps({
   paradas:  { type: Array,  default: () => [] },
   polyline: { type: Array,  default: () => [] },
-  peajes:   { type: Array,  default: () => [] },
   mapId:    { type: String, default: 'mapa-ruta' },
 })
 
@@ -20,7 +19,6 @@ const COLORES = {
   origen:  '#1D9E75',
   parada:  '#378ADD',
   destino: '#E24B4A',
-  peaje:   '#EF9F27',
 }
 
 async function cargarLeaflet() {
@@ -51,19 +49,6 @@ function crearIcono(color) {
   })
 }
 
-function crearIconoPeaje() {
-  return window.L.divIcon({
-    className: '',
-    html: `<svg width="26" height="26" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="13" cy="13" r="13" fill="${COLORES.peaje}"/>
-      <text x="13" y="18" text-anchor="middle" font-size="14" font-weight="bold" fill="white" font-family="sans-serif">$</text>
-    </svg>`,
-    iconSize:    [26, 26],
-    iconAnchor:  [13, 13],
-    popupAnchor: [0, -14],
-  })
-}
-
 function renderMapa() {
   if (!window.L || !mapa) return
 
@@ -83,15 +68,6 @@ function renderMapa() {
     const color = COLORES[p.tipo] || COLORES.parada
     const m = window.L.marker([p.latitud, p.longitud], { icon: crearIcono(color) })
       .bindPopup(`<strong>${p.nombre || p.tipo}</strong>${p.direccion ? '<br><small>' + p.direccion + '</small>' : ''}`)
-      .addTo(mapa)
-    marcadores.push(m)
-    puntos.push([p.latitud, p.longitud])
-  })
-
-  props.peajes.forEach(p => {
-    if (!p.latitud || !p.longitud) return
-    const m = window.L.marker([p.latitud, p.longitud], { icon: crearIconoPeaje() })
-      .bindPopup(`<strong>${p.nombre}</strong><br>$${Number(p.tarifa).toLocaleString('es-CL')}`)
       .addTo(mapa)
     marcadores.push(m)
     puntos.push([p.latitud, p.longitud])
@@ -118,7 +94,7 @@ onMounted(async () => {
   renderMapa()
 })
 
-watch(() => [props.paradas, props.polyline, props.peajes], renderMapa, { deep: true })
+watch(() => [props.paradas, props.polyline], renderMapa, { deep: true })
 
 onUnmounted(() => {
   if (mapa) { mapa.remove(); mapa = null }

@@ -1,5 +1,5 @@
 <script setup>
-import { formatCLP, formatDuracion, formatFechaRuta } from '@/utils/formato.js'
+import { formatDuracion, formatFechaRuta } from '@/utils/formato.js'
 
 const props = defineProps({
   ruta:     { type: Object,  required: true },
@@ -34,26 +34,11 @@ const emit = defineEmits(['click'])
     <p class="text-white font-bold text-lg leading-tight mb-1">{{ ruta.nombre }}</p>
 
     <!-- Métricas -->
-    <p class="text-white/65 text-sm mb-4">
+    <p class="text-white/65 text-sm mb-5">
       <template v-if="ruta.distancia_km">{{ ruta.distancia_km }} km</template>
       <template v-if="ruta.distancia_km && ruta.duracion_min"> · </template>
       <template v-if="ruta.duracion_min">{{ formatDuracion(ruta.duracion_min) }}</template>
     </p>
-
-    <!-- Costos -->
-    <div v-if="ruta.costo_combustible_est || ruta.costo_peajes_est || ruta.costo_total_est"
-      class="flex gap-2 mb-5 flex-wrap"
-    >
-      <span v-if="ruta.costo_combustible_est" class="cost-chip">
-        ⛽ {{ formatCLP(ruta.costo_combustible_est) }}
-      </span>
-      <span v-if="ruta.costo_peajes_est" class="cost-chip">
-        🛣 {{ formatCLP(ruta.costo_peajes_est) }}
-      </span>
-      <span v-if="ruta.costo_total_est" class="cost-chip cost-chip--total">
-        Total {{ formatCLP(ruta.costo_total_est) }}
-      </span>
-    </div>
 
     <!-- CTA -->
     <button
@@ -94,9 +79,6 @@ const emit = defineEmits(['click'])
         📍 {{ ruta.origen }} → {{ ruta.destino }}
       </p>
 
-      <p v-if="ruta.costo_total_est" class="text-xs font-semibold text-gray-500 mt-1">
-        {{ formatCLP(ruta.costo_total_est) }} <span class="font-normal text-gray-400">estimado</span>
-      </p>
     </div>
 
     <svg class="w-4 h-4 text-gray-300 shrink-0 ml-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -121,7 +103,7 @@ const emit = defineEmits(['click'])
       <p class="text-xs text-gray-400">
         {{ formatFechaRuta(ruta.fecha_fin) }}
         <span v-if="ruta.distancia_km"> · {{ ruta.distancia_km }} km</span>
-        <span v-if="ruta.costo_total_real"> · {{ formatCLP(ruta.costo_total_real) }}</span>
+        <span v-if="ruta.km_reales"> · {{ ruta.km_reales }} km recorridos</span>
       </p>
     </div>
     <svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

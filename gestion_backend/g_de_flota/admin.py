@@ -9,8 +9,7 @@ from .models import (
     PlanMantenimiento, ReglaMantenimiento, VehiculoPlan,
     MantencionProgramada, AlertaMantencion,
     GastoOperativo, PresupuestoMensual, Documento,
-    Peaje, ConfiguracionRuta,
-    Ruta, Parada, PeajeRuta,
+    Ruta, Parada, EventoRuta,
     SolicitudConductor,
 )
 
@@ -191,22 +190,9 @@ class NotificacionAdmin(admin.ModelAdmin):
 # Rutas y Trabajos
 # ─────────────────────────────────────────
 
-@admin.register(Peaje)
-class PeajeAdmin(admin.ModelAdmin):
-    list_display  = ('nombre', 'ruta', 'categoria', 'tarifa_normal', 'tarifa_punta', 'radio_metros', 'activo')
-    list_filter   = ('categoria', 'activo', 'ruta')
-    search_fields = ('nombre', 'ruta', 'autopista')
-
-
-@admin.register(ConfiguracionRuta)
-class ConfiguracionRutaAdmin(admin.ModelAdmin):
-    list_display  = ('empresa', 'precio_bencina', 'precio_diesel', 'radio_deteccion_peaje')
-    search_fields = ('empresa__nombre',)
-
-
 @admin.register(Ruta)
 class RutaAdmin(admin.ModelAdmin):
-    list_display  = ('nombre', 'empresa', 'tipo', 'estado', 'conductor', 'vehiculo', 'fecha_programada', 'distancia_km', 'costo_total_est')
+    list_display  = ('nombre', 'empresa', 'tipo', 'estado', 'conductor', 'vehiculo', 'fecha_programada', 'distancia_km')
     list_filter   = ('tipo', 'estado', 'empresa')
     search_fields = ('nombre', 'conductor__email', 'vehiculo__patente')
     readonly_fields = ('created_at', 'updated_at')
@@ -219,11 +205,12 @@ class ParadaAdmin(admin.ModelAdmin):
     search_fields = ('nombre', 'ruta__nombre', 'direccion')
 
 
-@admin.register(PeajeRuta)
-class PeajeRutaAdmin(admin.ModelAdmin):
-    list_display  = ('ruta', 'peaje', 'tarifa')
-    list_filter   = ('peaje__categoria',)
-    search_fields = ('ruta__nombre', 'peaje__nombre')
+@admin.register(EventoRuta)
+class EventoRutaAdmin(admin.ModelAdmin):
+    list_display  = ('ruta', 'tipo', 'autor', 'texto', 'created_at')
+    list_filter   = ('tipo',)
+    search_fields = ('ruta__nombre', 'texto', 'autor__email')
+    readonly_fields = ('created_at',)
 
 
 # ─────────────────────────────────────────
