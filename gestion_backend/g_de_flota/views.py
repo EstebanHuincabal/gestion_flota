@@ -20,6 +20,7 @@ from .models import (
     Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
     Mantencion, Documento, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
     TipoNotificacion, CambioPlan, GastoOperativo, PresupuestoMensual, MantencionProgramada,
+    Suscripcion,
     Ruta,
 )
 from .views_planes import verificar_limite_plan, verificar_modulo_plan
@@ -770,6 +771,29 @@ def login_view(request):
 # Empresas
 # ─────────────────────────────────────────
 
+def _sincronizar_suscripcion(empresa, plan):
+    """
+    Crea o actualiza la suscripción al asignar un plan a una empresa.
+    - Sin suscripción  → crea en 'pendiente' (debe pagar para activarse).
+    - Ya pendiente     → actualiza el plan.
+    - Activa/gracia/suspendida → solo actualiza el plan; mantiene estado.
+    """
+    sus = Suscripcion.objects.filter(empresa=empresa).first()
+    if sus is None:
+        Suscripcion.objects.create(
+            empresa = empresa,
+            plan    = plan,
+            ciclo   = 'mensual',
+            estado  = 'pendiente',
+        )
+    elif sus.estado == 'pendiente':
+        sus.plan = plan
+        sus.save(update_fields=['plan'])
+    else:
+        sus.plan = plan
+        sus.save(update_fields=['plan'])
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def empresas_lista(request):
@@ -812,6 +836,7 @@ def empresas_crear(request):
                 )
                 empresa.plan = plan
                 empresa.save(update_fields=['plan'])
+                _sincronizar_suscripcion(empresa, plan)
             except PlanSuscripcion.DoesNotExist:
                 pass
 
@@ -882,13 +907,50 @@ def empresas_detalle(request, pk):
                     except PlanSuscripcion.DoesNotExist:
                         nuevo_plan = plan_anterior
 
-                if nuevo_plan != plan_anterior:
+                if nuevo_plan and nuevo_plan != plan_anterior:
                     CambioPlan.objects.create(
                         empresa=empresa, plan_antes=plan_anterior, plan_despues=nuevo_plan,
                         cambiado_por=request.user, motivo='Modificado desde formulario de empresa'
                     )
                     empresa.plan = nuevo_plan
                     empresa.save(update_fields=['plan'])
+                    _sincronizar_suscripcion(empresa, nuevo_plan)
+
+                    # Notificar según tipo de cambio
+                    if plan_anterior is None:
+                        _tit = '🎉 Plan asignado'
+                        _msg = (
+                            f'Se te asignó el plan {nuevo_plan.get_nombre_display()}. '
+                            f'Realiza el pago para activar tu acceso.'
+                        )
+                    else:
+                        p_ant = plan_anterior.precio_mensual or 0
+                        p_nvo = nuevo_plan.precio_mensual or 0
+                        if p_nvo > p_ant:
+                            _tit = '📈 Plan mejorado'
+                            _msg = (
+                                f'Tu plan fue actualizado a {nuevo_plan.get_nombre_display()} (plan superior). '
+                                f'Los nuevos límites y módulos están disponibles de inmediato. '
+                                f'El próximo cobro será al precio del nuevo plan.'
+                            )
+                        elif p_nvo < p_ant:
+                            _tit = '📉 Plan ajustado'
+                            _msg = (
+                                f'Tu plan fue ajustado a {nuevo_plan.get_nombre_display()} (plan inferior). '
+                                f'Los nuevos límites aplican de inmediato. '
+                                f'El próximo cobro será al precio del nuevo plan.'
+                            )
+                        else:
+                            _tit = 'Plan actualizado'
+                            _msg = f'Tu plan fue actualizado a {nuevo_plan.get_nombre_display()}.'
+                    notificar_admins_empresa(
+                        empresa, TipoNotificacion.ACTIVIDAD,
+                        _tit, _msg, url_accion='/empresa/dashboard',
+                    )
+
+                elif nuevo_plan and nuevo_plan == plan_anterior:
+                    # Plan sin cambio pero puede no tener suscripción aún
+                    _sincronizar_suscripcion(empresa, nuevo_plan)
 
             return Response(EmpresaSerializer(empresa).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

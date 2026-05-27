@@ -887,7 +887,8 @@ class ConfiguracionSistema(models.Model):
     terminos_version       = models.CharField(max_length=20, blank=True, default='1.0')
     terminos_updated_at    = models.DateTimeField(null=True, blank=True)
 
-    # Configuración de pagos y bloqueo
+    # Configuración de trial y pagos
+    dias_trial             = models.PositiveSmallIntegerField(default=14)
     dias_gracia_pago       = models.PositiveSmallIntegerField(default=7)
     bloqueo_automatico     = models.BooleanField(default=True)
     mensaje_pago_pendiente = models.TextField(
@@ -914,7 +915,7 @@ class ConfiguracionSistema(models.Model):
 
 class Suscripcion(models.Model):
     ESTADOS = [
-        ('trial',      'Trial'),
+        ('pendiente',  'Pendiente de pago'),
         ('activa',     'Activa'),
         ('gracia',     'Período de gracia'),
         ('suspendida', 'Suspendida'),
@@ -925,11 +926,10 @@ class Suscripcion(models.Model):
     empresa           = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name='suscripcion')
     plan              = models.ForeignKey(PlanSuscripcion, on_delete=models.PROTECT)
     ciclo             = models.CharField(max_length=10, choices=CICLOS, default='mensual')
-    estado            = models.CharField(max_length=20, choices=ESTADOS, default='trial')
+    estado            = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
     fecha_inicio      = models.DateTimeField(null=True, blank=True)
     fecha_fin_periodo = models.DateTimeField(null=True, blank=True)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
-    trial_hasta       = models.DateTimeField(null=True, blank=True)
     dias_gracia       = models.PositiveSmallIntegerField(default=7)
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
@@ -939,7 +939,8 @@ class Suscripcion(models.Model):
 
     @property
     def esta_bloqueada(self):
-        return self.estado in ('suspendida', 'cancelada')
+        # Pendiente = sin primer pago; suspendida/cancelada = acceso revocado
+        return self.estado in ('pendiente', 'suspendida', 'cancelada')
 
     @property
     def dias_para_vencer(self):

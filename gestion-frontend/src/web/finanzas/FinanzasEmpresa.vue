@@ -31,6 +31,7 @@ const tabs = computed(() => [
   { key: 'mantencion',  label: 'Mantención' },
   { key: 'multas',      label: 'Multas y peajes' },
   { key: 'vehiculo',    label: 'Por vehículo' },
+  { key: 'servicio',    label: 'Pago de servicio' },
   ...(puedePresupuesto ? [{ key: 'presupuesto', label: 'Presupuesto' }] : []),
 ])
 
@@ -53,11 +54,13 @@ function onVisibilityChange() {
 }
 
 // ── Estado ─────────────────────────────────────────────────
-const loading   = ref(false)
-const gastos    = ref([])
-const resumen   = ref(null)
-const vehiculos = ref([])
-const conductores = ref([])
+const loading        = ref(false)
+const gastos         = ref([])
+const resumen        = ref(null)
+const vehiculos      = ref([])
+const conductores    = ref([])
+const pagosServicio  = ref([])
+const totalServicio  = ref(0)
 
 // ── Modal gasto ────────────────────────────────────────────
 const modalOpen   = ref(false)
@@ -126,8 +129,10 @@ async function cargar() {
 
     if (gastosRes.ok) {
       const data = await gastosRes.json()
-      gastos.value  = data.gastos || []
-      resumen.value = data.resumen || null
+      gastos.value         = data.gastos || []
+      resumen.value        = data.resumen || null
+      pagosServicio.value  = data.pagos_servicio || []
+      totalServicio.value  = data.total_servicio || 0
       if (data.resumen?.presupuesto) {
         presupuestoId.value      = data.resumen.presupuesto.id
         presupuestoForm.value.monto = data.resumen.presupuesto.monto
@@ -589,6 +594,16 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
             <button v-else class="btn-definir" @click="tabActivo = 'presupuesto'">Definir →</button>
           </div>
         </div>
+
+        <div class="kpi-card kpi-servicio" @click="tabActivo = 'servicio'" style="cursor:pointer">
+          <div class="kpi-icon" style="background:#F0FDF4;color:#16A34A">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+          </div>
+          <div>
+            <div class="kpi-value" style="color:#16A34A">{{ clp(totalServicio) }}</div>
+            <div class="kpi-label">Pago de servicio</div>
+          </div>
+        </div>
       </div>
 
       <!-- Alerta presupuesto -->
@@ -845,6 +860,60 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
               </tbody>
             </table>
           </template>
+        </div>
+      </div>
+
+      <!-- ═══ TAB PAGO DE SERVICIO ═══ -->
+      <div v-else-if="tabActivo === 'servicio'" class="tab-content">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Pagos de servicio</h3>
+            <div class="card-meta">
+              <span class="total-cat">Total del período: {{ clp(totalServicio) }}</span>
+            </div>
+          </div>
+
+          <div v-if="!pagosServicio.length" class="card-body">
+            <p class="empty-msg">Sin pagos de servicio en este período.</p>
+          </div>
+
+          <table v-else class="tabla">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Plan</th>
+                <th>Ciclo</th>
+                <th>Método</th>
+                <th>N° Orden</th>
+                <th>Monto</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in pagosServicio" :key="p.id">
+                <td>{{ fechaDisplay(p.fecha) }}</td>
+                <td class="font-medium">{{ p.plan }}</td>
+                <td>
+                  <span class="badge-ciclo" :class="p.ciclo === 'anual' ? 'anual' : 'mensual'">
+                    {{ p.ciclo === 'anual' ? 'Anual' : 'Mensual' }}
+                  </span>
+                </td>
+                <td>
+                  <div class="metodo-cell">
+                    <span class="metodo-icon">{{ p.via === 'manual' ? '🏦' : '💳' }}</span>
+                    <span>{{ p.metodo }}</span>
+                  </div>
+                </td>
+                <td class="orden-cell">{{ p.orden || '—' }}</td>
+                <td class="font-medium servicio-monto">{{ clp(p.monto) }}</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="5" class="foot-label">Total</td>
+                <td class="font-medium">{{ clp(totalServicio) }}</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
 
@@ -1155,4 +1224,17 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
 
 /* Conductor */
 .text-muted { color: #9CA3AF; }
+
+/* Pago de servicio */
+.kpi-servicio:hover { border-color: #86EFAC; background: #F0FDF4; }
+.kpi-servicio { transition: border-color 0.15s, background 0.15s; }
+
+.badge-ciclo { padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+.badge-ciclo.mensual { background: #EEF2FF; color: #4338CA; }
+.badge-ciclo.anual   { background: #F0FDF4; color: #15803D; }
+
+.metodo-cell { display: flex; align-items: center; gap: 0.35rem; font-size: 0.875rem; }
+.metodo-icon { font-size: 1rem; line-height: 1; }
+.orden-cell  { font-size: 0.78rem; color: #9CA3AF; font-family: monospace; }
+.servicio-monto { color: #16A34A !important; }
 </style>

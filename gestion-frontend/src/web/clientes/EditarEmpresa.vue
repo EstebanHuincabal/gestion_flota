@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 
@@ -11,8 +11,17 @@ const cargando  = ref(true)
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
-const fechaRegistro = ref('')
-const planes    = ref([])
+const fechaRegistro  = ref('')
+const planes         = ref([])
+const planOriginalId = ref(null)
+const usageData      = ref({ flotas: 0, vehiculos: 0, conductores: 0, usuarios: 0 })
+
+function clp(val) {
+  if (val == null) return '—'
+  const abs = Math.abs(Math.round(val))
+  const fmt = '$' + abs.toLocaleString('es-CL')
+  return val > 0 ? '+' + fmt : val < 0 ? '-' + fmt : fmt
+}
 
 const REGIONES = [
   { value: 'arica_y_parinacota', label: 'Arica y Parinacota' },
@@ -78,6 +87,13 @@ const cargarEmpresa = async () => {
     form.value.region    = data.region    || ''
     form.value.pais      = data.pais      || 'Chile'
     form.value.plan_id   = data.plan_id   || null
+    planOriginalId.value = data.plan_id   || null
+    usageData.value = {
+      flotas:      data.cantidad_flotas      || 0,
+      vehiculos:   data.cantidad_vehiculos   || 0,
+      conductores: data.cantidad_conductores || 0,
+      usuarios:    data.cantidad_usuarios    || (data.usuarios?.length ?? 0),
+    }
     if (data.created_at) {
       fechaRegistro.value = new Date(data.created_at).toLocaleDateString('es-CL', {
         year: 'numeric', month: 'long', day: 'numeric'
@@ -113,6 +129,37 @@ const guardar = async () => {
     guardando.value = false
   }
 }
+
+// ── Comparación en tiempo real al cambiar el plan ───────────────────────────
+const planOriginalObj = computed(() => planes.value.find(p => p.id === planOriginalId.value) || null)
+const planNuevoObj    = computed(() => planes.value.find(p => p.id === form.value.plan_id)  || null)
+
+const comparacionPlan = computed(() => {
+  if (!planes.value.length) return null
+  if (form.value.plan_id === planOriginalId.value) return null   // sin cambio
+
+  if (!form.value.plan_id) {
+    return { tipo: 'quitar', advertencias: [], planAntes: planOriginalObj.value, planDespues: null }
+  }
+  if (!planOriginalId.value) {
+    return { tipo: 'nuevo', advertencias: [], planAntes: null, planDespues: planNuevoObj.value }
+  }
+  if (!planOriginalObj.value || !planNuevoObj.value) return null
+
+  const pAnt = planOriginalObj.value.precio_mensual || 0
+  const pNvo = planNuevoObj.value.precio_mensual    || 0
+  const tipo = pNvo > pAnt ? 'upgrade' : pNvo < pAnt ? 'downgrade' : 'lateral'
+
+  const advertencias = []
+  const uso = usageData.value
+  const np  = planNuevoObj.value
+  if (uso.flotas      > np.max_flotas)      advertencias.push(`Flotas: tienes ${uso.flotas} (nuevo límite: ${np.max_flotas})`)
+  if (uso.vehiculos   > np.max_vehiculos)    advertencias.push(`Vehículos: tienes ${uso.vehiculos} (nuevo límite: ${np.max_vehiculos})`)
+  if (uso.conductores > np.max_conductores)  advertencias.push(`Conductores: tienes ${uso.conductores} (nuevo límite: ${np.max_conductores})`)
+  if (uso.usuarios    > np.max_usuarios)     advertencias.push(`Usuarios: tienes ${uso.usuarios} (nuevo límite: ${np.max_usuarios})`)
+
+  return { tipo, advertencias, planAntes: planOriginalObj.value, planDespues: planNuevoObj.value }
+})
 
 onMounted(async () => {
   const [, planesRes] = await Promise.all([
@@ -199,6 +246,55 @@ onMounted(async () => {
               {{ p.nombre_display }} — {{ p.precio_display || 'A convenir' }}
             </option>
           </select>
+        </div>
+
+        <!-- ── Card comparación de plan ── -->
+        <div v-if="comparacionPlan" class="plan-cambio" :class="'plan-cambio--' + comparacionPlan.tipo">
+          <div class="pc-header">
+            <span class="pc-icono">
+              {{ comparacionPlan.tipo === 'upgrade'   ? '⬆️' :
+                 comparacionPlan.tipo === 'downgrade' ? '⬇️' :
+                 comparacionPlan.tipo === 'quitar'    ? '⚠️' : '✅' }}
+            </span>
+            <strong class="pc-titulo">
+              {{ comparacionPlan.tipo === 'upgrade'   ? 'Cambio a plan superior'   :
+                 comparacionPlan.tipo === 'downgrade' ? 'Cambio a plan inferior'   :
+                 comparacionPlan.tipo === 'lateral'   ? 'Cambio de plan'           :
+                 comparacionPlan.tipo === 'nuevo'     ? 'Asignando primer plan'    :
+                                                       'Quitando plan asignado'    }}
+            </strong>
+          </div>
+
+          <div class="pc-planes">
+            <span class="pc-chip pc-chip--antes">{{ comparacionPlan.planAntes?.nombre_display || 'Sin plan' }}</span>
+            <span class="pc-arrow">→</span>
+            <span class="pc-chip pc-chip--despues">{{ comparacionPlan.planDespues?.nombre_display || 'Sin plan' }}</span>
+            <span v-if="comparacionPlan.planAntes?.precio_mensual && comparacionPlan.planDespues?.precio_mensual"
+                  class="pc-diff"
+                  :class="comparacionPlan.tipo === 'upgrade' ? 'pc-diff--sube' : 'pc-diff--baja'">
+              {{ clp(comparacionPlan.planDespues.precio_mensual - comparacionPlan.planAntes.precio_mensual) }}/mes
+            </span>
+          </div>
+
+          <p class="pc-info">
+            {{ comparacionPlan.tipo === 'upgrade'
+                ? 'Nuevos límites y módulos disponibles de inmediato. El próximo cobro será al precio del nuevo plan.'
+                : comparacionPlan.tipo === 'downgrade'
+                ? 'Los límites se reducen de inmediato. El próximo cobro será al precio menor.'
+                : comparacionPlan.tipo === 'nuevo'
+                ? 'La empresa deberá pagar para activar el acceso al sistema.'
+                : comparacionPlan.tipo === 'quitar'
+                ? 'La empresa quedará sin plan y no podrá acceder al sistema.'
+                : 'El plan se actualizará de inmediato.' }}
+          </p>
+
+          <div v-if="comparacionPlan.advertencias.length" class="pc-advertencias">
+            <p class="pc-adv-titulo">⚠️ Uso actual supera el límite del nuevo plan:</p>
+            <ul class="pc-adv-lista">
+              <li v-for="adv in comparacionPlan.advertencias" :key="adv">{{ adv }}</li>
+            </ul>
+            <p class="pc-adv-nota">Los recursos existentes no se eliminarán, pero la empresa no podrá crear nuevos hasta reducir su uso.</p>
+          </div>
         </div>
 
         <!-- ── Contacto ── -->
@@ -398,4 +494,45 @@ onMounted(async () => {
   animation: spin 0.7s linear infinite; flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Card comparación de plan ── */
+.plan-cambio {
+  border-radius: 10px; padding: 0.875rem 1rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  border: 1.5px solid;
+}
+.plan-cambio--upgrade  { background: #F0FDF4; border-color: #86EFAC; }
+.plan-cambio--downgrade { background: #FFFBEB; border-color: #FDE68A; }
+.plan-cambio--lateral  { background: #EFF6FF; border-color: #BFDBFE; }
+.plan-cambio--nuevo    { background: #EFF6FF; border-color: #BFDBFE; }
+.plan-cambio--quitar   { background: #FEF2F2; border-color: #FECACA; }
+
+.pc-header { display: flex; align-items: center; gap: 0.5rem; }
+.pc-icono  { font-size: 1.05rem; line-height: 1; }
+.pc-titulo { font-size: 0.8125rem; font-weight: 700; color: #111827; }
+
+.pc-planes {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+}
+.pc-chip {
+  padding: 0.2rem 0.6rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 600;
+}
+.pc-chip--antes   { background: #E5E7EB; color: #374151; }
+.pc-chip--despues { background: #4F46E5; color: #fff; }
+.pc-arrow { color: #6B7280; font-size: 0.875rem; }
+.pc-diff  { font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 999px; }
+.pc-diff--sube { background: #D1FAE5; color: #065F46; }
+.pc-diff--baja { background: #FEF3C7; color: #92400E; }
+
+.pc-info { font-size: 0.8rem; color: #374151; margin: 0; line-height: 1.45; }
+
+.pc-advertencias {
+  background: rgba(0,0,0,0.04); border-radius: 8px;
+  padding: 0.625rem 0.75rem; display: flex; flex-direction: column; gap: 0.35rem;
+}
+.pc-adv-titulo { font-size: 0.775rem; font-weight: 700; color: #92400E; margin: 0; }
+.pc-adv-lista  { margin: 0; padding-left: 1.25rem; }
+.pc-adv-lista li { font-size: 0.775rem; color: #374151; line-height: 1.5; }
+.pc-adv-nota   { font-size: 0.725rem; color: #6B7280; margin: 0; font-style: italic; }
 </style>

@@ -548,6 +548,7 @@ El método `Documento.estado()` devuelve `vigente`, `por_vencer` (≤ 30 días) 
 **Para USUARIO (empresa):**
 - **Gastos operativos:** registro de gastos categorizados (combustible, mantención, multa, peaje, seguro, otro) con adjunto de comprobante.
 - **Presupuesto mensual:** definición de presupuesto por mes/año y comparativa gráfica con el gasto real.
+- **Pago de servicio:** tab dedicado con historial de pagos de la suscripción SaaS (Webpay Plus y transferencia manual), filtrados por mes/año. KPI card en el resumen con el total del período. Datos servidos desde `GastosListView` vía `pagos_servicio` / `total_servicio` en el response (modelo `PagoTransbank` estado `aprobado`).
 - **Exportación:** descarga de gastos filtrados en formato XLSX.
 
 **Vista:** `FinanzasEmpresa.vue`

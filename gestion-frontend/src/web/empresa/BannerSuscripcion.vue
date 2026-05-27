@@ -1,9 +1,10 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 
 const router = useRouter()
+const route  = useRoute()
 const suscripcion = ref(null)
 let intervalo = null
 
@@ -30,7 +31,9 @@ onUnmounted(() => {
 })
 
 function onBloqueada() {
-  router.push('/empresa/pago')
+  if (!enPaginaPago.value) {
+    router.push('/empresa/pago')
+  }
 }
 
 const mostrarBanner = computed(() => {
@@ -39,8 +42,18 @@ const mostrarBanner = computed(() => {
     (suscripcion.value.estado === 'activa' && suscripcion.value.dias_para_vencer !== null && suscripcion.value.dias_para_vencer <= 7)
 })
 
+// No mostrar el overlay si el usuario ya está en la página de pago
+const enPaginaPago = computed(() => route.path.startsWith('/empresa/pago'))
+
 const mostrarOverlay = computed(() =>
-  suscripcion.value?.estado === 'suspendida'
+  !enPaginaPago.value && (
+    suscripcion.value?.estado === 'suspendida' ||
+    suscripcion.value?.estado === 'pendiente'
+  )
+)
+
+const overlayEsPendiente = computed(() =>
+  suscripcion.value?.estado === 'pendiente'
 )
 
 const mensajeBanner = computed(() => {
@@ -67,14 +80,21 @@ const mensajeBanner = computed(() => {
     </button>
   </div>
 
-  <!-- Overlay bloqueante para suspendida -->
+  <!-- Overlay bloqueante para pendiente y suspendida -->
   <div v-if="mostrarOverlay" class="suspension-overlay">
     <div class="suspension-box">
-      <div class="suspension-icon">⚠</div>
-      <h2>Servicio suspendido</h2>
-      <p>Tu cuenta ha sido suspendida por falta de pago. Regulariza tu situación para continuar.</p>
-      <button class="suspension-btn" @click="router.push('/empresa/pago')">
-        Regularizar pago
+      <div class="suspension-icon">{{ overlayEsPendiente ? '💳' : '⚠' }}</div>
+      <h2>{{ overlayEsPendiente ? 'Pago pendiente' : 'Servicio suspendido' }}</h2>
+      <p>
+        <template v-if="overlayEsPendiente">
+          Tu empresa aún no ha realizado el primer pago del plan. Debes pagar para acceder al sistema.
+        </template>
+        <template v-else>
+          Tu cuenta ha sido suspendida por falta de pago. Regulariza tu situación para continuar.
+        </template>
+      </p>
+      <button class="suspension-btn" :class="{ pendiente: overlayEsPendiente }" @click="router.push('/empresa/pago')">
+        {{ overlayEsPendiente ? 'Realizar pago' : 'Regularizar pago' }}
       </button>
     </div>
   </div>
@@ -113,5 +133,7 @@ const mensajeBanner = computed(() => {
   border: none; border-radius: 10px; font-size: 0.9375rem; font-weight: 600;
   cursor: pointer; font-family: inherit; transition: background 0.15s;
 }
-.suspension-btn:hover { background: #B91C1C; }
+.suspension-btn:hover         { background: #B91C1C; }
+.suspension-btn.pendiente     { background: #4F46E5; }
+.suspension-btn.pendiente:hover { background: #4338CA; }
 </style>

@@ -1,11 +1,27 @@
 <script setup>
-import { onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
 import { useThemeStore } from '@/stores/theme.js'
+import { useAuthStore } from '@/stores/auth.js'
 
 const router     = useRouter()
 const themeStore = useThemeStore()
+const auth       = useAuthStore()
+
+// ── Bloqueo por suscripción ───────────────────────────────────
+const bloqueado      = ref(false)
+const mensajeBloqueo = ref('')
+
+function onBloqueada(e) {
+  mensajeBloqueo.value = e.detail?.mensaje || 'La suscripción de tu empresa no está activa. Contacta al administrador.'
+  bloqueado.value = true
+}
+
+async function cerrarSesionBloqueo() {
+  await auth.logout()
+  bloqueado.value = false
+}
 
 
 // ── Push Notifications (solo dispositivos nativos) ────────────────────────────
@@ -109,16 +125,97 @@ function mostrarToastPush(titulo, cuerpo, data = {}) {
 onMounted(async () => {
   await themeStore.cargarTema()   // ← carga y aplica el tema guardado del conductor
   await inicializarPush()
+  window.addEventListener('suscripcion-bloqueada', onBloqueada)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('suscripcion-bloqueada', onBloqueada)
 })
 </script>
 
 <template>
   <RouterView />
+
+  <!-- Overlay bloqueante: suscripción suspendida/pendiente -->
+  <Teleport to="body">
+    <div v-if="bloqueado" class="bloqueo-overlay">
+      <div class="bloqueo-box">
+        <div class="bloqueo-icono">⚠️</div>
+        <h2 class="bloqueo-titulo">Acceso restringido</h2>
+        <p class="bloqueo-msg">{{ mensajeBloqueo }}</p>
+        <button class="bloqueo-btn" @click="cerrarSesionBloqueo">
+          Cerrar sesión
+        </button>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style>
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-10px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Overlay de bloqueo por suscripción */
+.bloqueo-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+
+.bloqueo-box {
+  background: #ffffff;
+  border-radius: 1.25rem;
+  padding: 2rem 1.75rem;
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.bloqueo-icono {
+  font-size: 2.75rem;
+  margin-bottom: 1rem;
+  line-height: 1;
+}
+
+.bloqueo-titulo {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.75rem;
+}
+
+.bloqueo-msg {
+  font-size: 0.9rem;
+  color: #4B5563;
+  line-height: 1.55;
+  margin: 0 0 1.5rem;
+}
+
+.bloqueo-btn {
+  width: 100%;
+  padding: 0.75rem;
+  background: #DC2626;
+  color: #ffffff;
+  border: none;
+  border-radius: 0.75rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.bloqueo-btn:active {
+  background: #B91C1C;
 }
 </style>

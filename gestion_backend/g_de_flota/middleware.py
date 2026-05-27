@@ -14,6 +14,9 @@ _RUTAS_LIBRES = [
     '/api/pago/retorno/',                  # retorno Webpay Plus
     '/api/terminos/',                      # ver términos públicos
     '/api/empresa/tarjeta/retorno/',       # retorno OneClick (inscripción)
+    '/api/empresa/tarjeta/inscribir/',     # iniciar inscripción OneClick
+    '/api/empresa/tarjeta/',              # consultar tarjeta guardada (necesario en página de pago)
+    '/api/empresa/suscripcion/',          # consultar estado (necesario para mostrar overlay de bloqueo)
     '/admin/',
 ]
 
@@ -34,7 +37,10 @@ class BloqueoSuscripcionMiddleware:
         if not hasattr(request, 'user') or not request.user.is_authenticated:
             return self.get_response(request)
 
-        if getattr(request.user, 'rol', None) != 'USUARIO':
+        rol = getattr(request.user, 'rol', None)
+
+        # SUPERADMIN nunca es bloqueado
+        if rol not in ('USUARIO', 'CONDUCTOR'):
             return self.get_response(request)
 
         empresa = getattr(request.user, 'empresa', None)
@@ -44,20 +50,36 @@ class BloqueoSuscripcionMiddleware:
         try:
             sus = empresa.suscripcion
         except Exception:
-            return self.get_response(request)
+            # Sin suscripción asignada → bloqueado
+            return JsonResponse({
+                'error':  'Tu empresa no tiene un plan activo. Contacta al administrador.',
+                'codigo': 'SUSCRIPCION_BLOQUEADA',
+                'estado': 'sin_suscripcion',
+            }, status=402)
 
         if sus.esta_bloqueada:
             from .models import ConfiguracionSistema
             config = ConfiguracionSistema.get()
+
+            if sus.estado == 'pendiente':
+                if rol == 'CONDUCTOR':
+                    mensaje = 'Tu empresa aún no ha activado su plan. Contacta al administrador.'
+                else:
+                    mensaje = 'Tu empresa aún no tiene un pago registrado. Realiza el pago de tu plan para continuar.'
+            elif rol == 'CONDUCTOR':
+                mensaje = 'La suscripción de tu empresa está suspendida. Contacta al administrador.'
+            else:
+                mensaje = config.mensaje_pago_pendiente
+
             return JsonResponse({
-                'error':  config.mensaje_pago_pendiente,
+                'error':  mensaje,
                 'codigo': 'SUSCRIPCION_BLOQUEADA',
                 'estado': sus.estado,
             }, status=402)
 
-        # Advertencia en header si está en período de gracia
+        # Advertencia en header si está en período de gracia (solo USUARIO)
         response = self.get_response(request)
-        if sus.estado == 'gracia':
+        if rol == 'USUARIO' and sus.estado == 'gracia':
             dias = sus.dias_para_vencer
             response['X-Gracia-Dias'] = str(dias if dias is not None else 0)
 

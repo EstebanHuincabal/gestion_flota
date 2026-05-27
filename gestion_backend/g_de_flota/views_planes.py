@@ -213,6 +213,38 @@ def plan_asignar_empresa(request, pk):
 
     plan_anterior = empresa.plan
 
+    # ── Detectar tipo de cambio ───────────────────────────────────────────────
+    if plan_anterior is None:
+        tipo_cambio = 'nuevo'
+    elif plan_anterior.pk == plan.pk:
+        tipo_cambio = 'sin_cambio'
+    else:
+        p_ant = plan_anterior.precio_mensual or 0
+        p_nvo = plan.precio_mensual or 0
+        if p_nvo > p_ant:
+            tipo_cambio = 'upgrade'
+        elif p_nvo < p_ant:
+            tipo_cambio = 'downgrade'
+        else:
+            tipo_cambio = 'lateral'
+
+    # ── Verificar límites si es downgrade ────────────────────────────────────
+    advertencias = []
+    if tipo_cambio in ('downgrade', 'lateral') and plan_anterior:
+        uso_flotas      = Flota.objects.filter(empresa=empresa).count()
+        uso_vehiculos   = Vehiculo.objects.filter(flota__empresa=empresa, activo=True).count()
+        uso_conductores = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR, is_active=True).count()
+        uso_usuarios    = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO,    is_active=True).count()
+
+        if uso_flotas      > plan.max_flotas:
+            advertencias.append(f'Flotas: tiene {uso_flotas} (nuevo límite: {plan.max_flotas})')
+        if uso_vehiculos   > plan.max_vehiculos:
+            advertencias.append(f'Vehículos: tiene {uso_vehiculos} (nuevo límite: {plan.max_vehiculos})')
+        if uso_conductores > plan.max_conductores:
+            advertencias.append(f'Conductores: tiene {uso_conductores} (nuevo límite: {plan.max_conductores})')
+        if uso_usuarios    > plan.max_usuarios:
+            advertencias.append(f'Usuarios: tiene {uso_usuarios} (nuevo límite: {plan.max_usuarios})')
+
     CambioPlan.objects.create(
         empresa      = empresa,
         plan_antes   = plan_anterior,
@@ -224,25 +256,69 @@ def plan_asignar_empresa(request, pk):
     empresa.plan = plan
     empresa.save(update_fields=['plan'])
 
+    # Crear o actualizar la suscripción de la empresa
+    sus_existente = Suscripcion.objects.filter(empresa=empresa).first()
+
+    if sus_existente is None:
+        Suscripcion.objects.create(
+            empresa = empresa,
+            plan    = plan,
+            ciclo   = 'mensual',
+            estado  = 'pendiente',
+        )
+    else:
+        sus_existente.plan = plan
+        sus_existente.save(update_fields=['plan'])
+
     registrar_log('ACTIVIDAD', 'plan_asignado', request, detalle={
         'empresa':      empresa.nombre,
         'empresa_id':   empresa.id,
         'plan_antes':   plan_anterior.get_nombre_display() if plan_anterior else None,
         'plan_despues': plan.get_nombre_display(),
+        'tipo_cambio':  tipo_cambio,
         'motivo':       motivo,
+        'advertencias': advertencias,
     })
 
-    notificar_admins_empresa(
-        empresa,
-        TipoNotificacion.ACTIVIDAD,
-        "Plan de suscripción actualizado",
-        f"Tu plan ha sido actualizado a {plan.get_nombre_display()}. {motivo}".strip(),
-        url_accion='/empresa/dashboard',
-    )
+    # ── Notificación a la empresa con mensaje según tipo de cambio ────────────
+    if tipo_cambio == 'upgrade':
+        titulo_notif = '📈 Plan mejorado'
+        cuerpo_notif = (
+            f'Tu plan fue actualizado a {plan.get_nombre_display()} (plan superior). '
+            f'Los nuevos límites y módulos están disponibles de inmediato. '
+            f'El próximo cobro será al precio del nuevo plan. {motivo}'
+        ).strip()
+    elif tipo_cambio == 'downgrade':
+        titulo_notif = '📉 Plan ajustado'
+        cuerpo_notif = (
+            f'Tu plan fue ajustado a {plan.get_nombre_display()} (plan inferior). '
+            f'Los nuevos límites aplican de inmediato. '
+            f'El próximo cobro será al precio del nuevo plan. {motivo}'
+        ).strip()
+    elif tipo_cambio == 'nuevo':
+        titulo_notif = '🎉 Plan asignado'
+        cuerpo_notif = (
+            f'Se te asignó el plan {plan.get_nombre_display()}. '
+            f'Realiza el pago para activar tu acceso al sistema. {motivo}'
+        ).strip()
+    else:
+        titulo_notif = 'Plan de suscripción actualizado'
+        cuerpo_notif = f'Tu plan ha sido actualizado a {plan.get_nombre_display()}. {motivo}'.strip()
+
+    if tipo_cambio != 'sin_cambio':
+        notificar_admins_empresa(
+            empresa,
+            TipoNotificacion.ACTIVIDAD,
+            titulo_notif,
+            cuerpo_notif,
+            url_accion='/empresa/dashboard',
+        )
 
     return Response({
-        "message": f"Plan asignado correctamente a {empresa.nombre}.",
-        "plan": PlanSuscripcionSerializer(plan).data,
+        'message':      f"Plan asignado correctamente a {empresa.nombre}.",
+        'plan':         PlanSuscripcionSerializer(plan).data,
+        'tipo_cambio':  tipo_cambio,
+        'advertencias': advertencias,
     })
 
 
@@ -763,16 +839,19 @@ class PagoHistorialView(APIView):
 
         pagos = PagoTransbank.objects.filter(
             empresa=empresa, estado='aprobado',
-        ).select_related('suscripcion__plan')
+        ).select_related('empresa', 'suscripcion__plan')
 
         data = [{
-            'id':           p.id,
-            'orden_compra': p.orden_compra,
-            'monto':        p.monto,
-            'plan':         p.plan_nombre,
-            'ciclo':        p.ciclo,
-            'fecha':        p.fecha_pago.strftime('%d/%m/%Y %H:%M') if p.fecha_pago else None,
-            'estado':       p.estado,
+            'id':             p.id,
+            'orden_compra':   p.orden_compra,
+            'monto':          p.monto,
+            'plan':           p.plan_nombre,
+            'ciclo':          p.ciclo,
+            'fecha':          p.fecha_pago.strftime('%d/%m/%Y %H:%M') if p.fecha_pago else None,
+            'estado':         p.estado,
+            'empresa_nombre': p.empresa.nombre,
+            'empresa_rut':    getattr(p.empresa, 'rut', '') or '',
+            'via':            p.respuesta_tb.get('via', 'webpay') if p.respuesta_tb else 'webpay',
         } for p in pagos]
 
         return Response({'pagos': data})
@@ -937,6 +1016,7 @@ class SuscripcionesAdminView(APIView):
             })
 
         activas     = Suscripcion.objects.filter(estado='activa').count()
+        pendientes  = Suscripcion.objects.filter(estado='pendiente').count()
         en_gracia   = Suscripcion.objects.filter(estado='gracia').count()
         suspendidas = Suscripcion.objects.filter(estado='suspendida').count()
 
@@ -945,6 +1025,7 @@ class SuscripcionesAdminView(APIView):
             'kpis': {
                 'mrr':         mrr,
                 'activas':     activas,
+                'pendientes':  pendientes,
                 'en_gracia':   en_gracia,
                 'suspendidas': suspendidas,
             },
@@ -998,6 +1079,72 @@ class SuscripcionesAdminView(APIView):
                 'dias_extra': dias_extra,
             })
             return Response({'ok': True})
+
+        elif accion == 'pago_manual':
+            # Registra un pago manual (transferencia, efectivo, etc.) y activa la suscripción
+            ciclo  = request.data.get('ciclo', 'mensual')
+            monto  = int(request.data.get('monto', 0))
+            metodo = request.data.get('metodo', 'Transferencia bancaria')
+            nota   = request.data.get('nota', '').strip()
+
+            if not monto:
+                return Response({'error': 'El monto es requerido.'}, status=400)
+
+            ahora = timezone.now()
+            dias_periodo = 365 if ciclo == 'anual' else 30
+
+            # Si ya tiene fecha activa, extender desde ahí; si no, desde hoy
+            base = sus.fecha_fin_periodo if sus.fecha_fin_periodo and sus.fecha_fin_periodo > ahora else ahora
+
+            sus.estado           = 'activa'
+            sus.ciclo            = ciclo
+            sus.fecha_inicio     = ahora
+            sus.fecha_fin_periodo = base + timezone.timedelta(days=dias_periodo)
+            sus.empresa.estado   = 'activa'
+            sus.empresa.save(update_fields=['estado'])
+            sus.save()
+
+            import uuid
+            PagoTransbank.objects.create(
+                empresa      = sus.empresa,
+                suscripcion  = sus,
+                token        = f"MANUAL-{uuid.uuid4().hex[:12].upper()}",
+                orden_compra = f"MANUAL-{sus.empresa.id}-{uuid.uuid4().hex[:8].upper()}",
+                monto        = monto,
+                ciclo        = ciclo,
+                plan_nombre  = sus.plan.get_nombre_display() if sus.plan else '',
+                estado       = 'aprobado',
+                fecha_pago   = ahora,
+                respuesta_tb = {
+                    'via':    'manual',
+                    'metodo': metodo,
+                    'nota':   nota,
+                    'registrado_por': request.user.email,
+                },
+            )
+
+            notificar_admins_empresa(
+                empresa=sus.empresa,
+                tipo='actividad',
+                titulo='Pago registrado — suscripción activada',
+                mensaje=(
+                    f'El administrador registró un pago de ${monto:,} CLP '
+                    f'({metodo}). Tu suscripción está activa hasta el '
+                    f'{sus.fecha_fin_periodo.strftime("%d/%m/%Y")}.'
+                ),
+            )
+            registrar_log('ACTIVIDAD', 'pago_manual_registrado', request, detalle={
+                'empresa_id': sus.empresa.id,
+                'empresa':    sus.empresa.nombre,
+                'monto':      monto,
+                'ciclo':      ciclo,
+                'metodo':     metodo,
+            })
+            return Response({
+                'ok':        True,
+                'estado':    sus.estado,
+                'fecha_fin': sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
+            })
 
         return Response({'error': 'Acción no reconocida.'}, status=400)
 

@@ -31,6 +31,7 @@ class Command(BaseCommand):
         procesadas = 0
 
         for sus in suscripciones:
+
             if not sus.fecha_fin_periodo:
                 continue
 

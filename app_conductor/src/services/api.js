@@ -56,6 +56,18 @@ export async function apiFetch(url, options = {}) {
     throw new Error('SESION_EXPIRADA')
   }
 
+  // Suscripción bloqueada → emitir evento global para mostrar overlay en App.vue
+  if (res.status === 402) {
+    let errData = {}
+    try { errData = await res.json() } catch {}
+    if (errData.codigo === 'SUSCRIPCION_BLOQUEADA') {
+      window.dispatchEvent(new CustomEvent('suscripcion-bloqueada', {
+        detail: { mensaje: errData.error, estado: errData.estado },
+      }))
+    }
+    throw new Error(errData.error || 'Suscripción bloqueada')
+  }
+
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}))
     throw new Error(errData.error || errData.detail || 'Error del servidor')

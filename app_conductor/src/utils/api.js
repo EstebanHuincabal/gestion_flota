@@ -83,5 +83,17 @@ export async function apiFetch(url, options = {}) {
     }
   }
 
+  // Suscripción bloqueada → emitir evento global para mostrar pantalla de bloqueo
+  if (response.status === 402) {
+    try {
+      const data = await response.clone().json()
+      if (data.codigo === 'SUSCRIPCION_BLOQUEADA') {
+        window.dispatchEvent(new CustomEvent('suscripcion-bloqueada', {
+          detail: { mensaje: data.error, estado: data.estado },
+        }))
+      }
+    } catch {}
+  }
+
   return response
 }

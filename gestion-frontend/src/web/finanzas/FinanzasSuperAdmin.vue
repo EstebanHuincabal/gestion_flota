@@ -74,10 +74,11 @@ function crearChart() {
   if (!chartCanvas.value || !historico.value.length) return
   if (chartInstance) { chartInstance.destroy(); chartInstance = null }
 
-  const labels    = historico.value.map(h => `${labelMes(h.mes)} ${h.anio}`)
-  const mrrData   = historico.value.map(h => h.mrr)
+  const labels     = historico.value.map(h => `${labelMes(h.mes)} ${h.anio}`)
+  const mrrData    = historico.value.map(h => h.mrr)
+  const cobradoData = historico.value.map(h => h.cobrado || 0)
   const nuevasData = historico.value.map(h => h.nuevas)
-  const proyData  = calcularProyeccion(mrrData, 3)
+  const proyData   = calcularProyeccion(mrrData, 3)
   const MESES_ES  = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
   const ultimoH   = historico.value[historico.value.length - 1]
   const labelsExt = [...labels]
@@ -93,12 +94,27 @@ function crearChart() {
       labels: labelsExt,
       datasets: [
         {
-          label: 'MRR',
+          label: 'MRR teórico',
           data: mrrData,
           borderColor: '#4F46E5',
-          backgroundColor: 'rgba(79, 70, 229, 0.08)',
+          backgroundColor: 'rgba(79, 70, 229, 0.06)',
           borderWidth: 2.5,
           pointBackgroundColor: '#4F46E5',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          tension: 0.35,
+          fill: true,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Cobrado real',
+          data: cobradoData,
+          borderColor: '#059669',
+          backgroundColor: 'rgba(5,150,105,0.07)',
+          borderWidth: 2.5,
+          pointBackgroundColor: '#059669',
           pointBorderColor: '#fff',
           pointBorderWidth: 2,
           pointRadius: 5,
@@ -268,8 +284,8 @@ function pct(part, total) {
 
 const ESTADO_COLORES = {
   activa:     { bg: '#ECFDF5', text: '#059669' },
+  pendiente:  { bg: '#EFF6FF', text: '#2563EB' },
   suspendida: { bg: '#FEF2F2', text: '#DC2626' },
-  trial:      { bg: '#EFF6FF', text: '#2563EB' },
   gracia:     { bg: '#FFFBEB', text: '#D97706' },
   cancelada:  { bg: '#F3F4F6', text: '#6B7280' },
 }
@@ -353,6 +369,62 @@ function labelMes(mes) { return NOMBRE_MES[mes - 1] || '' }
           <div class="kpi-label">Empresas activas</div>
           <div class="kpi-value" style="color:#059669">{{ datos.empresas_activas }}</div>
           <div class="kpi-sub">Con plan asignado</div>
+        </div>
+      </div>
+
+      <!-- ── Cobrado este mes ── -->
+      <div class="card mb-4">
+        <div class="card-head">
+          <h3 class="card-title">Cobrado este mes</h3>
+          <span class="sub-count">{{ datos.cobrado_mes?.cantidad || 0 }} pago{{ datos.cobrado_mes?.cantidad !== 1 ? 's' : '' }}</span>
+        </div>
+        <div class="card-body">
+          <div class="cobrado-grid">
+            <div class="cobrado-item cobrado-total">
+              <div class="cobrado-label">Total cobrado</div>
+              <div class="cobrado-val">{{ clp(datos.cobrado_mes?.total) }}</div>
+            </div>
+            <div class="cobrado-item">
+              <div class="cobrado-label">Webpay Plus</div>
+              <div class="cobrado-val cobrado-azul">{{ clp(datos.cobrado_mes?.transbank) }}</div>
+            </div>
+            <div class="cobrado-item">
+              <div class="cobrado-label">Pago manual</div>
+              <div class="cobrado-val cobrado-verde">{{ clp(datos.cobrado_mes?.manual) }}</div>
+            </div>
+          </div>
+
+          <!-- Tabla pagos recientes -->
+          <div v-if="datos.pagos_recientes?.length" class="pagos-recientes">
+            <div class="pr-titulo">Últimos pagos del mes</div>
+            <table class="tabla">
+              <thead>
+                <tr>
+                  <th>Empresa</th>
+                  <th>Plan</th>
+                  <th>Monto</th>
+                  <th>Vía</th>
+                  <th>Método</th>
+                  <th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in datos.pagos_recientes" :key="p.orden">
+                  <td class="font-medium">{{ p.empresa }}</td>
+                  <td>{{ p.plan }}</td>
+                  <td class="font-medium">{{ clp(p.monto) }}</td>
+                  <td>
+                    <span class="badge" :style="p.via === 'manual' ? { background:'#F0FDF4', color:'#16A34A' } : { background:'#EEF2FF', color:'#4338CA' }">
+                      {{ p.via === 'manual' ? 'Manual' : 'Webpay' }}
+                    </span>
+                  </td>
+                  <td style="font-size:0.8rem;color:#6B7280">{{ p.metodo }}</td>
+                  <td style="font-size:0.8rem;color:#6B7280">{{ p.fecha }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty-msg">Sin pagos registrados este mes.</div>
         </div>
       </div>
 
@@ -556,6 +628,17 @@ function labelMes(mes) { return NOMBRE_MES[mes - 1] || '' }
 .mov-label { font-size: 0.8rem; font-weight: 600; }
 .mov-count { font-size: 1.1rem; font-weight: 800; }
 .mov-mrr { font-size: 0.75rem; opacity: 0.8; }
+
+/* Cobrado este mes */
+.cobrado-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
+.cobrado-item  { background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 10px; padding: 0.875rem 1rem; }
+.cobrado-total { background: #EEF2FF; border-color: #C7D2FE; }
+.cobrado-label { font-size: 0.75rem; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.3rem; }
+.cobrado-val   { font-size: 1.25rem; font-weight: 800; color: #111827; }
+.cobrado-azul  { color: #4338CA; }
+.cobrado-verde { color: #16A34A; }
+.pagos-recientes { margin-top: 0.25rem; }
+.pr-titulo { font-size: 0.8125rem; font-weight: 600; color: #374151; margin-bottom: 0.6rem; }
 
 /* Gráfico MRR */
 .chart-container { position: relative; height: 260px; }

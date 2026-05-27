@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 
 from .models import (
     Empresa, GastoOperativo, PresupuestoMensual, Vehiculo, Usuario, Rol,
-    Mantencion, PlanSuscripcion, CambioPlan,
+    Mantencion, PlanSuscripcion, CambioPlan, PagoTransbank, Suscripcion,
 )
 from .audit import registrar_log
 
@@ -268,8 +268,35 @@ class GastosListView(APIView):
 
         lista_gastos = [_gasto_dict(g) for g in qs] + mant_gastos
 
+        # ── Pagos de servicio (PagoTransbank aprobados) ────────────────
+        ptb_qs = PagoTransbank.objects.filter(
+            empresa=empresa, estado='aprobado',
+        ).order_by('-fecha_pago')
+        if mes and anio:
+            ptb_qs = ptb_qs.filter(fecha_pago__month=int(mes), fecha_pago__year=int(anio))
+        elif anio:
+            ptb_qs = ptb_qs.filter(fecha_pago__year=int(anio))
+
+        total_servicio = int(ptb_qs.aggregate(t=Sum('monto'))['t'] or 0)
+        pagos_servicio = []
+        for p in ptb_qs:
+            resp = p.respuesta_tb if isinstance(p.respuesta_tb, dict) else {}
+            via  = resp.get('via', 'webpay')
+            pagos_servicio.append({
+                'id':     p.id,
+                'monto':  p.monto,
+                'fecha':  p.fecha_pago.date().isoformat() if p.fecha_pago else '',
+                'plan':   p.plan_nombre or '—',
+                'ciclo':  p.ciclo,
+                'via':    via,
+                'metodo': resp.get('metodo', '') or ('Webpay Plus' if via != 'manual' else 'Manual'),
+                'orden':  p.orden_compra or '',
+            })
+
         return Response({
-            'gastos': lista_gastos,
+            'gastos':          lista_gastos,
+            'pagos_servicio':  pagos_servicio,
+            'total_servicio':  total_servicio,
             'resumen': {
                 'total':                 total,
                 'por_categoria':         por_cat,
@@ -685,12 +712,50 @@ class FinanzasSaasView(APIView):
 
         empresas_suscritas = []
         for e in empresas_con_plan.order_by('-id'):
+            try:
+                estado_sus = e.suscripcion.estado
+            except Exception:
+                estado_sus = e.estado
             empresas_suscritas.append({
                 'empresa_id':         e.id,
                 'nombre':             e.nombre,
                 'plan':               e.plan.nombre,
                 'mrr':                int(_precio_plan(e.plan)),
-                'estado_suscripcion': e.estado,
+                'estado_suscripcion': estado_sus,
+            })
+
+        # ── Ingresos reales cobrados (PagoTransbank aprobados) ─────────────
+        pagos_mes_qs = PagoTransbank.objects.filter(
+            estado='aprobado',
+            fecha_pago__date__gte=inicio_mes,
+        ).select_related('empresa', 'suscripcion')
+
+        cobrado_total     = pagos_mes_qs.aggregate(t=Sum('monto'))['t'] or 0
+        cobrado_transbank = pagos_mes_qs.exclude(
+            respuesta_tb__via='manual'
+        ).aggregate(t=Sum('monto'))['t'] or 0
+        cobrado_manual    = pagos_mes_qs.filter(
+            respuesta_tb__via='manual'
+        ).aggregate(t=Sum('monto'))['t'] or 0
+
+        pagos_fallidos_mes = PagoTransbank.objects.filter(
+            estado__in=['rechazado', 'fallido'],
+            fecha_pago__date__gte=inicio_mes,
+        ).count()
+
+        # Últimos 10 pagos aprobados del mes para la tabla
+        pagos_recientes = []
+        for p in pagos_mes_qs.order_by('-fecha_pago')[:10]:
+            via = (p.respuesta_tb or {}).get('via', 'transbank')
+            pagos_recientes.append({
+                'empresa':    p.empresa.nombre if p.empresa else '—',
+                'plan':       p.plan_nombre or '—',
+                'monto':      p.monto,
+                'ciclo':      p.ciclo,
+                'via':        via,
+                'metodo':     (p.respuesta_tb or {}).get('metodo', 'Webpay') if via == 'manual' else 'Webpay Plus',
+                'fecha':      p.fecha_pago.strftime('%d/%m/%Y') if p.fecha_pago else '—',
+                'orden':      p.orden_compra,
             })
 
         return Response({
@@ -699,15 +764,22 @@ class FinanzasSaasView(APIView):
             'churn_rate':        churn_rate,
             'ltv_promedio':      ltv,
             'empresas_activas':  empresas_activas,
-            'empresas_trial':    0,
+            'empresas_pendientes': Suscripcion.objects.filter(estado='pendiente').count(),
             'ingresos_por_plan': ingresos_por_plan,
+            'cobrado_mes': {
+                'total':      cobrado_total,
+                'transbank':  cobrado_transbank,
+                'manual':     cobrado_manual,
+                'cantidad':   pagos_mes_qs.count(),
+            },
             'movimientos_mes': {
                 'nuevas_suscripciones': {'cantidad': nuevas.count(),     'mrr_ganado': mrr_ganado},
                 'upgrades':             {'cantidad': upgrades.count(),    'mrr_expansion': mrr_expansion},
                 'cancelaciones':        {'cantidad': canceladas.count(),  'mrr_perdido': mrr_perdido},
-                'pagos_fallidos':       {'cantidad': 0},
+                'pagos_fallidos':       {'cantidad': pagos_fallidos_mes},
             },
             'empresas_suscritas': empresas_suscritas,
+            'pagos_recientes':    pagos_recientes,
         })
 
 
@@ -748,15 +820,23 @@ class FinanzasHistoricoView(APIView):
             except ValueError:
                 continue
 
-            cambios   = CambioPlan.objects.filter(fecha__date__gte=inicio, fecha__date__lt=fin)
-            nuevas    = cambios.filter(plan_antes__isnull=True).count()
+            cambios    = CambioPlan.objects.filter(fecha__date__gte=inicio, fecha__date__lt=fin)
+            nuevas     = cambios.filter(plan_antes__isnull=True).count()
             canceladas = cambios.filter(plan_despues__isnull=True).count()
 
+            # Ingresos reales cobrados en ese mes
+            cobrado = PagoTransbank.objects.filter(
+                estado='aprobado',
+                fecha_pago__date__gte=inicio,
+                fecha_pago__date__lt=fin,
+            ).aggregate(t=Sum('monto'))['t'] or 0
+
             resultado.append({
-                'mes':          mes_num,
-                'anio':         anio_num,
-                'mrr':          int(mrr_actual),
-                'nuevas':       nuevas,
+                'mes':           mes_num,
+                'anio':          anio_num,
+                'mrr':           int(mrr_actual),   # MRR teórico actual
+                'cobrado':       cobrado,            # Ingresos reales cobrados ese mes
+                'nuevas':        nuevas,
                 'cancelaciones': canceladas,
             })
 

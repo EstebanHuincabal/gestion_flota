@@ -28,7 +28,7 @@ async function cargar() {
     terminos.value      = data.terminos || ''
     version.value       = data.version || '1.0'
     updatedAt.value     = data.updated_at ? new Date(data.updated_at).toLocaleString('es-CL') : ''
-    diasGracia.value    = data.dias_gracia ?? 7
+    diasGracia.value    = data.dias_gracia  ?? 7
     bloqueoAuto.value   = data.bloqueo_auto ?? true
     mensajeBloqueo.value = data.mensaje_bloqueo || ''
     ambienteTB.value    = data.ambiente_tb || 'TEST'
@@ -103,6 +103,7 @@ const tarjetasPrueba = [
       <div class="campo">
         <label class="campo-label">Días de gracia antes del bloqueo</label>
         <input v-model.number="diasGracia" type="number" min="1" max="60" class="campo-input campo-sm" />
+        <p class="campo-hint">Días adicionales después del vencimiento antes de suspender el acceso.</p>
       </div>
 
       <div class="campo">
