@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
@@ -208,12 +208,45 @@ const formatIntervalo = (dias) => {
 }
 
 // ── Asignaciones ──────────────────────────────────────────────
-const asignaciones       = ref([])
-const cargandoAsig       = ref(false)
-const vehiculos          = ref([])
-const asigVehiculoId     = ref('')
-const asigPlanId         = ref('')
-const guardandoAsig      = ref(false)
+const asignaciones    = ref([])
+const cargandoAsig    = ref(false)
+const vehiculos       = ref([])
+const guardandoAsig   = ref(false)
+
+// Nuevo flujo: seleccionar plan → checkboxes de vehículos
+const asigPlanId      = ref('')
+const asigSeleccion   = ref(new Set()) // vehiculo IDs marcados
+
+// Vehículos ya asignados al plan seleccionado (para saber qué borrar)
+// El serializer devuelve 'plan' y 'vehiculo' como IDs directos (FK)
+const asigPrevios = computed(() => {
+  if (!asigPlanId.value) return {}
+  const map = {}
+  asignaciones.value
+    .filter(a => String(a.plan) === String(asigPlanId.value))
+    .forEach(a => { map[a.vehiculo] = a.id })
+  return map
+})
+
+// Cuando cambia el plan, pre-marcar vehículos que ya lo tienen
+const onCambiarPlan = () => {
+  asigSeleccion.value = new Set(
+    Object.keys(asigPrevios.value).map(Number)
+  )
+}
+
+const toggleVehiculo = (id) => {
+  const s = new Set(asigSeleccion.value)
+  s.has(id) ? s.delete(id) : s.add(id)
+  asigSeleccion.value = s
+}
+
+const seleccionarTodos = () => {
+  asigSeleccion.value = new Set(vehiculos.value.map(v => v.id))
+}
+const deseleccionarTodos = () => {
+  asigSeleccion.value = new Set()
+}
 
 const fetchAsignaciones = async () => {
   cargandoAsig.value = true
@@ -230,33 +263,55 @@ const fetchVehiculos = async () => {
   } catch {}
 }
 
-const crearAsignacion = async () => {
-  if (!asigVehiculoId.value || !asigPlanId.value) {
-    toast.error('Selecciona un vehículo y un plan')
-    return
-  }
+const guardarAsignaciones = async () => {
+  if (!asigPlanId.value) { toast.error('Selecciona un plan'); return }
   guardandoAsig.value = true
+
+  const prevMap    = asigPrevios.value           // { vehiculo_id: asignacion_id }
+  const prevIds    = new Set(Object.keys(prevMap).map(Number))
+  const nuevosIds  = [...asigSeleccion.value].filter(id => !prevIds.has(id))
+  const borrarIds  = [...prevIds].filter(id => !asigSeleccion.value.has(id))
+
   try {
-    const res = await apiFetchEmpresa('/api/empresa/vehiculo-planes/', {
-      method: 'POST', body: { vehiculo_id: asigVehiculoId.value, plan_id: asigPlanId.value }
-    })
-    if (res.ok) {
-      toast.success('Plan asignado al vehículo')
-      asigVehiculoId.value = ''; asigPlanId.value = ''
-      fetchAsignaciones(); fetchResumen()
-      generarAlertas()
-    } else {
-      const d = await res.json()
-      toast.error(d.error || 'Error al asignar')
-    }
-  } catch { toast.error('Error de conexión') } finally { guardandoAsig.value = false }
+    // Crear nuevas asignaciones
+    await Promise.all(nuevosIds.map(vehiculo_id =>
+      apiFetchEmpresa('/api/empresa/vehiculo-planes/', {
+        method: 'POST', body: { vehiculo_id, plan_id: Number(asigPlanId.value) }
+      })
+    ))
+    // Eliminar asignaciones desmarcadas
+    await Promise.all(borrarIds.map(vid =>
+      apiFetchEmpresa(`/api/empresa/vehiculo-planes/${prevMap[vid]}/`, { method: 'DELETE' })
+    ))
+
+    const agregados = nuevosIds.length
+    const eliminados = borrarIds.length
+    const msg = [
+      agregados  ? `${agregados} vehículo(s) asignado(s)`   : '',
+      eliminados ? `${eliminados} vehículo(s) desasignado(s)` : '',
+    ].filter(Boolean).join(', ')
+
+    toast.success(msg || 'Sin cambios')
+    await fetchAsignaciones()
+    fetchResumen()
+    if (agregados) generarAlertas()
+    onCambiarPlan() // sincronizar estado visual
+  } catch {
+    toast.error('Error al guardar asignaciones')
+  } finally {
+    guardandoAsig.value = false
+  }
 }
 
 const eliminarAsignacion = async (asig) => {
   try {
     const res = await apiFetchEmpresa(`/api/empresa/vehiculo-planes/${asig.id}/`, { method: 'DELETE' })
-    if (res.ok) { toast.success('Asignación eliminada'); fetchAsignaciones(); fetchResumen() }
-    else toast.error('Error al eliminar')
+    if (res.ok) {
+      toast.success('Asignación eliminada')
+      await fetchAsignaciones()
+      fetchResumen()
+      onCambiarPlan()
+    } else toast.error('Error al eliminar')
   } catch { toast.error('Error de conexión') }
 }
 
@@ -281,10 +336,38 @@ const ejecutarSimulacion = async () => {
 const formatFecha = (f) => { const [y,m,d] = f.split('-'); return `${d}/${m}/${y}` }
 const clp = (v) => v != null ? '$' + Number(v).toLocaleString('es-CL') : '—'
 
+const TIPOS_MANTENCION_MAP = {
+  aceite: 'Cambio de aceite',
+  frenos: 'Revisión de frenos',
+  neumaticos: 'Cambio de neumáticos',
+  filtro_aire: 'Filtro de aire',
+  filtro_combustible: 'Filtro de combustible',
+  rtv: 'Revisión técnica (RTV)',
+  electrica: 'Revisión eléctrica',
+  otro: 'Otro'
+}
+const formatTipoMantencion = (t) => TIPOS_MANTENCION_MAP[t] || t
+
 // ── Lifecycle ─────────────────────────────────────────────────
 const cargarTodo = () => {
   if (sinEmpresa.value) return
   fetchResumen(); fetchAlertas(); fetchPlanes(); fetchAsignaciones(); fetchVehiculos()
+}
+
+// Escuchar notificaciones WS para actualizar en tiempo real
+// cuando el cron genera nuevas alertas predictivas
+const TIPOS_PREDICTIVO = new Set([
+  'mantencion_por_vencer',
+  'mantencion_vencida',
+  'actividad',        // algunas notificaciones de alertas usan este tipo
+])
+
+const onWsNotificacion = (e) => {
+  const tipo = e.detail?.tipo
+  if (TIPOS_PREDICTIVO.has(tipo)) {
+    fetchAlertas()
+    fetchResumen()
+  }
 }
 
 onMounted(async () => {
@@ -296,6 +379,11 @@ onMounted(async () => {
     } finally { cargandoEmpresas.value = false }
   }
   cargarTodo()
+  window.addEventListener('ws:notificacion', onWsNotificacion)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('ws:notificacion', onWsNotificacion)
 })
 </script>
 
@@ -398,7 +486,7 @@ onMounted(async () => {
             <div class="alert-main">
               <div class="alert-top">
                 <span class="patente-tag">{{ alerta.vehiculo_patente }}</span>
-                <span class="tipo-text">{{ alerta.tipo_mantencion }}</span>
+                <span class="tipo-text">{{ formatTipoMantencion(alerta.tipo_mantencion) }}</span>
                 <span class="nivel-badge" :class="alerta.nivel === 'vencida' ? 'nivel-vencida' : 'nivel-por-vencer'">
                   {{ alerta.nivel === 'vencida' ? 'Vencida' : 'Por vencer' }}
                 </span>
@@ -520,7 +608,7 @@ onMounted(async () => {
               <span class="reglas-titulo">{{ plan.reglas.length }} regla{{ plan.reglas.length !== 1 ? 's' : '' }}</span>
               <ul class="reglas-lista">
                 <li v-for="r in plan.reglas" :key="r.id">
-                  <span class="regla-tipo-tag">{{ r.tipo }}</span>
+                  <span class="regla-tipo-tag">{{ formatTipoMantencion(r.tipo) }}</span>
                   cada {{ r.intervalo_dias }} días · alerta {{ r.umbral_alerta_dias }} días antes
                   <span v-if="r.costo_estimado > 0" class="regla-costo">· {{ clp(r.costo_estimado) }}</span>
                 </li>
@@ -571,69 +659,116 @@ onMounted(async () => {
 
       <!-- ═══ TAB ASIGNACIONES ═══ -->
       <div v-if="currentTab === 'asignaciones'">
-        <div class="list-header">
-          <h2 class="section-title">Asignación de planes a vehículos</h2>
-        </div>
 
-        <!-- Formulario asignación -->
-        <div class="card form-card">
-          <h3 class="form-card-title">Asignar plan a vehículo</h3>
-          <div class="asig-form">
-            <div class="form-group">
-              <label class="label">Vehículo</label>
-              <select v-model="asigVehiculoId" class="input select">
-                <option value="">— Seleccionar vehículo —</option>
-                <option v-for="v in vehiculos" :key="v.id" :value="v.id">{{ v.patente }} — {{ v.marca }} {{ v.modelo }}</option>
-              </select>
+        <div class="asig-layout">
+
+          <!-- ── Panel izquierdo: selección ─────────────────── -->
+          <div class="asig-panel-left">
+            <div class="card form-card">
+              <h3 class="form-card-title">Asignar plan a vehículos</h3>
+
+              <!-- 1. Selector de plan -->
+              <div class="form-group mb-4">
+                <label class="label">Plan de mantenimiento</label>
+                <select v-model="asigPlanId" class="input select" @change="onCambiarPlan">
+                  <option value="">— Selecciona un plan —</option>
+                  <option v-for="p in planes" :key="p.id" :value="p.id">{{ p.nombre }}</option>
+                </select>
+              </div>
+
+              <!-- 2. Lista de vehículos con checkboxes -->
+              <template v-if="asigPlanId">
+                <div class="asig-vehiculos-header">
+                  <span class="label" style="margin:0">
+                    Vehículos
+                    <span class="asig-count">{{ asigSeleccion.size }} / {{ vehiculos.length }}</span>
+                  </span>
+                  <div class="asig-quick-actions">
+                    <button class="btn-link" @click="seleccionarTodos">Todos</button>
+                    <span style="color:#D1D5DB">·</span>
+                    <button class="btn-link" @click="deseleccionarTodos">Ninguno</button>
+                  </div>
+                </div>
+
+                <div class="asig-vehiculos-list">
+                  <label
+                    v-for="v in vehiculos" :key="v.id"
+                    :class="['asig-vehiculo-item', asigSeleccion.has(v.id) && 'asig-vehiculo-checked']"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="asigSeleccion.has(v.id)"
+                      @change="toggleVehiculo(v.id)"
+                      class="asig-checkbox"
+                    />
+                    <span class="asig-patente">{{ v.patente }}</span>
+                    <span class="asig-vehiculo-info">{{ v.marca }} {{ v.modelo }}</span>
+                    <span v-if="asigPrevios[v.id]" class="asig-badge-mini">asignado</span>
+                  </label>
+                  <div v-if="!vehiculos.length" class="empty-msg">No hay vehículos registrados.</div>
+                </div>
+
+                <button
+                  class="btn-primary w-full mt-4"
+                  @click="guardarAsignaciones"
+                  :disabled="guardandoAsig"
+                >
+                  <span v-if="guardandoAsig" class="spinner-inline"/>
+                  {{ guardandoAsig ? 'Guardando...' : 'Guardar asignaciones' }}
+                </button>
+              </template>
+
+              <div v-else class="asig-placeholder">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                <p>Selecciona un plan para ver y editar qué vehículos lo tienen asignado.</p>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="label">Plan</label>
-              <select v-model="asigPlanId" class="input select">
-                <option value="">— Seleccionar plan —</option>
-                <option v-for="p in planes" :key="p.id" :value="p.id">{{ p.nombre }}</option>
-              </select>
-            </div>
-            <button class="btn-primary" @click="crearAsignacion" :disabled="guardandoAsig || !asigVehiculoId || !asigPlanId">
-              <span v-if="guardandoAsig" class="spinner-inline"/>
-              {{ guardandoAsig ? 'Asignando...' : 'Asignar' }}
-            </button>
           </div>
-        </div>
 
-        <!-- Tabla asignaciones -->
-        <div v-if="cargandoAsig" class="loading"><div class="spinner"/> Cargando...</div>
-        <div v-else class="card list-card">
-          <table class="tabla" v-if="asignaciones.length">
-            <thead>
-              <tr>
-                <th>Vehículo</th>
-                <th>Plan asignado</th>
-                <th>Fecha asignación</th>
-                <th>Estado alertas</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="asig in asignaciones" :key="asig.id">
-                <td class="font-med">{{ asig.vehiculo_patente }}</td>
-                <td>{{ asig.plan_nombre }}</td>
-                <td class="text-m">{{ new Date(asig.fecha_asignacion).toLocaleDateString('es-CL') }}</td>
-                <td>
-                  <span v-if="alertasPorVehiculo[asig.vehiculo_patente]?.vencidas" class="asig-badge asig-badge-red">
-                    {{ alertasPorVehiculo[asig.vehiculo_patente].vencidas }} vencida{{ alertasPorVehiculo[asig.vehiculo_patente].vencidas !== 1 ? 's' : '' }}
-                  </span>
-                  <span v-else-if="alertasPorVehiculo[asig.vehiculo_patente]?.pendientes" class="asig-badge asig-badge-yellow">
-                    {{ alertasPorVehiculo[asig.vehiculo_patente].pendientes }} por vencer
-                  </span>
-                  <span v-else class="asig-badge asig-badge-green">Sin alertas</span>
-                </td>
-                <td>
-                  <button class="btn-danger-sm" @click="eliminarAsignacion(asig)">Quitar</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-else class="empty-msg">No hay asignaciones. Usa el formulario de arriba para asignar un plan a un vehículo.</div>
+          <!-- ── Panel derecho: resumen de asignaciones ──────── -->
+          <div class="asig-panel-right">
+            <div class="list-header" style="margin-bottom:0.75rem">
+              <h2 class="section-title">Asignaciones actuales</h2>
+            </div>
+            <div v-if="cargandoAsig" class="loading"><div class="spinner"/> Cargando...</div>
+            <div v-else-if="asignaciones.length" class="card list-card">
+              <table class="tabla">
+                <thead>
+                  <tr>
+                    <th>Vehículo</th>
+                    <th>Plan</th>
+                    <th>Alertas</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="asig in asignaciones" :key="asig.id">
+                    <td class="font-med">{{ asig.vehiculo_patente }}</td>
+                    <td>{{ asig.plan_nombre }}</td>
+                    <td>
+                      <span v-if="alertasPorVehiculo[asig.vehiculo_patente]?.vencidas" class="asig-badge asig-badge-red">
+                        {{ alertasPorVehiculo[asig.vehiculo_patente].vencidas }} vencida{{ alertasPorVehiculo[asig.vehiculo_patente].vencidas !== 1 ? 's' : '' }}
+                      </span>
+                      <span v-else-if="alertasPorVehiculo[asig.vehiculo_patente]?.pendientes" class="asig-badge asig-badge-yellow">
+                        {{ alertasPorVehiculo[asig.vehiculo_patente].pendientes }} por vencer
+                      </span>
+                      <span v-else class="asig-badge asig-badge-green">OK</span>
+                    </td>
+                    <td>
+                      <button class="btn-danger-sm" @click="eliminarAsignacion(asig)">Quitar</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="card list-card">
+              <div class="empty-msg">Aún no hay asignaciones.</div>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -677,7 +812,7 @@ onMounted(async () => {
           </div>
           <div class="sim-lista">
             <div v-for="(evento, idx) in simulacionResultados.eventos" :key="idx" class="sim-evento">
-              <span class="sim-tipo">{{ evento.tipo }}</span>
+              <span class="sim-tipo">{{ formatTipoMantencion(evento.tipo) }}</span>
               <span class="sim-fecha">{{ formatFecha(evento.fecha) }}</span>
               <span class="sim-costo">{{ clp(evento.costo_estimado) }}</span>
             </div>
@@ -692,7 +827,7 @@ onMounted(async () => {
       <div v-if="modalAtenderOpen" class="modal-overlay" @click.self="modalAtenderOpen = false">
         <div class="modal-box">
           <h3 class="modal-title">Registrar mantención realizada</h3>
-          <p class="modal-sub">Vehículo <strong>{{ alertaActual?.vehiculo_patente }}</strong> — {{ alertaActual?.tipo_mantencion }}</p>
+          <p class="modal-sub">Vehículo <strong>{{ alertaActual?.vehiculo_patente }}</strong> — {{ formatTipoMantencion(alertaActual?.tipo_mantencion) }}</p>
           <div class="form modal-form">
             <div class="form-group">
               <label class="label">Fecha de realización</label>
@@ -910,4 +1045,59 @@ onMounted(async () => {
 .asig-badge-red { background: #FEE2E2; color: #B91C1C; }
 .asig-badge-yellow { background: #FEF9C3; color: #92400E; }
 .asig-badge-green { background: #D1FAE5; color: #065F46; }
+
+/* ── Nuevo layout asignaciones ── */
+.asig-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+@media (max-width: 900px) {
+  .asig-layout { grid-template-columns: 1fr; }
+}
+
+.asig-vehiculos-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.625rem;
+}
+.asig-count {
+  display: inline-block; font-size: 0.75rem; font-weight: 600;
+  background: #EEF2FF; color: #4F46E5;
+  padding: 0.1rem 0.5rem; border-radius: 999px; margin-left: 0.5rem;
+}
+.asig-quick-actions { display: flex; align-items: center; gap: 0.4rem; }
+
+.asig-vehiculos-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 360px; overflow-y: auto;
+  border: 1.5px solid #E5E7EB; border-radius: 10px; padding: 6px;
+  background: #FAFAFA;
+}
+.asig-vehiculo-item {
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.5rem 0.75rem; border-radius: 8px;
+  cursor: pointer; transition: background 0.12s; user-select: none;
+}
+.asig-vehiculo-item:hover { background: #F3F4F6; }
+.asig-vehiculo-checked { background: #EEF2FF !important; }
+.asig-checkbox { width: 16px; height: 16px; accent-color: #4F46E5; flex-shrink: 0; cursor: pointer; }
+.asig-patente { font-weight: 700; font-size: 0.875rem; color: #111827; min-width: 72px; }
+.asig-vehiculo-info { flex: 1; font-size: 0.8125rem; color: #6B7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asig-badge-mini {
+  font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.45rem;
+  border-radius: 999px; background: #D1FAE5; color: #065F46; white-space: nowrap;
+}
+
+.asig-placeholder {
+  display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+  padding: 2rem 1rem; color: #9CA3AF; text-align: center;
+}
+.asig-placeholder svg { width: 40px; height: 40px; opacity: 0.4; }
+.asig-placeholder p { font-size: 0.875rem; margin: 0; line-height: 1.5; }
+
+.asig-panel-left .form-card { margin-bottom: 0; }
+.mb-4 { margin-bottom: 1rem; }
+.mt-4 { margin-top: 1rem; }
+.w-full { width: 100%; }
 </style>

@@ -2352,6 +2352,17 @@ def predictivo_generar_alertas(request):
         'vehiculo', 'plan'
     ).prefetch_related('plan__reglas')
 
+    TIPOS_MANTENCION_MAP = {
+        'aceite': 'Cambio de aceite',
+        'frenos': 'Revisión de frenos',
+        'neumaticos': 'Cambio de neumáticos',
+        'filtro_aire': 'Filtro de aire',
+        'filtro_combustible': 'Filtro de combustible',
+        'rtv': 'Revisión técnica (RTV)',
+        'electrica': 'Revisión eléctrica',
+        'otro': 'Otro'
+    }
+
     creadas = actualizadas = 0
     for vp in vps:
         for regla in vp.plan.reglas.all():
@@ -2386,10 +2397,12 @@ def predictivo_generar_alertas(request):
                 creadas += 1
                 tipo_notif = (TipoNotificacion.MANTENCION_VENCIDA if nivel == 'vencida'
                               else TipoNotificacion.MANTENCION_POR_VENCER)
+                
+                tipo_amigable = TIPOS_MANTENCION_MAP.get(prog.regla.tipo, prog.regla.tipo)
                 notificar_admins_empresa(
                     prog.vehiculo.flota.empresa, tipo_notif,
                     f"Mantención {nivel.replace('_',' ')}: {prog.vehiculo.patente}",
-                    f"El vehículo {prog.vehiculo.patente} requiere '{prog.regla.tipo}'. Días restantes: {dias_restantes}.",
+                    f"El vehículo {prog.vehiculo.patente} requiere '{tipo_amigable}'. Días restantes: {dias_restantes}.",
                     url_accion='/empresa/predictivo',
                     extra={'vehiculo_id': prog.vehiculo.id},
                 )
