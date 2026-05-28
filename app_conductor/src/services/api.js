@@ -59,6 +59,8 @@ export async function apiFetch(url, options = {}) {
         })
         clearTimeout(timer2)
         if (!retryRes.ok) {
+          // El token se renovó pero la cuenta ya no tiene acceso (desactivada/bloqueada)
+          if (retryRes.status === 401) await limpiarSesion()
           const errData = await retryRes.json().catch(() => ({}))
           throw new Error(errData.error || errData.detail || 'Sesión expirada')
         }
@@ -122,4 +124,8 @@ export async function limpiarSesion() {
   await Preferences.remove({ key: 'usuario' })
   await Preferences.remove({ key: 'plan_modulos' })
   await Preferences.remove({ key: 'plan_nombre' })
+  // Avisar a la app para que expulse al usuario al login en tiempo real
+  try {
+    window.dispatchEvent(new CustomEvent('sesion-expirada'))
+  } catch {}
 }

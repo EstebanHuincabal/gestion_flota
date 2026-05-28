@@ -32,6 +32,9 @@ def _validar_dv_rut(rut_norm: str) -> bool:
     cuerpo, dv = partes
     if not cuerpo.isdigit() or dv not in '0123456789k':
         return False
+    # RUTs chilenos válidos tienen entre 7 y 8 dígitos en el cuerpo
+    if len(cuerpo) < 7:
+        return False
     suma = 0
     serie = [2, 3, 4, 5, 6, 7]
     for i, digito in enumerate(reversed(cuerpo)):
@@ -116,6 +119,16 @@ class EmpresaSerializer(serializers.Serializer):
         if value and value not in _REGIONES_CODIGOS:
             raise serializers.ValidationError("Región no válida.")
         return value
+
+    def validate_telefono(self, value):
+        if not value:
+            return value
+        limpio = re.sub(r'[\s\-\(\)]', '', value)
+        if not re.match(r'^(\+56)?9\d{8}$', limpio):
+            raise serializers.ValidationError(
+                'Teléfono inválido. Use el formato +569 XXXXXXXX o 9XXXXXXXX.'
+            )
+        return limpio
 
     def validate_estado(self, value):
         if value not in ('activa', 'suspendida'):
@@ -501,11 +514,14 @@ class ConductorCrearSerializer(serializers.Serializer):
         return rut_norm
 
     def validate_telefono(self, value):
-        if not value: return value
-        value = value.replace(' ', '').replace('-', '')
-        if not re.match(r'^\+?569\d{8}$', value):
-            raise serializers.ValidationError("El teléfono debe tener el formato +569XXXXXXXX.")
-        return value
+        if not value:
+            return value
+        limpio = re.sub(r'[\s\-\(\)]', '', value)
+        if not re.match(r'^(\+56)?9\d{8}$', limpio):
+            raise serializers.ValidationError(
+                'Teléfono inválido. Use el formato +569 XXXXXXXX o 9XXXXXXXX.'
+            )
+        return limpio
 
     def validate_licencia(self, value):
         if not value: return value
@@ -621,6 +637,7 @@ class ConductorEditarSerializer(serializers.Serializer):
     email           = serializers.EmailField(required=False)
     telefono        = serializers.CharField(required=False, allow_blank=True)
     licencia        = serializers.CharField(required=False, allow_blank=True)
+    is_active       = serializers.BooleanField(required=False)
 
     def validate_nombre_completo(self, value):
         return value.strip().title()
@@ -629,11 +646,14 @@ class ConductorEditarSerializer(serializers.Serializer):
         return value.strip().lower()
 
     def validate_telefono(self, value):
-        if not value: return value
-        value = value.replace(' ', '').replace('-', '')
-        if not re.match(r'^\+?569\d{8}$', value):
-            raise serializers.ValidationError("El teléfono debe tener el formato +569XXXXXXXX.")
-        return value
+        if not value:
+            return value
+        limpio = re.sub(r'[\s\-\(\)]', '', value)
+        if not re.match(r'^(\+56)?9\d{8}$', limpio):
+            raise serializers.ValidationError(
+                'Teléfono inválido. Use el formato +569 XXXXXXXX o 9XXXXXXXX.'
+            )
+        return limpio
 
     def validate_licencia(self, value):
         if not value: return value
@@ -662,9 +682,13 @@ class ConductorEditarSerializer(serializers.Serializer):
                 instance.licencia_cifrada = None
             changed = True
 
+        if 'is_active' in validated_data:
+            instance.is_active = validated_data['is_active']
+            changed = True
+
         if changed:
             instance.save()
-            
+
         return instance
 
 
@@ -735,13 +759,18 @@ class VehiculoSerializer(serializers.ModelSerializer):
         return None
 
     def validate_patente(self, value):
-        value = value.replace(' ', '').replace('-', '').upper().strip()
-        qs    = Vehiculo.objects.filter(patente=value)
+        valor = value.upper().replace(' ', '').replace('-', '')
+        # Formato nuevo: LLLLNN (4 letras + 2 números), formato antiguo: LLNNNN (2 letras + 4 números)
+        if not re.match(r'^[A-Z]{4}\d{2}$|^[A-Z]{2}\d{4}$', valor):
+            raise serializers.ValidationError(
+                'Formato de patente inválido. Use el formato LLLLNN (ej: ABCD12) o LLNNNN (ej: AB1234).'
+            )
+        qs = Vehiculo.objects.filter(patente=valor)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("Ya existe un vehículo con esa patente.")
-        return value
+        return valor
 
     def validate_marca(self, value):
         if not value: return value

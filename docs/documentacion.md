@@ -1,6 +1,6 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 2.7 · **Última actualización:** Mayo 2026  
+> **Versión:** 2.9 · **Última actualización:** Mayo 2026  
 > **Stack:** Django 5 · Vue 3 · Capacitor 8 · SQLite · JWT
 
 ---

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
+import { validarPassword } from '../../../utils/validators.js'
 
 const toast = useToast()
 
@@ -10,6 +11,12 @@ const guardandoPerfil = ref(false)
 
 const pwd = ref({ password_actual: '', password_nueva: '', password_confirmar: '' })
 const guardandoPwd = ref(false)
+const erroresPwd = ref({ actual: '', nueva: '', confirmar: '' })
+
+const nivelPassword = computed(() => {
+  if (!pwd.value.password_nueva) return null
+  return validarPassword(pwd.value.password_nueva).nivel || null
+})
 
 const cargarPerfil = async () => {
   const res = await apiFetch('/api/usuario/perfil/')
@@ -36,11 +43,30 @@ const guardarPerfil = async () => {
 }
 
 const cambiarPassword = async () => {
+  erroresPwd.value = { actual: '', nueva: '', confirmar: '' }
+
+  if (!pwd.value.password_actual) {
+    erroresPwd.value.actual = 'Ingresa tu contraseña actual.'
+    return
+  }
+
+  const resultNueva = validarPassword(pwd.value.password_nueva)
+  if (!resultNueva.valido) {
+    erroresPwd.value.nueva = resultNueva.error
+    return
+  }
+
+  if (pwd.value.password_nueva !== pwd.value.password_confirmar) {
+    erroresPwd.value.confirmar = 'Las contraseñas no coinciden.'
+    return
+  }
+
   guardandoPwd.value = true
   const res = await apiFetch('/api/usuario/cambiar-password/', { method: 'POST', body: pwd.value })
   if (res.ok) {
     toast.success('Contraseña actualizada correctamente.')
     pwd.value = { password_actual: '', password_nueva: '', password_confirmar: '' }
+    erroresPwd.value = { actual: '', nueva: '', confirmar: '' }
   } else {
     const err = await res.json()
     toast.error(err.error || 'Error al cambiar la contraseña.')
@@ -83,15 +109,26 @@ onMounted(cargarPerfil)
       <div class="card-body">
         <div class="form-group">
           <label class="label">Contraseña actual</label>
-          <input v-model="pwd.password_actual" type="password" class="input" placeholder="••••••••" />
+          <input v-model="pwd.password_actual" type="password" class="input" :class="{ 'input-error': erroresPwd.actual }" placeholder="••••••••" />
+          <p v-if="erroresPwd.actual" class="field-error">{{ erroresPwd.actual }}</p>
         </div>
         <div class="form-group">
           <label class="label">Nueva contraseña</label>
-          <input v-model="pwd.password_nueva" type="password" class="input" placeholder="••••••••" />
+          <input v-model="pwd.password_nueva" type="password" class="input" :class="{ 'input-error': erroresPwd.nueva }" placeholder="Mín. 8 caracteres, 1 mayúscula, 1 número" />
+          <p v-if="erroresPwd.nueva" class="field-error">{{ erroresPwd.nueva }}</p>
+          <div v-if="pwd.password_nueva && nivelPassword" class="pwd-strength">
+            <div class="pwd-strength-bar">
+              <div class="pwd-strength-fill" :class="`pwd-strength-${nivelPassword}`"/>
+            </div>
+            <span class="pwd-strength-label" :class="`pwd-level-${nivelPassword}`">
+              {{ nivelPassword === 'debil' ? 'Contraseña débil' : nivelPassword === 'media' ? 'Contraseña media' : 'Contraseña fuerte' }}
+            </span>
+          </div>
         </div>
         <div class="form-group">
           <label class="label">Confirmar nueva contraseña</label>
-          <input v-model="pwd.password_confirmar" type="password" class="input" placeholder="••••••••" />
+          <input v-model="pwd.password_confirmar" type="password" class="input" :class="{ 'input-error': erroresPwd.confirmar }" placeholder="••••••••" />
+          <p v-if="erroresPwd.confirmar" class="field-error">{{ erroresPwd.confirmar }}</p>
         </div>
         <div class="form-footer">
           <button class="btn-primary" @click="cambiarPassword" :disabled="guardandoPwd">
@@ -138,6 +175,20 @@ onMounted(cargarPerfil)
 }
 
 .form-footer { display: flex; justify-content: flex-end; padding-top: 0.25rem; }
+
+.input-error { border-color: #EF4444 !important; }
+.field-error { font-size: 0.8125rem; color: #EF4444; margin: 0.25rem 0 0; }
+
+.pwd-strength { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; }
+.pwd-strength-bar { flex: 1; height: 4px; background: #E5E7EB; border-radius: 99px; overflow: hidden; }
+.pwd-strength-fill { height: 100%; border-radius: 99px; transition: width 0.3s ease; }
+.pwd-strength-debil  { width: 33%; background: #EF4444; }
+.pwd-strength-media  { width: 66%; background: #F59E0B; }
+.pwd-strength-fuerte { width: 100%; background: #10B981; }
+.pwd-strength-label { font-size: 0.75rem; font-weight: 500; white-space: nowrap; }
+.pwd-level-debil  { color: #EF4444; }
+.pwd-level-media  { color: #F59E0B; }
+.pwd-level-fuerte { color: #10B981; }
 
 .btn-primary {
   padding: 0.5rem 1.25rem;

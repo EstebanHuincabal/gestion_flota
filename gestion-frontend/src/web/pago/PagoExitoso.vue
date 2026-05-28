@@ -3,13 +3,15 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 
-const router = useRouter()
-const orden  = ref('')
+const router      = useRouter()
+const orden       = ref('')
 const suscripcion = ref(null)
+const esNuevo     = ref(false)   // true cuando viene del auto-registro
 
 onMounted(async () => {
-  const params = new URLSearchParams(window.location.search)
-  orden.value  = params.get('orden') || ''
+  const params  = new URLSearchParams(window.location.search)
+  orden.value   = params.get('orden') || ''
+  esNuevo.value = params.get('nuevo') === '1'
 
   try {
     const res  = await apiFetch('/api/empresa/suscripcion/')
@@ -25,8 +27,14 @@ onMounted(async () => {
   <div class="exito-page">
     <div class="exito-card">
       <div class="exito-icon">✓</div>
-      <h1 class="exito-title">¡Pago realizado con éxito!</h1>
-      <p class="exito-sub">Tu suscripción ha sido activada correctamente.</p>
+      <h1 class="exito-title">
+        {{ esNuevo ? '¡Bienvenido a FlotaSystem!' : '¡Pago realizado con éxito!' }}
+      </h1>
+      <p class="exito-sub">
+        {{ esNuevo
+            ? 'Tu empresa ya está activa. Recibirás un email de bienvenida con los detalles de tu cuenta.'
+            : 'Tu suscripción ha sido activada correctamente.' }}
+      </p>
 
       <div v-if="orden" class="detalle-row">
         <span class="detalle-label">N° de orden</span>

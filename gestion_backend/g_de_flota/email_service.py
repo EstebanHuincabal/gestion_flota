@@ -570,3 +570,39 @@ def email_recordatorio_pago(email, nombre, empresa_nombre, plan_nombre,
         empresa_nombre,
     )
     enviar_email(email, f'Completa tu suscripción — {empresa_nombre}', html)
+
+
+# ── Bienvenida (nuevo registro) ───────────────────────────────────────────────
+
+def email_bienvenida(email, nombre, empresa_nombre, plan_nombre, url_dashboard):
+    """Email de bienvenida enviado tras el primer pago aprobado de una empresa nueva."""
+    from .models import ConfiguracionSistema
+    config = ConfiguracionSistema.get()
+    if not getattr(config, 'notif_bienvenida', True):
+        return
+    html = _base_template(
+        f'¡Bienvenido a FlotaSystem, {nombre}!',
+        f"""
+        <p style="color:#444;font-size:15px;margin:0 0 16px;">
+          Tu empresa <strong>{empresa_nombre}</strong> ya está activa en FlotaSystem.
+          Tu plan <strong>{plan_nombre}</strong> está listo para usar.
+        </p>
+        <div style="background:#f0f4ff;border-radius:8px;padding:16px 20px;margin:16px 0;">
+          <p style="margin:0 0 8px;font-weight:600;color:#1a1a1a;font-size:14px;">
+            Primeros pasos recomendados:
+          </p>
+          <ol style="margin:0;padding-left:20px;color:#444;font-size:14px;line-height:1.8;">
+            <li>Crea tu primera flota de vehículos</li>
+            <li>Agrega tus vehículos y conductores</li>
+            <li>Configura las reglas de mantención predictiva</li>
+            <li>Descarga la app móvil para tus conductores</li>
+          </ol>
+        </div>
+        {_btn('Ir al panel de control', url_dashboard)}
+        <p style="color:#888;font-size:13px;margin-top:16px;">
+          Si tienes dudas, contacta a nuestro equipo de soporte en cualquier momento.
+        </p>
+        """,
+        empresa_nombre,
+    )
+    enviar_email(email, f'¡Bienvenido a FlotaSystem! Tu cuenta está lista', html)

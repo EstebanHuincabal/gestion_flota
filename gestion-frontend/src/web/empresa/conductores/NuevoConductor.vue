@@ -1,8 +1,11 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
+import { validarPassword, validarTelefono, validarNombre, validarRut } from '../../../utils/validators.js'
+import InputTelefono from '../../../components/InputTelefono.vue'
 
 const router    = useRouter()
 const { ruta }  = useEmpresaNav()
@@ -57,18 +60,80 @@ onMounted(async () => {
   }
 })
 
+const nivelPassword = computed(() => {
+  if (!form.value.password) return null
+  const r = validarPassword(form.value.password)
+  return r.nivel || null
+})
+
 const formatRut = (value) => {
-  let cleaned = value.replace(/[^0-9kK]/g, '')
+  let cleaned = value.replace(/[^0-9kK]/g, '').slice(0, 9)
   if (cleaned.length < 2) return cleaned
   const body = cleaned.slice(0, -1)
   const dv   = cleaned.slice(-1).toUpperCase()
   return `${body.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`
 }
-const onRutInput = (e) => { form.value.rut = formatRut(e.target.value) }
+// Verificación de RUT duplicado contra la BD (ambas tablas)
+const rutVerificando = ref(false)
+let _debounceRut = null
+
+async function verificarRut() {
+  const r = validarRut(form.value.rut)
+  if (!r.valido) return
+  rutVerificando.value = true
+  try {
+    const res = await apiFetch(`/api/verificar-rut/?rut=${encodeURIComponent(form.value.rut)}&tipo=usuario`)
+    if (res.ok) {
+      const data = await res.json()
+      if (!data.disponible) {
+        errores.value = { ...errores.value, rut: [data.mensaje || 'Este RUT ya está registrado.'] }
+      }
+    }
+  } catch {} finally {
+    rutVerificando.value = false
+  }
+}
+
+const onRutInput = (e) => {
+  const v = formatRut(e.target.value)
+  form.value.rut = v
+  e.target.value = v
+  if (errores.value.rut) errores.value = { ...errores.value, rut: undefined }
+  clearTimeout(_debounceRut)
+  _debounceRut = setTimeout(verificarRut, 600)
+}
 
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  // Validar nombre completo
+  const nomR = validarNombre(form.value.nombre_completo, 2, 150)
+  if (!nomR.valido) { errores.value = { nombre_completo: [nomR.error] }; return }
+
+  // Validar contraseña
+  const pwdResult = validarPassword(form.value.password)
+  if (!pwdResult.valido) {
+    errores.value = { password: [pwdResult.error] }
+    return
+  }
+
+  // Validar teléfono si se ingresó
+  if (form.value.telefono) {
+    const telResult = validarTelefono(form.value.telefono)
+    if (!telResult.valido) {
+      errores.value = { telefono: [telResult.error] }
+      return
+    }
+  }
+
+  // Verificación final del RUT contra la BD antes de crear
+  clearTimeout(_debounceRut)
+  if (form.value.rut) {
+    await verificarRut()
+    if (errores.value.rut) return
+  }
+
   guardando.value = true
 
   const payload = { ...form.value }
@@ -143,9 +208,12 @@ const guardar = async () => {
             </div>
             <div class="form-group">
               <label class="label">RUT</label>
-              <input :value="form.rut" @input="onRutInput" type="text" class="input"
-                :class="{ 'input-error': errores.rut }"
-                placeholder="12.345.678-9" maxlength="12" required autocomplete="off"/>
+              <div style="position:relative">
+                <input :value="form.rut" @input="onRutInput" type="text" class="input"
+                  :class="{ 'input-error': errores.rut }"
+                  placeholder="12.345.678-9" maxlength="12" required autocomplete="off"/>
+                <span v-if="rutVerificando" class="rut-spinner"/>
+              </div>
               <p v-if="errores.rut" class="field-error">{{ errores.rut[0] }}</p>
             </div>
           </div>
@@ -162,21 +230,29 @@ const guardar = async () => {
               <label class="label">Contraseña</label>
               <input v-model="form.password" type="password" class="input"
                 :class="{ 'input-error': errores.password }"
-                placeholder="Mínimo 8 caracteres" required autocomplete="new-password"/>
+                placeholder="Mín. 8 chars, 1 mayúscula, 1 número" required autocomplete="new-password"/>
               <p v-if="errores.password" class="field-error">{{ errores.password[0] }}</p>
+              <div v-if="form.password && nivelPassword" class="pwd-strength">
+                <div class="pwd-strength-bar">
+                  <div class="pwd-strength-fill" :class="`pwd-strength-${nivelPassword}`"/>
+                </div>
+                <span class="pwd-strength-label" :class="`pwd-level-${nivelPassword}`">
+                  {{ nivelPassword === 'debil' ? 'Débil' : nivelPassword === 'media' ? 'Media' : 'Fuerte' }}
+                </span>
+              </div>
             </div>
           </div>
 
           <div class="form-row">
             <div class="form-group">
               <label class="label">Teléfono <span class="opcional">(opcional)</span></label>
-              <input v-model="form.telefono" type="text" class="input"
-                placeholder="+56 9 1234 5678" autocomplete="off"/>
+              <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+              <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
             </div>
             <div class="form-group">
               <label class="label">N° Licencia <span class="opcional">(opcional)</span></label>
               <input v-model="form.licencia" type="text" class="input"
-                placeholder="Ej: 123456789" autocomplete="off"/>
+                placeholder="Ej: 123456789" autocomplete="off" maxlength="50"/>
             </div>
           </div>
         </div>
@@ -242,11 +318,11 @@ const guardar = async () => {
               <div class="form-row mt-2">
                 <div class="form-group">
                   <label class="label">Marca</label>
-                  <input v-model="form.vehiculo_marca" type="text" class="input" placeholder="Ej: Toyota"/>
+                  <input v-model="form.vehiculo_marca" type="text" class="input" placeholder="Ej: Toyota" maxlength="60"/>
                 </div>
                 <div class="form-group">
                   <label class="label">Modelo</label>
-                  <input v-model="form.vehiculo_modelo" type="text" class="input" placeholder="Ej: Hilux"/>
+                  <input v-model="form.vehiculo_modelo" type="text" class="input" placeholder="Ej: Hilux" maxlength="60"/>
                 </div>
               </div>
             </div>
@@ -292,6 +368,12 @@ const guardar = async () => {
 .input.input-error { border-color: #EF4444; }
 .select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; background-size: 1rem; padding-right: 2.5rem; cursor: pointer; }
 .field-error { font-size: 0.8125rem; color: #EF4444; margin: 0; }
+.rut-spinner {
+  position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px;
+  border: 2px solid #D1D5DB; border-top-color: #7C3AED;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
 .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; }
 .btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; font-family: inherit; transition: border-color 0.15s; }
 .btn-secondary:hover { border-color: #9CA3AF; }
@@ -330,5 +412,16 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.pwd-strength { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; }
+.pwd-strength-bar { flex: 1; height: 4px; background: #E5E7EB; border-radius: 99px; overflow: hidden; }
+.pwd-strength-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+.pwd-strength-debil  { width: 33%; background: #EF4444; }
+.pwd-strength-media  { width: 66%; background: #F59E0B; }
+.pwd-strength-fuerte { width: 100%; background: #10B981; }
+.pwd-strength-label { font-size: 0.75rem; font-weight: 500; white-space: nowrap; }
+.pwd-level-debil  { color: #EF4444; }
+.pwd-level-media  { color: #F59E0B; }
+.pwd-level-fuerte { color: #10B981; }
 </style>
 

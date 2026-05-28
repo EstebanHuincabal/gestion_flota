@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
 import { useToast } from '../../../utils/useToast.js'
+import { validarPatente, validarAnioVehiculo } from '../../../utils/validators.js'
 
 const props = defineProps({ modo: { type: String, default: 'nuevo' } })
 const router = useRouter()
@@ -52,6 +53,23 @@ const cargarVehiculo = async () => {
 const guardar = async () => {
   error.value = ''
   errores.value = {}
+
+  // Validar patente
+  const patenteResult = validarPatente(form.value.patente)
+  if (!patenteResult.valido) {
+    errores.value = { patente: [patenteResult.error] }
+    return
+  }
+
+  // Validar año si se ingresó
+  if (form.value.anio !== '' && form.value.anio !== null) {
+    const anioResult = validarAnioVehiculo(form.value.anio)
+    if (!anioResult.valido) {
+      errores.value = { anio: [anioResult.error] }
+      return
+    }
+  }
+
   guardando.value = true
   try {
     const payload = { ...form.value, anio: form.value.anio || null }
@@ -136,7 +154,10 @@ onMounted(async () => {
         <div class="form-row">
           <div class="form-group">
             <label class="label">Año</label>
-            <input v-model="form.anio" type="number" class="input" placeholder="2020" min="1990" :max="new Date().getFullYear() + 1"/>
+            <input v-model="form.anio" type="number" class="input"
+              :class="{ 'input-error': errores.anio }"
+              placeholder="2020" min="1950" :max="new Date().getFullYear() + 1"/>
+            <p v-if="errores.anio" class="field-error">{{ errores.anio[0] }}</p>
           </div>
           <div class="form-group">
             <label class="label">KM actuales</label>

@@ -76,7 +76,29 @@ const homePorRol = (rol) => {
 }
 
 const routes = [
-  { path: '/', redirect: '/login' },
+  // ── Sitio público (landing + registro) ───────────────────────────────────
+  {
+    path: '/',
+    component: () => import('../web/publico/PublicLayout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'landing',
+        component: () => import('../web/publico/LandingPage.vue'),
+      },
+      {
+        path: 'registro',
+        name: 'registro',
+        component: () => import('../web/publico/RegistroPublico.vue'),
+      },
+      {
+        path: 'terminos',
+        name: 'terminos',
+        component: () => import('../web/publico/Terminos.vue'),
+      },
+    ],
+  },
+
   { path: '/login', component: Login, meta: { guest: true } },
 
   // ── Panel SUPERADMIN ──────────────────────────────────
@@ -183,6 +205,11 @@ router.beforeEach((to, _from, next) => {
   if (usuario && !usuario.rol) {
     localStorage.removeItem('usuario')
     usuario = null
+  }
+
+  // Rutas públicas (landing y registro): redirigir si ya está autenticado
+  if ((to.name === 'landing' || to.name === 'registro') && usuario?.rol) {
+    return next(homePorRol(usuario.rol))
   }
 
   if (to.meta.requiresAuth && !usuario) return next('/login')

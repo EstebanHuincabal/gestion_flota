@@ -23,6 +23,12 @@ async function cerrarSesionBloqueo() {
   bloqueado.value = false
 }
 
+// Sesión expirada (cuenta desactivada/bloqueada en el servidor) → expulsar al login
+function onSesionExpirada() {
+  bloqueado.value = false
+  auth.expirarSesion()
+}
+
 
 // ── Status Bar ───────────────────────────────────────────────────────────────
 async function aplicarColorStatusBar(color) {
@@ -159,10 +165,12 @@ onMounted(async () => {
   await inicializarStatusBar()
   await inicializarPush()
   window.addEventListener('suscripcion-bloqueada', onBloqueada)
+  window.addEventListener('sesion-expirada', onSesionExpirada)
 })
 
 onUnmounted(() => {
   window.removeEventListener('suscripcion-bloqueada', onBloqueada)
+  window.removeEventListener('sesion-expirada', onSesionExpirada)
 })
 </script>
 

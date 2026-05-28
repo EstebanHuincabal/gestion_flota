@@ -727,7 +727,7 @@ class PagoIniciarView(APIView):
 
 # ─────────────────────────────────────────
 # POST /api/pago/retorno/  (retorno desde Transbank)
-# ─────────────────────────────────────────
+# ───────────────────────────────────────
 
 @method_decorator(csrf_exempt, name='dispatch')
 class PagoRetornoView(View):

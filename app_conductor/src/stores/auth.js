@@ -143,6 +143,25 @@ export const useAuthStore = defineStore('auth', () => {
     router.replace({ name: 'login' })
   }
 
+  /**
+   * Expira la sesión por una señal del servidor (cuenta desactivada/bloqueada).
+   * No llama limpiarSesion porque api.js ya borró las credenciales; solo
+   * resetea el estado local y redirige al login para evitar un bucle.
+   */
+  async function expirarSesion() {
+    if (!usuario.value) return   // ya cerrada → evitar redirects repetidos
+    try {
+      const { wsService } = await import('../services/websocket.js')
+      wsService.disconnect()
+    } catch {}
+    await resetearPermisos()
+    usuario.value = null
+    const { default: router } = await import('../router/index.js')
+    if (router.currentRoute.value.name !== 'login') {
+      router.replace({ name: 'login' })
+    }
+  }
+
   return {
     usuario,
     cargando,
@@ -153,5 +172,6 @@ export const useAuthStore = defineStore('auth', () => {
     cargarSesion,
     login,
     logout,
+    expirarSesion,
   }
 })

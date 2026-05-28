@@ -5,6 +5,7 @@ import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva, useEmpresaNav } fr
 import { tienePermiso } from '../../../../utils/permisos.js'
 import { useToast } from '../../../../utils/useToast.js'
 import { apiFetch } from '../../../../utils/api.js'
+import { validarFechaFutura } from '../../../../utils/validators.js'
 
 const router  = useRouter()
 const route   = useRoute()
@@ -144,6 +145,19 @@ const cargarDatos = async () => {
     }
   } finally {
     cargando.value = false
+  }
+}
+
+const validarFechaInput = () => {
+  if (!form.value.fecha_programada) return
+  if (esNuevo.value) {
+    const r = validarFechaFutura(form.value.fecha_programada)
+    if (!r.valido) {
+      errores.value = { ...errores.value, fecha_programada: [r.error] }
+    } else {
+      const { fecha_programada: _, ...rest } = errores.value
+      errores.value = rest
+    }
   }
 }
 
@@ -328,6 +342,7 @@ onMounted(async () => {
               class="input mt-1"
               placeholder="Describe el tipo de mantención..."
               autocomplete="off"
+              maxlength="100"
             />
             <p v-if="errores.tipo_mantencion" class="field-error">{{ errores.tipo_mantencion[0] }}</p>
           </div>
@@ -337,7 +352,9 @@ onMounted(async () => {
 
           <div class="form-group">
             <label class="label">Fecha programada <span class="req">*</span></label>
-            <input v-model="form.fecha_programada" type="date" class="input"/>
+            <input v-model="form.fecha_programada" type="date" class="input"
+              :class="{ 'input-error': errores.fecha_programada }"
+              @change="validarFechaInput"/>
             <p v-if="errores.fecha_programada" class="field-error">{{ errores.fecha_programada[0] }}</p>
           </div>
 
@@ -353,6 +370,7 @@ onMounted(async () => {
                 list="talleres-list"
                 placeholder="Ej: Taller Mecánico López..."
                 autocomplete="off"
+                maxlength="200"
               />
               <datalist id="talleres-list">
                 <option v-for="t in sugerencias.talleres" :key="t" :value="t"/>
@@ -433,6 +451,7 @@ onMounted(async () => {
 .req { color: #EF4444; }
 .input { padding: 0.625rem 0.875rem; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 0.875rem; outline: none; width: 100%; background: #fff; }
 .input:focus { border-color: #4F46E5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+.input.input-error { border-color: #EF4444; }
 .textarea { resize: vertical; font-family: inherit; }
 .field-error { font-size: 0.75rem; color: #EF4444; margin: 0; }
 .field-hint { font-size: 0.75rem; color: #6B7280; margin: 0; }

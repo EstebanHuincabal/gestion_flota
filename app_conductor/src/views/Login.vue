@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Preferences } from '@capacitor/preferences'
 import { useAuthStore } from '@/stores/auth.js'
+import { validarRut as _validarRutCentral } from '@/utils/validators.js'
 
 const router = useRouter()
 const auth   = useAuthStore()
@@ -40,34 +41,16 @@ function normalizarRut(rut) {
 
 /**
  * Valida formato Y dígito verificador del RUT chileno.
- * Reglas:
- *  - Cuerpo: 1 a 8 dígitos  (RUTs válidos: 1 a 99.999.999)
- *  - Separador: guión
- *  - DV: 0-9 o K (algoritmo módulo 11)
+ * Delega en el validador centralizado de @/utils/validators.js
  */
 function validarRut(rutFormateadoVal) {
-  const norm = normalizarRut(rutFormateadoVal)
-
-  // Formato básico: 1–8 dígitos + guión + (dígito o k)
-  if (!/^\d{1,8}-[\dk]$/.test(norm)) return false
-
-  const [cuerpo, dv] = norm.split('-')
-
-  // Algoritmo módulo 11 — igual que el SII
-  let suma      = 0
-  let multiplo  = 2
-  for (let i = cuerpo.length - 1; i >= 0; i--) {
-    suma     += parseInt(cuerpo[i]) * multiplo
-    multiplo  = multiplo === 7 ? 2 : multiplo + 1
-  }
-  const resto      = suma % 11
-  const dvEsperado = resto === 0 ? '0' : resto === 1 ? 'k' : String(11 - resto)
-
-  return dv === dvEsperado
+  return _validarRutCentral(rutFormateadoVal).valido
 }
 
 function onRutInput(e) {
-  rutFormateado.value = formatearRut(e.target.value)
+  const v = formatearRut(e.target.value)
+  rutFormateado.value = v
+  e.target.value      = v
   errorRut.value = ''
   // Limpiar error general al volver a escribir
   if (auth.error) auth.limpiarError()
@@ -82,11 +65,12 @@ function onPasswordInput() {
 function validar() {
   let ok = true
 
+  const rutResult = _validarRutCentral(rutFormateado.value)
   if (!rutFormateado.value.trim()) {
     errorRut.value = 'Ingresa tu RUT'
     ok = false
-  } else if (!validarRut(rutFormateado.value)) {
-    errorRut.value = 'RUT inválido. Verifica el número y dígito verificador'
+  } else if (!rutResult.valido) {
+    errorRut.value = rutResult.error
     ok = false
   }
 

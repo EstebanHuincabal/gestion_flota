@@ -10,6 +10,9 @@ _RUTAS_LIBRES = [
     '/api/login/',
     '/api/token/',
     '/api/token/refresh/',
+    '/api/planes/',
+    '/api/auto-registro/',
+    '/api/verificar-rut/',
     '/api/pago/',                          # checkout Webpay Plus
     '/api/pago/retorno/',                  # retorno Webpay Plus
     '/api/terminos/',                      # ver términos públicos

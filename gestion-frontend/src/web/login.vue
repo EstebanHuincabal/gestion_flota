@@ -11,7 +11,7 @@ const isLoading = ref(false)
 const showPassword = ref(false)
 
 const formatRut = (value) => {
-  let cleaned = value.replace(/[^0-9kK]/g, '')
+  let cleaned = value.replace(/[^0-9kK]/g, '').slice(0, 9)
   if (cleaned.length < 2) return cleaned
   let body = cleaned.slice(0, -1)
   let dv = cleaned.slice(-1).toUpperCase()
@@ -20,7 +20,9 @@ const formatRut = (value) => {
 }
 
 const onRutInput = (e) => {
-  rut.value = formatRut(e.target.value)
+  const v = formatRut(e.target.value)
+  rut.value      = v
+  e.target.value = v
 }
 
 const validateRut = (rutFull) => {

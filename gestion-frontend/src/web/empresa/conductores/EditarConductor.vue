@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
 import { useToast } from '../../../utils/useToast.js'
+import { validarTelefono } from '../../../utils/validators.js'
+import InputTelefono from '../../../components/InputTelefono.vue'
 
 const router   = useRouter()
 const { ruta } = useEmpresaNav()
@@ -36,6 +38,16 @@ const cargar = async () => {
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  // Validar teléfono si se ingresó
+  if (form.value.telefono) {
+    const telResult = validarTelefono(form.value.telefono)
+    if (!telResult.valido) {
+      errores.value = { telefono: [telResult.error] }
+      return
+    }
+  }
+
   guardando.value = true
   try {
     const res  = await apiFetchEmpresa(`/api/empresa/conductores/${id}/`, { method: 'PUT', body: { ...form.value } })
@@ -85,14 +97,14 @@ onMounted(cargar)
             <label class="label">Nombre completo</label>
             <input v-model="form.nombre_completo" type="text" class="input"
               :class="{ 'input-error': errores.nombre_completo }"
-              placeholder="Nombre completo" required autocomplete="off"/>
+              placeholder="Nombre completo" required autocomplete="off" maxlength="150"/>
             <p v-if="errores.nombre_completo" class="field-error">{{ errores.nombre_completo[0] }}</p>
           </div>
           <div class="form-group">
             <label class="label">Email</label>
             <input v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="conductor@ejemplo.com" required autocomplete="off"/>
+              placeholder="conductor@ejemplo.com" required autocomplete="off" maxlength="150"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
         </div>
@@ -100,11 +112,12 @@ onMounted(cargar)
         <div class="form-row">
           <div class="form-group">
             <label class="label">Teléfono <span class="opcional">(opcional)</span></label>
-            <input v-model="form.telefono" type="text" class="input" placeholder="+56 9 1234 5678" autocomplete="off"/>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
           </div>
           <div class="form-group">
             <label class="label">N° Licencia <span class="opcional">(opcional)</span></label>
-            <input v-model="form.licencia" type="text" class="input" placeholder="Ej: 123456789" autocomplete="off"/>
+            <input v-model="form.licencia" type="text" class="input" placeholder="Ej: 123456789" autocomplete="off" maxlength="50"/>
           </div>
         </div>
 

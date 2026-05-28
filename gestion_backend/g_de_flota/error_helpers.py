@@ -9,8 +9,8 @@ Proporciona tres herramientas complementarias:
                            manejador global de excepciones, garantizando que ningún
                            500 no controlado llegue como HTML al cliente SPA.
 
-Códigos de error estándar utilizados en todo el sistema
---------------------------------------------------------
+Códigos de error estándar utilizados en todo el sistema:
+
   SIN_AUTENTICACION   401  Token inválido o expirado.
   SIN_PERMISO         403  Rol insuficiente para la operación.
   NO_ENCONTRADO       404  Recurso inexistente.

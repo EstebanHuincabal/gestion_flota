@@ -5,6 +5,7 @@ import { Preferences } from '@capacitor/preferences'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import { useDocumentosStore, TIPOS_CONDUCTOR, TIPOS_VEHICULO } from '@/stores/documentos.js'
 import { useAuthStore } from '@/stores/auth.js'
+import { validarFechaVigente } from '@/utils/validators.js'
 
 const store  = useDocumentosStore()
 const auth   = useAuthStore()
@@ -137,6 +138,12 @@ async function enviarDocumento() {
       errorForm.value = 'La fecha de vencimiento no puede ser anterior a la fecha de emisión.'
       return
     }
+  }
+
+  // Validar fecha de vencimiento >= hoy
+  if (form.value.fechaVencimiento) {
+    const r = validarFechaVigente(form.value.fechaVencimiento)
+    if (!r.valido) { errorForm.value = r.error; return }
   }
 
   // Limitar notas a 500 caracteres

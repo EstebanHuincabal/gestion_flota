@@ -3,7 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
+from g_de_flota.views_auth import TokenRefreshSeguroView
 from g_de_flota.views import (
     home_view, login_view, dashboard_global_view, empresa_dashboard_view,
     empresas_lista, empresas_crear, empresas_detalle,
@@ -75,6 +75,7 @@ from g_de_flota.views_solicitudes import (
     SolicitudDetailView, SolicitudAprobarView, SolicitudRechazarView,
 )
 from g_de_flota.views_calendario import calendario_eventos
+from g_de_flota.views_publico import PlanesPublicosView, AutoRegistroView, VerificarRutView
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -84,7 +85,7 @@ urlpatterns = [
     path('',                          home_view,         name='home'),
     path('admin/',                    admin.site.urls),
     path('api/login/',                login_view,           name='login'),
-    path('api/token/refresh/',        TokenRefreshView.as_view(), name='token-refresh'),
+    path('api/token/refresh/',        TokenRefreshSeguroView.as_view(), name='token-refresh'),
     
     path('api/dashboard/',            dashboard_global_view,  name='dashboard-global'),
     path('api/empresa/dashboard/',    empresa_dashboard_view, name='empresa-dashboard'),
@@ -231,4 +232,8 @@ urlpatterns = [
     path('api/empresa/rutas/<int:ruta_id>/finalizar/',           RutaFinalizarView.as_view(),     name='rutas-finalizar'),
     path('api/empresa/rutas/<int:ruta_id>/cancelar/',            RutaCancelarView.as_view(),      name='rutas-cancelar'),
     path('api/empresa/rutas/<int:ruta_id>/comentarios/',         RutaComentariosView.as_view(),   name='rutas-comentarios'),
+    # ── Endpoints públicos (sin autenticación) ──────────────────────────────────
+    path('api/planes/',          PlanesPublicosView.as_view(), name='planes-publicos'),
+    path('api/auto-registro/',   AutoRegistroView.as_view(),   name='auto-registro'),
+    path('api/verificar-rut/',   VerificarRutView.as_view(),   name='verificar-rut'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

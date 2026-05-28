@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { validarTelefono, validarNombre } from '../../utils/validators.js'
+import InputTelefono from '../../components/InputTelefono.vue'
 
 const router = useRouter()
 const route  = useRoute()
@@ -58,7 +60,7 @@ const form = ref({
 
 const aplicarFormatoRut = (val) => {
   if (!val) return ''
-  val = val.replace(/[^0-9kK]/g, '').toUpperCase()
+  val = val.replace(/[^0-9kK]/g, '').toUpperCase().slice(0, 9)
   if (val.length <= 1) return val
   const dv   = val.slice(-1)
   let cuerpo = val.slice(0, -1)
@@ -67,7 +69,9 @@ const aplicarFormatoRut = (val) => {
 }
 
 const formatRut = (e) => {
-  form.value.rut = aplicarFormatoRut(e.target.value)
+  const v = aplicarFormatoRut(e.target.value)
+  form.value.rut = v
+  e.target.value = v
 }
 
 const cargarEmpresa = async () => {
@@ -109,6 +113,15 @@ const cargarEmpresa = async () => {
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  const nombreR = validarNombre(form.value.nombre, 2, 255)
+  if (!nombreR.valido) { errores.value = { nombre: [nombreR.error] }; return }
+
+  if (form.value.telefono) {
+    const telR = validarTelefono(form.value.telefono)
+    if (!telR.valido) { errores.value = { telefono: [telR.error] }; return }
+  }
+
   guardando.value = true
 
   try {
@@ -210,7 +223,7 @@ onMounted(async () => {
             <label class="label" for="nombre">Nombre de la empresa <span class="required">*</span></label>
             <input id="nombre" v-model="form.nombre" type="text" class="input"
               :class="{ 'input-error': errores.nombre }"
-              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off"/>
+              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off" maxlength="255"/>
             <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
 
@@ -305,14 +318,14 @@ onMounted(async () => {
             <label class="label" for="email">Email de contacto</label>
             <input id="email" v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="contacto@empresa.cl" autocomplete="off"/>
+              placeholder="contacto@empresa.cl" autocomplete="off" maxlength="150"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
 
           <div class="form-group">
             <label class="label" for="telefono">Teléfono</label>
-            <input id="telefono" v-model="form.telefono" type="text" class="input"
-              placeholder="+56 9 1234 5678" autocomplete="off"/>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
           </div>
         </div>
 
@@ -322,7 +335,7 @@ onMounted(async () => {
         <div class="form-group">
           <label class="label" for="direccion">Dirección</label>
           <input id="direccion" v-model="form.direccion" type="text" class="input"
-            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off"/>
+            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off" maxlength="255"/>
         </div>
 
         <div class="form-row">
@@ -351,7 +364,7 @@ onMounted(async () => {
           <div class="form-group">
             <label class="label" for="pais">País</label>
             <input id="pais" v-model="form.pais" type="text" class="input"
-              placeholder="Chile" autocomplete="off"/>
+              placeholder="Chile" autocomplete="off" maxlength="100"/>
           </div>
         </div>
 
