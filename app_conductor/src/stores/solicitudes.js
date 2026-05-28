@@ -25,6 +25,7 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
   const cargando        = ref(false)
   const error           = ref(null)
   const enviando        = ref(false)
+  let   _cargandoId     = 0   // para cancelar requests concurrentes
   /**
    * Tipos de solicitud habilitados por el plan de la empresa.
    * null = aún no cargados (mostrar todos mientras tanto).
@@ -92,28 +93,28 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
   // ── Acciones ───────────────────────────────────────────────────────────────
 
   async function cargarSolicitudes() {
+    // Cancelar carga previa si aún está pendiente (race condition pull-to-refresh)
+    const miId = ++_cargandoId
     cargando.value = true
     error.value    = null
     try {
       const data = await apiFetch('/api/conductor/solicitudes/')
-      solicitudes.value = data.solicitudes || []
-      // El backend incluye tipos_permitidos en la respuesta GET
-      if (Array.isArray(data.tipos_permitidos)) {
-        tiposPermitidos.value = data.tipos_permitidos
-      } else {
-        tiposPermitidos.value = TODOS_LOS_TIPOS
-      }
+      // Si ya hay una carga más reciente iniciada, descartar este resultado
+      if (miId !== _cargandoId) return
+      solicitudes.value = Array.isArray(data.solicitudes) ? data.solicitudes : []
+      tiposPermitidos.value = Array.isArray(data.tipos_permitidos)
+        ? data.tipos_permitidos
+        : TODOS_LOS_TIPOS
       await saveSolicitudes(solicitudes.value)
     } catch (e) {
+      if (miId !== _cargandoId) return
       // Offline o error de red → cargar desde SQLite
       const guardadas = await getSolicitudes()
       if (guardadas.length) solicitudes.value = guardadas
-      // Sin respuesta del servidor → permitir todos (no bloquear offline)
       if (tiposPermitidos.value === null) tiposPermitidos.value = TODOS_LOS_TIPOS
       error.value = e?.message || 'Sin conexión'
     } finally {
-      cargando.value = false
-      // Iniciar WebSocket después de la primera carga (con o sin error)
+      if (miId === _cargandoId) cargando.value = false
       _iniciarWs()
     }
   }
@@ -128,6 +129,12 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
     enviando.value = true
     error.value    = null
     try {
+      // Validar tamaño de foto: máximo 10 MB
+      if (foto && foto.size > 10 * 1024 * 1024) {
+        error.value = 'La foto no puede superar los 10 MB. Elige una imagen más pequeña.'
+        return { success: false, error: error.value }
+      }
+
       let body
       let headers = {}
 
@@ -171,7 +178,28 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
           updated_at: new Date().toISOString(),
         }
         solicitudes.value.unshift(solicitudLocal)
-        await encolarAccion('crear_solicitud', datos)
+
+        // Serializar la foto como base64 para sobrevivir en la cola SQLite
+        let fotoBase64 = null
+        if (foto) {
+          try {
+            fotoBase64 = await new Promise((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload  = () => resolve(reader.result.split(',')[1])
+              reader.onerror = reject
+              reader.readAsDataURL(foto)
+            })
+          } catch {
+            fotoBase64 = null
+          }
+        }
+
+        await encolarAccion('crear_solicitud', {
+          url:       '/api/conductor/solicitudes/',
+          method:    'POST',
+          body:      datos,
+          fotoBase64,
+        })
         await saveSolicitudLocal(solicitudLocal)
         return { success: true, solicitud: solicitudLocal, offline: true }
       }

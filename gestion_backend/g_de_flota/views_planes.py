@@ -1,8 +1,12 @@
 import json
+import logging
 import uuid
+from django.db import transaction
 from django.http import JsonResponse
 from django.views import View
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.shortcuts import redirect
@@ -64,12 +68,15 @@ def verificar_limite_plan(empresa, dimension):
     pct = round((uso / limite * 100) if limite > 0 else 0)
 
     if uso >= limite:
+        # Re-notificar si no hay notificación no leída NI notificación en las últimas 24 horas
+        from django.utils import timezone as tz
+        hace_24h = tz.now() - tz.timedelta(hours=24)
         ya_notificado = Notificacion.objects.filter(
             tipo=TipoNotificacion.LIMITE_PLAN,
-            leida=False,
             extra__tipo_alerta='limite_plan',
             extra__dimension=dimension,
             usuario__empresa=empresa,
+            fecha__gte=hace_24h,
         ).exists()
 
         if not ya_notificado:
@@ -192,6 +199,7 @@ def planes_detalle(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def plan_asignar_empresa(request, pk):
     if not _es_superadmin(request.user):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
@@ -567,6 +575,17 @@ class PagoIniciarView(APIView):
         if not monto:
             return Response({'error': 'Este plan no tiene precio configurado.'}, status=400)
 
+        # Idempotencia: bloquear si ya hay un pago iniciado en los últimos 3 minutos
+        desde = timezone.now() - timezone.timedelta(minutes=3)
+        pago_reciente = PagoTransbank.objects.filter(
+            empresa=empresa, estado='iniciado', created_at__gte=desde,
+        ).first()
+        if pago_reciente:
+            return Response({
+                'error': 'Ya hay un pago en proceso. Espera unos minutos antes de intentar nuevamente.',
+                'codigo': 'PAGO_EN_PROCESO',
+            }, status=400)
+
         orden_compra = f"ORD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
 
         # ── Modo OneClick: cobro con tarjeta guardada ─────────────────────────────
@@ -801,8 +820,8 @@ class PagoRetornoView(View):
                             fecha_proximo_cobro=sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
                             orden_compra=pago.orden_compra,
                         )
-                except Exception:
-                    pass
+                except Exception as e_email:
+                    logger.error('Email pago aprobado falló para empresa %s: %s', pago.empresa.nombre, e_email)
 
                 registrar_log('ACTIVIDAD', 'pago_aprobado', request, detalle={
                     'empresa_id': pago.empresa.id,
@@ -838,8 +857,8 @@ class PagoRetornoView(View):
                             monto=pago.monto,
                             url_reintentar=f"{django_settings.FRONTEND_URL}/empresa/pago",
                         )
-                except Exception:
-                    pass
+                except Exception as e_email:
+                    logger.error('Email pago rechazado falló para empresa %s: %s', pago.empresa.nombre, e_email)
 
                 return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")
 

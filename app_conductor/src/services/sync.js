@@ -5,6 +5,9 @@
  *  - Con conexión:  fetch backend → guardar en SQLite → retornar datos frescos
  *  - Sin conexión:  leer SQLite   → retornar datos cacheados
  *  - Al reconectar: procesar cola de acciones pendientes en orden
+ *
+ * Fotos offline: se serializan como base64 en el payload y se reconstruyen
+ * como Blob al momento de sincronizar, para sobrevivir entre sesiones.
  */
 import { Network } from '@capacitor/network'
 import { apiFetch } from './api.js'
@@ -14,10 +17,6 @@ export { encolarAccion }
 
 // ── Listener de red ───────────────────────────────────────────────────────────
 
-/**
- * Inicia el listener de cambios de red.
- * @param {(online: boolean) => void} onStatusChange  callback al cambiar red
- */
 export async function iniciarSync(onStatusChange) {
   Network.addListener('networkStatusChange', async (status) => {
     onStatusChange?.(status.connected)
@@ -29,17 +28,18 @@ export async function iniciarSync(onStatusChange) {
 
 // ── Carga con fallback ────────────────────────────────────────────────────────
 
-/**
- * Intenta cargar rutas del backend; si falla (sin red) usa la cache SQLite.
- * @returns {{ rutas: Array, online: boolean }}
- */
 export async function cargarConFallback() {
-  const status = await Network.getStatus()
+  let status
+  try {
+    status = await Network.getStatus()
+  } catch {
+    status = { connected: false }
+  }
 
   if (status.connected) {
     try {
       const data  = await apiFetch('/api/conductor/rutas/')
-      const rutas = data.rutas || []
+      const rutas = Array.isArray(data.rutas) ? data.rutas : []
       await saveRutas(rutas)
       return { rutas, online: true }
     } catch {
@@ -56,12 +56,18 @@ export async function cargarConFallback() {
 /**
  * Encola una acción y la intenta enviar de inmediato si hay conexión.
  * @param {string} tipo     ej: 'iniciar_ruta'
- * @param {object} payload  { url, method, body }
+ * @param {object} payload  { url, method, body, fotoBase64? }
  */
 async function encolarAccion(tipo, payload) {
   await _encolarDB(tipo, payload)
 
-  const status = await Network.getStatus()
+  let status
+  try {
+    status = await Network.getStatus()
+  } catch {
+    status = { connected: false }
+  }
+
   if (status.connected) {
     await _procesarPendientes()
   }
@@ -73,10 +79,25 @@ async function _procesarPendientes() {
   const pendientes = await getPendientes()
   for (const accion of pendientes) {
     try {
-      await apiFetch(accion.payload.url, {
-        method: accion.payload.method || 'POST',
-        body:   JSON.stringify(accion.payload.body || {}),
-      })
+      const p = accion.payload || {}
+
+      // Si el payload tiene foto en base64, reconstruir el FormData
+      if (p.fotoBase64) {
+        const bytes = Uint8Array.from(atob(p.fotoBase64), c => c.charCodeAt(0))
+        const blob  = new Blob([bytes], { type: 'image/jpeg' })
+        const fd    = new FormData()
+        if (p.body && typeof p.body === 'object') {
+          Object.entries(p.body).forEach(([k, v]) => fd.append(k, v))
+        }
+        fd.append('foto', blob, 'foto.jpg')
+        await apiFetch(p.url, { method: p.method || 'POST', body: fd })
+      } else {
+        await apiFetch(p.url, {
+          method: p.method || 'POST',
+          body:   JSON.stringify(p.body || {}),
+        })
+      }
+
       await eliminarPendiente(accion.id)
     } catch {
       // Se reintentará en la próxima reconexión

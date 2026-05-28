@@ -13,6 +13,15 @@ const error = ref('')
 const toast = useToast()
 const confirm = ref({ visible: false, empresa: null, accion: 'desactivar' })
 
+const PLAN_ESTILOS = {
+  'Básico':     { background: '#F3F4F6', color: '#374151' },
+  'Pro':        { background: '#EEF2FF', color: '#4338CA' },
+  'Enterprise': { background: '#F5F3FF', color: '#6D28D9' },
+}
+function planEstilo(nombre) {
+  return PLAN_ESTILOS[nombre] ?? { background: '#FFF7ED', color: '#C2410C' }
+}
+
 const cargarEmpresas = async () => {
   cargando.value = true
   error.value = ''
@@ -105,6 +114,7 @@ onMounted(cargarEmpresas)
           <tr>
             <th>Nombre</th>
             <th>RUT</th>
+            <th>Plan</th>
             <th>Flotas / Vehículos</th>
             <th>Conductores</th>
             <th>Última Actividad</th>
@@ -114,11 +124,16 @@ onMounted(cargarEmpresas)
         </thead>
         <tbody>
           <tr v-if="empresas.length === 0">
-            <td colspan="7" class="empty-row">No hay empresas registradas.</td>
+            <td colspan="8" class="empty-row">No hay empresas registradas.</td>
           </tr>
           <tr v-for="e in empresas" :key="e.id" :class="{ inactiva: e.estado !== 'activa' }">
             <td class="td-nombre">{{ e.nombre }}</td>
             <td class="td-mono">{{ e.rut }}</td>
+            <td>
+              <span class="badge-plan" :style="planEstilo(e.plan_nombre)">
+                {{ e.plan_nombre || 'Sin plan' }}
+              </span>
+            </td>
             <td class="td-metrics">
               <span class="metric" title="Flotas">{{ e.cantidad_flotas || 0 }}</span> / 
               <span class="metric" title="Vehículos">{{ e.cantidad_vehiculos || 0 }}</span>
@@ -310,6 +325,16 @@ onMounted(cargarEmpresas)
 }
 .badge-activa { background: #ECFDF5; color: #059669; }
 .badge-inactiva { background: #F3F4F6; color: #9CA3AF; }
+
+.badge-plan {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
 
 .td-acciones { display: flex; gap: 0.5rem; align-items: center; }
 

@@ -62,8 +62,9 @@ def notificar(usuario, tipo: str, titulo: str, mensaje: str,
                 recipient_list=[usuario.email],
                 fail_silently=True,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning('notificar() falló silenciosamente: %s', exc)
 
 
 def notificar_admins_empresa(empresa, tipo: str, titulo: str, mensaje: str,

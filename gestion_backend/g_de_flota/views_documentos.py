@@ -1,15 +1,20 @@
+import logging
 import os
 
 from django.core.files.storage import default_storage
 from django.db.models import Q
 from django.http import FileResponse
+from django.utils.dateparse import parse_date
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
 
+logger = logging.getLogger(__name__)
+
 from .models import (
     Documento, Empresa, Vehiculo, Usuario, Rol, TipoNotificacion, Notificacion,
+    Asignacion,
 )
 from .audit import registrar_log, _diff_campos, _snap
 from .notificaciones import notificar_admins_empresa
@@ -35,6 +40,13 @@ def _get_empresa(user, params, fallback=None):
     return user.empresa
 
 
+def _to_iso(val):
+    """Convierte date o str ISO a str ISO, tolerante a ambos tipos."""
+    if not val:
+        return None
+    return val if isinstance(val, str) else val.isoformat()
+
+
 _PEOR = {'vencido': 0, 'por_vencer': 1, 'vigente': 2, 'sin_vencimiento': 3}
 
 
@@ -54,8 +66,8 @@ def _doc_dict(doc):
         'vehiculo_patente':  doc.vehiculo.patente if doc.vehiculo else None,
         'conductor_id':      doc.conductor_id,
         'conductor_nombre':  doc.conductor.nombre if doc.conductor else None,
-        'fecha_emision':     doc.fecha_emision.isoformat()     if doc.fecha_emision     else None,
-        'fecha_vencimiento': doc.fecha_vencimiento.isoformat() if doc.fecha_vencimiento else None,
+        'fecha_emision':     _to_iso(doc.fecha_emision),
+        'fecha_vencimiento': _to_iso(doc.fecha_vencimiento),
         'dias_para_vencer':  doc.dias_para_vencer(),
         'estado':            doc.estado(),
         'tiene_archivo':     bool(doc.archivo),
@@ -145,9 +157,21 @@ def _build_resumen(qs):
     }
 
 
+def _vehiculo_asignado_id(user):
+    """Devuelve el vehiculo_id activo del conductor, o None."""
+    asig = Asignacion.objects.filter(conductor=user, activo=True).only('vehiculo_id').first()
+    return asig.vehiculo_id if asig else None
+
+
 def _qs_empresa(user, params):
     if user.rol == Rol.CONDUCTOR:
-        return Documento.objects.filter(conductor=user), None
+        # Docs propios del conductor + docs del vehículo que tiene asignado
+        vid = _vehiculo_asignado_id(user)
+        if vid:
+            qs = Documento.objects.filter(Q(conductor=user) | Q(vehiculo_id=vid))
+        else:
+            qs = Documento.objects.filter(conductor=user)
+        return qs, None
     empresa = _get_empresa(user, params)
     if not empresa:
         return None, None
@@ -195,9 +219,21 @@ class DocumentosListView(APIView):
         archivo = request.FILES.get('archivo')
 
         if user.rol == Rol.CONDUCTOR:
-            if data.get('entidad') != 'conductor' or str(data.get('conductor_id')) != str(user.id):
-                return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
             empresa = user.empresa
+            entidad_req = data.get('entidad')
+            if entidad_req == 'conductor':
+                if str(data.get('conductor_id')) != str(user.id):
+                    return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+            elif entidad_req == 'vehiculo':
+                vid = data.get('vehiculo_id')
+                asig = Asignacion.objects.filter(conductor=user, activo=True, vehiculo_id=vid).first()
+                if not asig:
+                    return Response(
+                        {'error': 'Sin permisos. El vehículo no está asignado a ti.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+            else:
+                return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
         else:
             empresa = _get_empresa(user, data, fallback=request.query_params)
             if not empresa:
@@ -243,8 +279,8 @@ class DocumentosListView(APIView):
             tipo=tipo,
             vehiculo=vehiculo,
             conductor=conductor,
-            fecha_emision=data.get('fecha_emision') or None,
-            fecha_vencimiento=data.get('fecha_vencimiento') or None,
+            fecha_emision=parse_date(data['fecha_emision']) if data.get('fecha_emision') else None,
+            fecha_vencimiento=parse_date(data['fecha_vencimiento']) if data.get('fecha_vencimiento') else None,
             notas=data.get('notas', ''),
             subido_por=user,
         )
@@ -292,7 +328,9 @@ class DocumentoDetailView(APIView):
     def _get(self, user, doc_id):
         try:
             if user.rol == Rol.CONDUCTOR:
-                return Documento.objects.select_related('vehiculo', 'conductor', 'subido_por').get(pk=doc_id, conductor=user)
+                vid = _vehiculo_asignado_id(user)
+                f   = Q(conductor=user) | Q(vehiculo_id=vid) if vid else Q(conductor=user)
+                return Documento.objects.select_related('vehiculo', 'conductor', 'subido_por').get(f, pk=doc_id)
             if _es_superadmin(user):
                 return Documento.objects.select_related('vehiculo', 'conductor', 'subido_por').get(pk=doc_id)
             return Documento.objects.select_related('vehiculo', 'conductor', 'subido_por').get(pk=doc_id, empresa=user.empresa)
@@ -316,8 +354,8 @@ class DocumentoDetailView(APIView):
         _campos_doc = ['fecha_emision', 'fecha_vencimiento', 'notas', 'nombre_archivo']
         _antes_doc  = _snap(doc, _campos_doc)
 
-        if data.get('fecha_emision'):     doc.fecha_emision     = data['fecha_emision']
-        if data.get('fecha_vencimiento'): doc.fecha_vencimiento = data['fecha_vencimiento']
+        if data.get('fecha_emision'):     doc.fecha_emision     = parse_date(data['fecha_emision'])
+        if data.get('fecha_vencimiento'): doc.fecha_vencimiento = parse_date(data['fecha_vencimiento'])
         if 'notas' in data:               doc.notas             = data['notas']
 
         if archivo:
@@ -375,7 +413,9 @@ class DocumentoDescargarView(APIView):
         user = request.user
         try:
             if user.rol == Rol.CONDUCTOR:
-                doc = Documento.objects.get(pk=doc_id, conductor=user)
+                vid = _vehiculo_asignado_id(user)
+                f   = Q(conductor=user) | Q(vehiculo_id=vid) if vid else Q(conductor=user)
+                doc = Documento.objects.get(f, pk=doc_id)
             elif _es_superadmin(user):
                 doc = Documento.objects.get(pk=doc_id)
             else:
@@ -395,10 +435,19 @@ class DocumentoDescargarView(APIView):
         })
 
         try:
-            archivo  = doc.archivo.open('rb')
-            nombre   = doc.nombre_archivo or os.path.basename(doc.archivo.name)
+            archivo = doc.archivo.open('rb')
+            nombre  = doc.nombre_archivo or os.path.basename(doc.archivo.name)
             return FileResponse(archivo, as_attachment=True, filename=nombre)
-        except Exception:
+        except FileNotFoundError:
+            return Response(
+                {'error': 'El archivo ya no existe en el servidor.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as exc:
+            logger.error(
+                'Error al servir documento pk=%s (archivo=%s): %s',
+                doc.id, doc.archivo.name, exc, exc_info=True,
+            )
             return Response({'error': 'No se pudo servir el archivo.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -427,8 +476,8 @@ class DocumentoRenovarView(APIView):
             tipo=anterior.tipo,
             vehiculo=anterior.vehiculo,
             conductor=anterior.conductor,
-            fecha_emision=data.get('fecha_emision') or None,
-            fecha_vencimiento=data.get('fecha_vencimiento') or None,
+            fecha_emision=parse_date(data['fecha_emision']) if data.get('fecha_emision') else None,
+            fecha_vencimiento=parse_date(data['fecha_vencimiento']) if data.get('fecha_vencimiento') else None,
             notas=data.get('notas', ''),
             subido_por=user,
             version_anterior=anterior,

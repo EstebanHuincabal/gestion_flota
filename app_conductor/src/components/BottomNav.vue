@@ -12,10 +12,11 @@ const { tieneModulo, cargando: cargandoPermisos } = usePermisos()
 
 // modulo: null → siempre visible; modulo: 'xxx' → visible solo si está en el plan
 const items = [
-  { to: '/rutas',       label: 'Rutas',      icon: 'rutas',       modulo: 'rutas'        },
-  { to: '/solicitudes', label: 'Solicitudes', icon: 'solicitudes', modulo: 'solicitudes'  },
-  { to: '/mantencion',  label: 'Mantención',  icon: 'mantencion',  modulo: 'mantenciones' },
-  { to: '/ajustes',     label: 'Ajustes',     icon: 'ajustes',     modulo: null           },
+  { to: '/rutas',        label: 'Rutas',        icon: 'rutas',        modulo: 'rutas'        },
+  { to: '/solicitudes',  label: 'Solicitudes',  icon: 'solicitudes',  modulo: 'solicitudes'  },
+  { to: '/mantencion',   label: 'Mantención',   icon: 'mantencion',   modulo: 'mantenciones' },
+  { to: '/documentos',   label: 'Documentos',   icon: 'documentos',   modulo: null           },
+  { to: '/ajustes',      label: 'Ajustes',      icon: 'ajustes',      modulo: null           },
 ]
 
 // Mientras cargamos los permisos mostramos todos los ítems para evitar un flash
@@ -90,6 +91,17 @@ const esActivo = (to) => route.path.startsWith(to)
               class="badge-dot badge-dot--blue"
             >{{ mantenStore.totalActivas }}</span>
           </span>
+
+          <!-- ── Ícono Documentos ── -->
+          <svg v-if="item.icon === 'documentos'" class="nav-icon" viewBox="0 0 24 24">
+            <path v-if="esActivo(item.to)"
+              fill="currentColor"
+              d="M7 3a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5H7zm5 0v5h5M9 13h6M9 17h4"
+            />
+            <path v-else fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+              d="M7 3a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5H7zm5 0v5h5M9 13h6M9 17h4"
+            />
+          </svg>
 
           <!-- ── Ícono Ajustes ── -->
           <svg v-if="item.icon === 'ajustes'" class="nav-icon" viewBox="0 0 24 24">

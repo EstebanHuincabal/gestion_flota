@@ -244,22 +244,12 @@ async function handleLogout() {
       </section>
 
       <!-- ── Cerrar sesión ──────────────────────────────────────────────────── -->
-      <section class="aj-settings-group">
-        <button
-          @click="confirmandoLogout = true"
-          class="aj-settings-row aj-settings-row--first aj-logout-btn w-full text-left"
-        >
-          <div class="aj-row-icon aj-row-icon--red">
-            <svg class="w-4 h-4" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-            </svg>
-          </div>
-          <span class="aj-row-label" style="color: #EF4444; font-weight: 600;">Cerrar sesión</span>
-          <svg class="aj-row-chevron" fill="none" stroke="#EF4444" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-          </svg>
-        </button>
-      </section>
+      <button @click="confirmandoLogout = true" class="aj-logout-standalone">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        Cerrar sesión
+      </button>
 
     </div>
 
@@ -413,7 +403,6 @@ async function handleLogout() {
 }
 .aj-settings-row--first { border-top: none; }
 .aj-settings-row:active { background: #F9FAFB; }
-.aj-logout-btn:active { background: #FFF5F5; }
 .aj-row-icon {
   width: 32px; height: 32px; flex-shrink: 0; border-radius: 0.5rem;
   display: flex; align-items: center; justify-content: center;
@@ -570,6 +559,27 @@ async function handleLogout() {
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%       { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* ── Botón cerrar sesión ────────────────────────────────────────────────── */
+.aj-logout-standalone {
+  width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  gap: 0.625rem;
+  padding: 1rem;
+  background: #FEF2F2;
+  border: 1.5px solid #FECACA;
+  border-radius: 1.25rem;
+  color: #EF4444;
+  font-size: 0.9375rem; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  min-height: 56px;
+  transition: background 0.15s, transform 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.aj-logout-standalone:active {
+  background: #FEE2E2;
+  transform: scale(0.98);
 }
 
 /* Overlay */

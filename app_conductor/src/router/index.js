@@ -47,6 +47,12 @@ const routes = [
     meta: { requiereAuth: true, modulo: 'mantenciones' },
   },
   {
+    path: '/documentos',
+    name: 'documentos',
+    component: () => import('@/views/Documentos/MisDocumentos.vue'),
+    meta: { requiereAuth: true },
+  },
+  {
     path: '/ajustes',
     name: 'ajustes',
     component: () => import('@/views/Ajustes/Ajustes.vue'),
@@ -79,10 +85,15 @@ const router = createRouter({
   routes,
 })
 
-/** Lee los módulos del plan desde Preferences (función auxiliar del guard) */
+/** Lee los módulos del plan desde Preferences de forma segura */
 async function leerModulos() {
-  const { value } = await Preferences.get({ key: 'plan_modulos' })
-  return JSON.parse(value || '[]')
+  try {
+    const { value } = await Preferences.get({ key: 'plan_modulos' })
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -108,17 +119,18 @@ router.beforeEach(async (to) => {
   // Sin sesión → redirigir al login
   if (to.meta.requiereAuth && !auth.estaAutenticado) return { name: 'login' }
 
-  // Con sesión en ruta pública → redirigir al primer módulo disponible
-  if (to.meta.publica && auth.estaAutenticado) {
+  // Leer módulos una sola vez si la ruta es pública con sesión o requiere módulo
+  const necesitaModulos = (to.meta.publica && auth.estaAutenticado) || !!to.meta.modulo
+  if (necesitaModulos) {
     const modulosArray = await leerModulos()
-    return _primerModuloDisponible(modulosArray)
-  }
 
-  // Si la ruta requiere un módulo que no está en el plan,
-  // redirigir silenciosamente al primer módulo disponible.
-  if (to.meta.modulo) {
-    const modulosArray = await leerModulos()
-    if (!modulosArray.includes(to.meta.modulo)) {
+    // Con sesión en ruta pública → redirigir al primer módulo disponible
+    if (to.meta.publica && auth.estaAutenticado) {
+      return _primerModuloDisponible(modulosArray)
+    }
+
+    // Si la ruta requiere un módulo que no está en el plan → redirigir
+    if (to.meta.modulo && !modulosArray.includes(to.meta.modulo)) {
       return _primerModuloDisponible(modulosArray)
     }
   }

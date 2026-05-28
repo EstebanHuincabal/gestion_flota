@@ -1,6 +1,6 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 2.4 · **Última actualización:** Mayo 2026  
+> **Versión:** 2.7 · **Última actualización:** Mayo 2026  
 > **Stack:** Django 5 · Vue 3 · Capacitor 8 · SQLite · JWT
 
 ---
@@ -25,6 +25,7 @@
 13. [Sistema de notificaciones](#13-sistema-de-notificaciones)
 14. [Alertas de interfaz (Toasts)](#14-alertas-de-interfaz-toasts)
 15. [Variables de entorno](#15-variables-de-entorno)
+16. [Manejo de errores (v2.5)](#16-manejo-de-errores-v25)
 
 ---
 
@@ -700,6 +701,7 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | Botón "Iniciar/Finalizar ruta" quedaba debajo del BottomNav en iPhone X+ | `bottom: var(--nav-total)` en lugar de `bottom: 64px` fijo |
 | Modales con `height: 80vh` desbordaban en pantallas pequeñas | `min(80vh, 80dvh)` que respeta la altura dinámica |
 | Login con `min-height: 60vh` cortaba en iPhone SE | Card con `max-height: 72vh` y scroll interno |
+| Barra de estado fija en color púrpura aunque el tema cambie | `inicializarStatusBar()` en `App.vue` usa `@capacitor/status-bar` para fijar color en runtime desde `themeStore.temaActual.colorGrad[0]`; `watch(temaActualId)` lo actualiza al cambiar tema |
 
 #### Pantallas
 
@@ -711,7 +713,9 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | `ChecklistPreviaje.vue` | `/rutas/:id/checklist` | Checklist pre-viaje de 12 ítems agrupados (Documentos, Mecánica, Seguridad). Barra de progreso animada, ítems con estado visual (pendiente/ok/falla), documentos vigentes pre-marcados automáticamente, textarea de observación para fallas, firma digital por canvas (touch). Botón de envío deshabilitado hasta completar todos los ítems obligatorios y firmar. |
 | `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
 | `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. Al tocar una tarjeta se abre `ModalDetalleMantencion` con la acción correspondiente al estado. Toast de feedback tras iniciar o completar. |
-| `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. **Sección Apariencia** con selector de 6 temas de color (se guarda localmente por dispositivo). Botón "Cerrar sesión" con bottom-sheet de confirmación. |
+| `MisDocumentos.vue` | `/documentos` | Documentación del conductor y del vehículo asignado. **Sección conductor:** Licencia de conducir. **Sección vehículo:** Permiso de circulación, Revisión técnica y Seguro SOAP (vinculados al vehículo asignado vía `Asignacion`). Cada tarjeta muestra estado (Vigente/Por vencer/Vencido/Sin documento), fechas e historial de versiones. Sheet modal con Cámara/Galería/Archivo, fechas y notas. Los documentos quedan registrados en el módulo de Documentos del panel web. Pull-to-refresh. |
+| `SubirDocumentos.vue` | `/onboarding` | Pantalla de onboarding (primer login). Muestra las mismas tarjetas de documentación (conductor + vehículo) con encabezado "Completa tu documentación". Botón **Continuar** al pie que redirige al primer módulo disponible según el plan. Comparte el mismo store `documentos.js`. |
+| `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. **Sección Apariencia** con selector de 6 temas de color. **Botón "Cerrar sesión"** como botón destacado rojo autónomo (no dentro de un grupo iOS) con bottom-sheet de confirmación. |
 
 #### Rediseño visual (Mayo 2026)
 
@@ -743,6 +747,7 @@ Se realizó un rediseño completo de la UI de la app móvil (`v2.3`). Cambios pr
 | Store | Archivo | Descripción |
 |---|---|---|
 | Temas | `stores/theme.js` | Store Pinia con 6 temas de color (Índigo, Océano, Esmeralda, Carmesí, Cobre, Pizarra). Aplica variables CSS en `:root` de forma reactiva. Persiste la elección en `@capacitor/preferences` (clave `tema_app`). Personal por conductor y por dispositivo. |
+| Documentos | `stores/documentos.js` | Store Pinia para la documentación del conductor y su vehículo. `cargarDocumentos()` → `GET /api/empresa/documentos/`. `subirDocumento(formData)` → `POST /api/empresa/documentos/`. Computed `docPorTipo` devuelve el doc más reciente por tipo. Exporta `TIPOS_CONDUCTOR` (`licencia`) y `TIPOS_VEHICULO` (`permiso_circulacion`, `revision_tecnica`, `seguro_soap`) con metadatos visuales. |
 
 | Servicio | Archivo | Descripción |
 |---|---|---|
@@ -1478,6 +1483,86 @@ En desarrollo, el backend acepta peticiones desde:
 - `capacitor://localhost` y `http://localhost` (app conductores en dispositivo)
 
 En producción, configurar `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` en `settings.py` con los dominios reales.
+
+---
+
+## 16. Manejo de errores (v2.5)
+
+Sistema profesional de manejo de errores implementado para garantizar estabilidad en pruebas QA y producción.
+
+### Backend
+
+#### `error_helpers.py` — Helpers centralizados
+
+Ubicación: `gestion_backend/g_de_flota/error_helpers.py`
+
+| Función | Descripción |
+|---|---|
+| `error_response(mensaje, codigo, status, detalle)` | Retorna `JsonResponse` estandarizado con `error`, `codigo` y `detalle` opcionales |
+| `validar_campos(body, requeridos)` | Verifica campos obligatorios y retorna `(valido: bool, msg: str)` |
+| `vista_segura` | Decorador para métodos de vistas-clase: captura `json.JSONDecodeError`, `PermissionError` y cualquier excepción no controlada; registra log SEGURIDAD en errores 500 |
+
+**Códigos de error estándar:**
+
+| Código | HTTP | Significado |
+|---|---|---|
+| `SIN_AUTENTICACION` | 401 | Token inválido o expirado |
+| `SIN_PERMISO` | 403 | Rol insuficiente |
+| `NO_ENCONTRADO` | 404 | Recurso inexistente |
+| `VALIDACION` | 400 | Campo faltante o mal formado |
+| `LIMITE_PLAN` | 403 | Límite del plan alcanzado |
+| `MODULO_NO_INCLUIDO` | 403 | Módulo no disponible en el plan |
+| `SUSCRIPCION_BLOQUEADA` | 402 | Empresa sin suscripción activa |
+| `ERROR_INTERNO` | 500 | Error no controlado del servidor |
+
+#### `ErrorHandlerMiddleware` — Captura global Django
+
+Agregado en `gestion_backend/g_de_flota/middleware.py` y registrado en `settings.py` antes de `ConfiguracionSeguridadMiddleware`.
+
+Captura excepciones que escapan a las vistas (Django normalmente retornaría HTML de error) y las convierte en JSON `{'error': ..., 'codigo': 'ERROR_INTERNO'}` con status 500. Adicionalmente registra el traceback en `LogAuditoria`.
+
+### Frontend
+
+#### `apiFetch` mejorado — `src/utils/api.js`
+
+- **Timeout de 15 segundos** con `AbortController`; lanza `ApiError` con código `TIMEOUT`
+- **`ApiError`** — clase de error exportable con campos `status` y `codigo`
+- **Parseo seguro de JSON**: solo parsea si `Content-Type: application/json`; no rompe con respuestas no-JSON
+- **`safeJsonParse`** interno: todos los `JSON.parse` de `localStorage`/`sessionStorage` están protegidos
+- **Sin conexión** → `ApiError` código `SIN_CONEXION`
+- Mantiene la misma lógica de inyección de `empresa_id`, refresh de JWT y eventos globales de plan/suscripción
+
+#### `useAsync` — `src/composables/useAsync.js`
+
+Composable reutilizable que evita repetir el patrón `cargando / error / try-catch` en cada componente:
+
+```js
+const { cargando, error, ejecutar } = useAsync()
+
+async function guardar() {
+  await ejecutar(
+    () => apiFetch('/api/...', { method: 'POST', body: datos }),
+    { mensajeError: 'Error al guardar. Intenta nuevamente.' }
+  )
+}
+```
+
+Opciones: `mensajeError`, `mostrarToast` (default `true`), `onError` (callback).
+
+#### `ErrorBoundary.vue` — `src/components/ErrorBoundary.vue`
+
+Componente que captura errores de renderizado de Vue (`onErrorCaptured`) y muestra una pantalla de recuperación con botón "Reintentar" en lugar de una pantalla en blanco.
+
+Está envuelto en `App.vue`:
+```vue
+<ErrorBoundary>
+  <RouterView />
+</ErrorBoundary>
+```
+
+#### `router/index.js` — Guards seguros
+
+Todos los accesos a `localStorage`/`sessionStorage` del router guard usan `safeJsonParse`, previniendo que un JSON corrupto bloquee la navegación silenciosamente.
 
 ---
 

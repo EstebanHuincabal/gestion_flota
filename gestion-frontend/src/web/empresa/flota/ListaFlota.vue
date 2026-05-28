@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiFetch } from '../../../utils/api.js'
+import { apiFetch, safeJsonParse } from '../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
@@ -10,13 +10,14 @@ import { useToast } from '../../../utils/useToast.js'
 const router   = useRouter()
 const { ruta } = useEmpresaNav()
 
-const usuario      = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
+const usuario      = computed(() => safeJsonParse(localStorage.getItem('usuario'), {}))
 const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 
 // ── Datos ───────────────────────────────────────────────
 const flotas          = ref([])
 const todasLasFlotas  = ref([])
 const cargando        = ref(true)
+const operando        = ref(false)
 const error           = ref('')
 const sinEmpresa      = ref(false)
 const abiertos        = ref({})
@@ -44,8 +45,11 @@ const cargarEmpresas = async () => {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
-  } finally {
+    if (res.ok) {
+      const data = await res.json()
+      empresas.value = Array.isArray(data) ? data : []
+    }
+  } catch {} finally {
     cargandoEmpresas.value = false
   }
 }
@@ -150,8 +154,10 @@ const pedirConPermiso = (item, tipo, flotaCtx = null) => {
 }
 
 const confirmar = async () => {
+  if (operando.value) return
   const { item, tipo, flotaCtx } = confirm.value
   cancelar()
+  operando.value = true
   // Para SUPERADMIN: establecer empresa antes de la llamada API
   const ctx = flotaCtx || item
   ensureEmpresaCtx(ctx)
@@ -172,6 +178,8 @@ const confirmar = async () => {
     await cargar()
   } catch (e) {
     toast.agregar(e.message, 'error')
+  } finally {
+    operando.value = false
   }
 }
 
@@ -279,7 +287,7 @@ onMounted(async () => {
         <button
           class="btn-primary"
           @click="irNuevaFlota"
-          :disabled="esSuperadmin && !empresaActiva"
+          :disabled="(esSuperadmin && !empresaActiva) || operando"
           :title="esSuperadmin && !empresaActiva ? 'Selecciona una empresa para crear una flota' : ''"
         >
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">

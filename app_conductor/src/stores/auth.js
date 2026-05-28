@@ -15,16 +15,35 @@ import { resetearPermisos } from '../composables/usePermisos.js'
 export const useAuthStore = defineStore('auth', () => {
   const usuario  = ref(null)
   const cargando = ref(false)
-  const error    = ref(null)
+
+  /**
+   * Objeto de error estructurado:
+   *  { tipo, mensaje }
+   *
+   *  tipos:
+   *   'credenciales'  → RUT o contraseña incorrectos
+   *   'bloqueado'     → Cuenta bloqueada por intentos fallidos
+   *   'sin_conexion'  → Sin red o timeout
+   *   'servidor'      → Error 5xx del backend
+   *   'no_conductor'  → Usuario no es CONDUCTOR
+   *   'desconocido'   → Cualquier otro error
+   */
+  const error = ref(null)
 
   const estaAutenticado = computed(() => !!usuario.value)
   const esConductor     = computed(() => usuario.value?.rol === 'CONDUCTOR')
+
+  function limpiarError() {
+    error.value = null
+  }
 
   /** Restaurar sesión guardada al abrir la app */
   async function cargarSesion() {
     try {
       const { value } = await Preferences.get({ key: 'usuario' })
-      usuario.value = value ? JSON.parse(value) : null
+      if (!value) { usuario.value = null; return }
+      const parsed = JSON.parse(value)
+      usuario.value = (parsed && typeof parsed === 'object' && parsed.rol) ? parsed : null
     } catch {
       usuario.value = null
     }
@@ -43,55 +62,83 @@ export const useAuthStore = defineStore('auth', () => {
         body: JSON.stringify({ rut, password }),
       })
 
-      // El backend retorna la clave "user"
-      const userObj = data.user
-
-      // Solo conductores pueden usar esta app
-      if (userObj.rol !== 'CONDUCTOR') {
-        error.value = 'Esta app es solo para conductores'
+      const userObj = data?.user
+      if (!userObj || typeof userObj !== 'object') {
+        error.value = { tipo: 'servidor', mensaje: 'Respuesta inesperada del servidor. Intenta nuevamente.' }
         return { success: false }
       }
 
-      // Persistir en almacenamiento nativo
-      await Preferences.set({ key: 'access_token',  value: data.access })
+      if (userObj.rol !== 'CONDUCTOR') {
+        error.value = { tipo: 'no_conductor', mensaje: 'Esta app es exclusiva para conductores. Usa el panel web.' }
+        return { success: false }
+      }
+
+      await Preferences.set({ key: 'access_token',  value: data.access  })
       await Preferences.set({ key: 'refresh_token', value: data.refresh })
       await Preferences.set({ key: 'usuario',       value: JSON.stringify(userObj) })
-
-      // Módulos del plan — se guardan por separado para ser leídos desde
-      // el composable usePermisos y el router guard sin depender del store
-      await Preferences.set({
-        key:   'plan_modulos',
-        value: JSON.stringify(userObj.plan_modulos || []),
-      })
-      await Preferences.set({
-        key:   'plan_nombre',
-        value: userObj.plan_nombre || '',
-      })
+      await Preferences.set({ key: 'plan_modulos',  value: JSON.stringify(userObj.plan_modulos || []) })
+      await Preferences.set({ key: 'plan_nombre',   value: userObj.plan_nombre || '' })
 
       usuario.value = userObj
       return { success: true, primerLogin: userObj.primer_login }
+
     } catch (e) {
-      error.value = e.message === 'Sin conexión. Verifica tu red.'
-        ? e.message
-        : (e.message || 'Error al iniciar sesión. Intenta nuevamente.')
+      error.value = _clasificarError(e)
       return { success: false }
     } finally {
       cargando.value = false
     }
   }
 
+  /** Clasifica un error de apiFetch en un objeto { tipo, mensaje } */
+  function _clasificarError(e) {
+    // Sin conexión o timeout
+    if (e.isNetworkError) {
+      const esTimeout = e.message?.includes('tardó demasiado')
+      return {
+        tipo:    'sin_conexion',
+        mensaje: esTimeout
+          ? 'El servidor tardó demasiado en responder. Verifica tu conexión e intenta nuevamente.'
+          : 'Sin conexión a Internet. Verifica tu red e intenta nuevamente.',
+      }
+    }
+
+    // Error HTTP con status adjunto
+    if (e.status === 401) {
+      return { tipo: 'credenciales', mensaje: 'RUT o contraseña incorrectos. Verifica tus datos.' }
+    }
+    if (e.status === 403) {
+      return {
+        tipo:    'bloqueado',
+        mensaje: e.message || 'Tu cuenta está bloqueada por exceso de intentos fallidos. Contacta al administrador.',
+      }
+    }
+    if (e.status >= 500) {
+      return { tipo: 'servidor', mensaje: 'El servidor no está disponible. Intenta en unos minutos.' }
+    }
+    if (e.status === 400) {
+      return { tipo: 'credenciales', mensaje: e.message || 'Datos inválidos. Verifica tu RUT y contraseña.' }
+    }
+
+    // Error de sesión expirada (inesperado en login)
+    if (e.message === 'SESION_EXPIRADA') {
+      return { tipo: 'servidor', mensaje: 'Error de autenticación. Intenta nuevamente.' }
+    }
+
+    return { tipo: 'desconocido', mensaje: e.message || 'Error al iniciar sesión. Intenta nuevamente.' }
+  }
+
   /** Cerrar sesión y redirigir al login */
   async function logout() {
-    // Desconectar WebSocket antes de limpiar la sesión
     try {
       const { wsService } = await import('../services/websocket.js')
       wsService.disconnect()
     } catch {}
 
-    await resetearPermisos()  // limpia el singleton y el intervalo de polling
+    await resetearPermisos()
     await limpiarSesion()
     usuario.value = null
-    // Importación dinámica para evitar dependencia circular con router
+    error.value   = null
     const { default: router } = await import('../router/index.js')
     router.replace({ name: 'login' })
   }
@@ -102,6 +149,7 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     estaAutenticado,
     esConductor,
+    limpiarError,
     cargarSesion,
     login,
     logout,

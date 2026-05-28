@@ -173,8 +173,12 @@ const router = createRouter({
   routes,
 })
 
+function safeJsonParse(str, fallback) {
+  try { return JSON.parse(str) } catch { return fallback }
+}
+
 router.beforeEach((to, _from, next) => {
-  let usuario = JSON.parse(localStorage.getItem('usuario') || 'null')
+  let usuario = safeJsonParse(localStorage.getItem('usuario'), null)
 
   if (usuario && !usuario.rol) {
     localStorage.removeItem('usuario')
@@ -190,7 +194,7 @@ router.beforeEach((to, _from, next) => {
 
   // Guard de permisos de plan: solo aplica a rutas de empresa (USUARIO)
   if (to.meta.permiso && usuario?.rol === 'USUARIO') {
-    const planPermisos = JSON.parse(sessionStorage.getItem('plan_permisos') || '[]')
+    const planPermisos = safeJsonParse(sessionStorage.getItem('plan_permisos'), [])
     if (!planPermisos.includes(to.meta.permiso)) {
       return next('/empresa/dashboard')
     }

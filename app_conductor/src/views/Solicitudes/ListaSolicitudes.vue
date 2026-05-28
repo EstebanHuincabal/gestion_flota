@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSolicitudesStore } from '@/stores/solicitudes.js'
 import { usePermisos } from '@/composables/usePermisos.js'
@@ -51,7 +51,9 @@ let toastTimer = null
 function mostrarToast(mensaje, tipo = 'ok') {
   clearTimeout(toastTimer)
   toast.value = { visible: true, mensaje, tipo }
-  toastTimer  = setTimeout(() => { toast.value.visible = false }, 3500)
+  // Los mensajes de modo offline necesitan más tiempo para leerse
+  const duracion = tipo === 'offline' ? 6000 : 3500
+  toastTimer = setTimeout(() => { toast.value.visible = false }, duracion)
 }
 
 // ── Modal Nueva Solicitud ─────────────────────────────────────────────────────
@@ -138,8 +140,11 @@ async function tomarFoto() {
     })
     fotoDataUrl.value = foto.dataUrl
     fotoBase64.value  = foto.dataUrl.split(',')[1]
-  } catch {
-    // Usuario canceló
+  } catch (e) {
+    if (e?.message?.includes('denied') || e?.message?.includes('permission')) {
+      mostrarToast('Permiso de cámara denegado. Actívalo en la configuración del dispositivo.', 'error')
+    }
+    // Si canceló, no hacer nada
   }
 }
 
@@ -196,8 +201,16 @@ async function enviarSolicitud() {
     errorForm.value = 'El título debe tener al menos 5 caracteres.'
     return
   }
+  if (f.titulo.length > 200) {
+    errorForm.value = 'El título no puede superar los 200 caracteres.'
+    return
+  }
   if (t !== 'combustible' && f.descripcion.length < 10) {
     errorForm.value = 'La descripción debe tener al menos 10 caracteres.'
+    return
+  }
+  if (f.descripcion.length > 1000) {
+    errorForm.value = 'La descripción no puede superar los 1000 caracteres.'
     return
   }
   if (t === 'incidencia') {
@@ -270,6 +283,7 @@ async function enviarSolicitud() {
 // ── Modal Detalle Solicitud ───────────────────────────────────────────────────
 const modalDetalle     = ref(false)
 const solicitudDetalle = ref(null)
+const fotoAmpliadaUrl  = ref(null)
 
 function verDetalle(sol) {
   solicitudDetalle.value = sol
@@ -317,6 +331,11 @@ function formatFecha(isoStr) {
 onMounted(async () => {
   await store.cargarSolicitudes()
   _histAbierto.value = store.resueltas.length <= 3
+})
+
+onUnmounted(() => {
+  clearTimeout(toastTimer)
+  store.detenerWs()
 })
 </script>
 
@@ -748,17 +767,17 @@ onMounted(async () => {
                 </button>
               </div>
 
-              <div v-else class="flex items-center gap-3">
+              <div v-else class="relative rounded-2xl overflow-hidden border border-gray-200 bg-gray-50">
                 <img
                   :src="fotoDataUrl"
-                  class="w-20 h-20 object-cover rounded-xl border border-gray-200"
+                  class="w-full max-h-48 object-contain"
                   alt="Vista previa"
                 />
                 <button
                   @click="quitarFoto"
-                  class="w-8 h-8 rounded-full bg-red-100 text-red-500 flex items-center justify-center"
+                  class="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500/90 text-white flex items-center justify-center"
                 >
-                  <i class="ti ti-x text-sm"/>
+                  <i class="ti ti-x text-xs"/>
                 </button>
               </div>
             </div>
@@ -854,11 +873,16 @@ onMounted(async () => {
 
             <!-- Foto -->
             <div v-if="solicitudDetalle.foto_url" class="mb-3">
+              <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Foto adjunta</p>
               <img
                 :src="solicitudDetalle.foto_url"
-                class="w-20 h-20 object-cover rounded-xl border border-gray-200"
+                class="w-full rounded-2xl border border-gray-100 bg-gray-50 object-contain max-h-56 cursor-zoom-in"
                 alt="Foto adjunta"
+                @click="fotoAmpliadaUrl = solicitudDetalle.foto_url"
+                @error="(e) => { e.target.style.display='none'; e.target.nextSibling && (e.target.nextSibling.style.display='block') }"
               />
+              <p class="text-xs text-gray-400 text-center hidden">Foto no disponible</p>
+              <p class="text-[10px] text-gray-400 mt-1 text-center">Toca para ampliar</p>
             </div>
 
             <!-- Respuesta del administrador -->
@@ -881,6 +905,25 @@ onMounted(async () => {
               Cerrar
             </button>
           </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ── Foto ampliada fullscreen ─────────────────────────────────────────── -->
+    <Transition name="fade">
+      <div
+        v-if="fotoAmpliadaUrl"
+        class="fixed inset-0 z-[70] bg-black/95 flex flex-col"
+        @click="fotoAmpliadaUrl = null"
+      >
+        <div class="flex items-center gap-3 shrink-0 p-4"
+             :style="`padding-top: max(1rem, env(safe-area-inset-top))`">
+          <button class="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0">
+            <i class="ti ti-x text-lg"/>
+          </button>
+        </div>
+        <div class="flex-1 flex items-center justify-center p-4">
+          <img :src="fotoAmpliadaUrl" class="max-w-full max-h-full object-contain" alt="Foto ampliada"/>
         </div>
       </div>
     </Transition>
@@ -967,4 +1010,8 @@ section .chip--accent {
 /* Toast */
 .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
 .toast-enter-from,   .toast-leave-to     { opacity: 0; transform: translate(-50%, 8px); }
+
+/* Foto ampliada */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from,   .fade-leave-to     { opacity: 0; }
 </style>

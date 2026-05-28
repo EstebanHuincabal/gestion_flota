@@ -215,7 +215,7 @@ def dashboard_global_view(request):
             if p.precio_mensual:
                 total += p.precio_mensual
             elif p.precio_anual:
-                total += p.precio_anual / 12
+                total += (p.precio_anual / Decimal('12')).quantize(Decimal('1'))
         return int(total)
 
     inicio_mes  = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -852,14 +852,21 @@ def empresas_crear(request):
 @api_view(['GET', 'PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def empresas_detalle(request, pk):
+    # USUARIO solo puede ver su propia empresa
+    if not es_superadmin(request.user):
+        if request.method in ('PUT', 'DELETE'):
+            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        empresa_propia = getattr(request.user, 'empresa', None)
+        if not empresa_propia or str(empresa_propia.pk) != str(pk):
+            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(EmpresaSerializer(empresa_propia).data)
+
     try:
         empresa = Empresa.objects.get(pk=pk)
     except Empresa.DoesNotExist:
         return Response({"error": "Empresa no encontrada."}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'GET':
-        if not es_superadmin(request.user):
-            return Response(EmpresaSerializer(empresa).data)
 
         # Respuesta extendida para SUPERADMIN
         cantidad_flotas = Flota.objects.filter(empresa=empresa).count()
@@ -1293,6 +1300,10 @@ def conductores_lista_crear(request):
 @api_view(['GET', 'PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def conductores_detalle(request, pk):
+    # Un CONDUCTOR solo puede ver/editar su propio perfil
+    if request.user.rol == Rol.CONDUCTOR and str(request.user.pk) != str(pk):
+        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
+
     try:
         empresa   = get_empresa(request)
         conductor = Usuario.objects.prefetch_related(
@@ -1304,7 +1315,7 @@ def conductores_detalle(request, pk):
         return Response({"error": "Conductor no encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'GET':
-        if not tiene_permiso(request.user, 'conductores.ver'):
+        if request.user.rol != Rol.CONDUCTOR and not tiene_permiso(request.user, 'conductores.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         return Response(ConductorListSerializer(conductor).data)
 

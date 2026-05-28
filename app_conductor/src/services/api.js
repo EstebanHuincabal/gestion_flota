@@ -1,8 +1,8 @@
 /**
  * services/api.js — Cliente HTTP centralizado de la app de conductores.
  *
- * Todas las llamadas al backend pasan por apiFetch().
  * - Agrega Authorization: Bearer automáticamente
+ * - Timeout de 15 segundos con AbortController
  * - Reintenta con refresh token si recibe 401
  * - Limpia la sesión y lanza 'SESION_EXPIRADA' si el refresh falla
  * - Lanza Error con mensaje legible en cualquier otro error HTTP
@@ -10,6 +10,7 @@
 import { Preferences } from '@capacitor/preferences'
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const TIMEOUT_MS = 15_000
 
 export async function apiFetch(url, options = {}) {
   const { value: token } = await Preferences.get({ key: 'access_token' })
@@ -19,44 +20,60 @@ export async function apiFetch(url, options = {}) {
     ...options.headers,
   }
 
-  // Solo añadir Content-Type JSON si el body NO es FormData.
-  // Para FormData el browser lo fija automáticamente con el boundary correcto;
-  // si lo ponemos a mano el servidor no puede parsear el multipart.
   if (!(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
   }
 
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
   let res
   try {
-    res = await fetch(`${BASE_URL}${url}`, { ...options, headers })
-  } catch {
-    // Error de red puro (sin conexión, DNS, timeout…)
+    res = await fetch(`${BASE_URL}${url}`, { ...options, headers, signal: controller.signal })
+  } catch (fetchErr) {
+    clearTimeout(timer)
+    if (fetchErr.name === 'AbortError') {
+      const err = new Error('La petición tardó demasiado. Verifica tu conexión.')
+      err.isNetworkError = true
+      throw err
+    }
     const err = new Error('Sin conexión. Verifica tu red.')
     err.isNetworkError = true
     throw err
   }
+  clearTimeout(timer)
 
   // Token expirado → intentar refresh y reintentar una vez
-  if (res.status === 401) {
+  // NO aplicar a /api/login/ — ese 401 significa credenciales inválidas, no token expirado
+  if (res.status === 401 && !url.includes('/api/login/')) {
     const refreshed = await intentarRefresh()
     if (refreshed) {
       const { value: newToken } = await Preferences.get({ key: 'access_token' })
+      const ctrl2  = new AbortController()
+      const timer2 = setTimeout(() => ctrl2.abort(), TIMEOUT_MS)
       try {
         const retryRes = await fetch(`${BASE_URL}${url}`, {
           ...options,
           headers: { ...headers, Authorization: `Bearer ${newToken}` },
+          signal: ctrl2.signal,
         })
-        if (!retryRes.ok) throw new Error('Sesión expirada')
-        return retryRes.json()
-      } catch {
-        throw new Error('Sesión expirada')
+        clearTimeout(timer2)
+        if (!retryRes.ok) {
+          const errData = await retryRes.json().catch(() => ({}))
+          throw new Error(errData.error || errData.detail || 'Sesión expirada')
+        }
+        return retryRes.json().catch(() => ({}))
+      } catch (e) {
+        clearTimeout(timer2)
+        if (e.name === 'AbortError') throw new Error('La petición tardó demasiado. Verifica tu conexión.')
+        throw e
       }
     }
     await limpiarSesion()
     throw new Error('SESION_EXPIRADA')
   }
 
-  // Suscripción bloqueada → emitir evento global para mostrar overlay en App.vue
+  // Suscripción bloqueada → emitir evento global
   if (res.status === 402) {
     let errData = {}
     try { errData = await res.json() } catch {}
@@ -70,10 +87,13 @@ export async function apiFetch(url, options = {}) {
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}))
-    throw new Error(errData.error || errData.detail || 'Error del servidor')
+    const err = new Error(errData.error || errData.detail || `Error ${res.status}`)
+    err.status = res.status
+    err.codigo = errData.codigo || null
+    throw err
   }
 
-  return res.json()
+  return res.json().catch(() => ({}))
 }
 
 async function intentarRefresh() {
@@ -81,12 +101,13 @@ async function intentarRefresh() {
     const { value: refresh } = await Preferences.get({ key: 'refresh_token' })
     if (!refresh) return false
     const res = await fetch(`${BASE_URL}/api/token/refresh/`, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh }),
+      body:    JSON.stringify({ refresh }),
     })
     if (!res.ok) return false
-    const data = await res.json()
+    const data = await res.json().catch(() => null)
+    if (!data?.access) return false
     await Preferences.set({ key: 'access_token', value: data.access })
     if (data.refresh) await Preferences.set({ key: 'refresh_token', value: data.refresh })
     return true

@@ -45,8 +45,9 @@ class WebSocketService {
 
     const { value: token } = await Preferences.get({ key: 'access_token' })
     if (!token) {
-      // Sin sesión → no conectar
+      // Sin token: detener completamente — no entrar en bucle de reconexión
       this._active = false
+      clearTimeout(this._reconnectTimer)
       return
     }
 
@@ -57,7 +58,14 @@ class WebSocketService {
       this._ws = null
     }
 
-    const ws = new WebSocket(wsUrl(token))
+    let ws
+    try {
+      ws = new WebSocket(wsUrl(token))
+    } catch {
+      // URL inválida u otro error de construcción
+      this._scheduleReconnect()
+      return
+    }
     this._ws = ws
 
     ws.onopen = () => {
@@ -68,7 +76,7 @@ class WebSocketService {
       try {
         const data = JSON.parse(event.data)
         const handlers = this._handlers.get(data.type)
-        if (handlers) handlers.forEach(fn => fn(data))
+        if (handlers) handlers.forEach(fn => { try { fn(data) } catch {} })
       } catch {
         // JSON malformado — ignorar
       }
@@ -76,16 +84,21 @@ class WebSocketService {
 
     ws.onclose = () => {
       if (!this._active) return
-      // Reconexión con backoff exponencial (máx. 30 s)
-      this._reconnectTimer = setTimeout(async () => {
-        this._delay = Math.min(this._delay * 2, 30_000)
-        await this._open()
-      }, this._delay)
+      this._scheduleReconnect()
     }
 
     ws.onerror = () => {
       // onerror siempre va seguido de onclose → la reconexión ocurre allí
     }
+  }
+
+  _scheduleReconnect() {
+    clearTimeout(this._reconnectTimer)
+    this._reconnectTimer = setTimeout(async () => {
+      if (!this._active) return
+      this._delay = Math.min(this._delay * 2, 30_000)
+      await this._open()
+    }, this._delay)
   }
 
   // ── Suscripción a eventos ──────────────────────────────────────────────────

@@ -30,9 +30,10 @@ const emit = defineEmits(['cerrar', 'iniciada', 'completada'])
 
 const store          = useMantencionesStore()
 const iniciando      = ref(false)
-const mostrarIniciar = ref(false)   // mini-confirm "¿Iniciar?"
+const mostrarIniciar = ref(false)
 const errorAccion    = ref('')
-const mostrarCompletar = ref(false) // abre ModalCompletarMantencion
+const mostrarCompletar = ref(false)
+const fotoAmpliada   = ref(null)
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -161,9 +162,9 @@ function onCompletada(result) {
                 :src="mantencion.foto_comprobante_url"
                 alt="Comprobante de mantención"
                 class="foto-comprobante"
-                @click="$openUrl(mantencion.foto_comprobante_url)"
+                @click="fotoAmpliada = mantencion.foto_comprobante_url"
               />
-              <p class="foto-hint">Toca la imagen para verla en tamaño completo</p>
+              <p class="foto-hint">Toca para ampliar</p>
             </div>
 
             <!-- Costo final -->
@@ -307,6 +308,30 @@ function onCompletada(result) {
     />
 
   </Teleport>
+
+  <!-- ── Foto ampliada fullscreen ────────────────────────────────────────── -->
+  <Teleport to="body">
+    <Transition name="fade-foto">
+      <div
+        v-if="fotoAmpliada"
+        class="overlay"
+        style="z-index: 1100; background: rgba(0,0,0,0.95); align-items: center; justify-content: center; flex-direction: column;"
+        @click="fotoAmpliada = null"
+      >
+        <div style="position:absolute; top:0; left:0; right:0; display:flex; align-items:center; padding: max(1rem, env(safe-area-inset-top)) 1rem 0.75rem;">
+          <button style="width:2.25rem;height:2.25rem;border-radius:50%;background:rgba(255,255,255,0.15);border:none;color:white;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <img :src="fotoAmpliada" alt="Foto completa"
+          style="max-width:100%; max-height:100%; object-fit:contain; padding:4rem 1rem 1rem;"
+          @click.stop
+        />
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -366,7 +391,7 @@ function onCompletada(result) {
 /* ── Foto comprobante ─────────────────────────────────────────────────── */
 .foto-wrap { margin-bottom: 1rem; }
 .seccion-titulo { font-size: 0.8125rem; font-weight: 700; color: #374151; margin-bottom: 0.5rem; }
-.foto-comprobante { width: 100%; max-height: 220px; object-fit: cover; border-radius: 0.875rem; border: 1px solid #E5E7EB; cursor: zoom-in; }
+.foto-comprobante { width: 100%; max-height: 280px; object-fit: contain; background: #F9FAFB; border-radius: 0.875rem; border: 1px solid #E5E7EB; cursor: zoom-in; }
 .foto-hint { font-size: 0.7rem; color: #9CA3AF; text-align: center; margin-top: 0.375rem; }
 
 /* ── Precio final ─────────────────────────────────────────────────────── */
@@ -453,4 +478,7 @@ function onCompletada(result) {
 @keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
 @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
 @keyframes spin    { to { transform: rotate(360deg) } }
+
+.fade-foto-enter-active, .fade-foto-leave-active { transition: opacity 0.2s ease; }
+.fade-foto-enter-from,   .fade-foto-leave-to     { opacity: 0; }
 </style>

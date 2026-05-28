@@ -79,7 +79,7 @@ export const useRutasStore = defineStore('rutas', () => {
       const idx = rutas.value.findIndex(r => r.id === id)
       if (idx > -1) rutas.value[idx] = data.ruta
     } catch (e) {
-      if (e.message.includes('Sin conexión')) {
+      if (e.isNetworkError) {
         // Optimistic update local
         const idx = rutas.value.findIndex(r => r.id === id)
         if (idx > -1) {
@@ -107,7 +107,7 @@ export const useRutasStore = defineStore('rutas', () => {
       const idx = rutas.value.findIndex(r => r.id === id)
       if (idx > -1) rutas.value[idx] = data.ruta
     } catch (e) {
-      if (e.message.includes('Sin conexión')) {
+      if (e.isNetworkError) {
         const idx = rutas.value.findIndex(r => r.id === id)
         if (idx > -1) {
           rutas.value[idx] = { ...rutas.value[idx], estado: 'finalizado', ...datos }

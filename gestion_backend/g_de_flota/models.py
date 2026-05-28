@@ -19,7 +19,10 @@ def cifrar(valor: str) -> str:
     return _cipher().encrypt(valor.encode()).decode()
 
 def descifrar(valor: str) -> str:
-    return _cipher().decrypt(valor.encode()).decode()
+    try:
+        return _cipher().decrypt(valor.encode()).decode()
+    except Exception:
+        return ''
 
 def normalizar_rut(rut: str) -> str:
     """12.345.678-9  →  12345678-9"""

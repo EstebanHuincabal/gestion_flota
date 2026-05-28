@@ -59,19 +59,30 @@ export async function init() {
     `)
     _listo = true
   } catch (e) {
+    // SQLite no disponible o corrupta → caer al modo memoria
     console.warn('[DB] SQLite no disponible, usando modo memoria:', e.message)
-    _listo = true
+    _db    = null   // asegurar que sea null para que los métodos usen _mem
+    _listo = true   // marcar como listo para no reintentar en bucle
   }
 }
 
 // ── Rutas ─────────────────────────────────────────────────────────────────────
 
+function _parseSeguro(str) {
+  try { return JSON.parse(str) } catch { return null }
+}
+
 export async function getRutas() {
   if (!_db) {
-    return [..._mem.rutas.values()].map(r => JSON.parse(r.data))
+    return [..._mem.rutas.values()].map(r => _parseSeguro(r.data)).filter(Boolean)
   }
-  const { values } = await _db.query('SELECT data FROM rutas ORDER BY actualizado_at DESC')
-  return (values || []).map(r => JSON.parse(r.data))
+  try {
+    const { values } = await _db.query('SELECT data FROM rutas ORDER BY actualizado_at DESC')
+    return (values || []).map(r => _parseSeguro(r.data)).filter(Boolean)
+  } catch (e) {
+    console.warn('[DB] getRutas error:', e.message)
+    return []
+  }
 }
 
 export async function saveRutas(rutas) {
@@ -95,9 +106,19 @@ export async function saveRutas(rutas) {
 // ── Cola de acciones offline ──────────────────────────────────────────────────
 
 export async function getPendientes() {
-  if (!_db) return _mem.pendientes.map(p => ({ ...p, payload: typeof p.payload === 'string' ? JSON.parse(p.payload) : p.payload }))
-  const { values } = await _db.query('SELECT * FROM acciones_pendientes ORDER BY id ASC')
-  return (values || []).map(r => ({ ...r, payload: JSON.parse(r.payload) }))
+  if (!_db) {
+    return _mem.pendientes.map(p => ({
+      ...p,
+      payload: typeof p.payload === 'string' ? (_parseSeguro(p.payload) ?? {}) : p.payload,
+    }))
+  }
+  try {
+    const { values } = await _db.query('SELECT * FROM acciones_pendientes ORDER BY id ASC')
+    return (values || []).map(r => ({ ...r, payload: _parseSeguro(r.payload) ?? {} }))
+  } catch (e) {
+    console.warn('[DB] getPendientes error:', e.message)
+    return []
+  }
 }
 
 export async function encolarAccion(tipo, payload) {
@@ -125,10 +146,15 @@ export async function eliminarPendiente(id) {
 
 export async function getSolicitudes() {
   if (!_db) {
-    return [..._mem.solicitudes.values()].map(r => JSON.parse(r.data))
+    return [..._mem.solicitudes.values()].map(r => _parseSeguro(r.data)).filter(Boolean)
   }
-  const { values } = await _db.query('SELECT data FROM solicitudes ORDER BY id DESC')
-  return (values || []).map(r => JSON.parse(r.data))
+  try {
+    const { values } = await _db.query('SELECT data FROM solicitudes ORDER BY id DESC')
+    return (values || []).map(r => _parseSeguro(r.data)).filter(Boolean)
+  } catch (e) {
+    console.warn('[DB] getSolicitudes error:', e.message)
+    return []
+  }
 }
 
 export async function saveSolicitudes(solicitudes) {

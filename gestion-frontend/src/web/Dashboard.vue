@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import Chart from 'chart.js/auto'
-import { apiFetch } from '../utils/api.js'
+import { apiFetch, safeJsonParse } from '../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav } from '../utils/empresaActiva.js'
 import { tienePermiso } from '../utils/permisos.js'
 import { useTema } from '../utils/tema.js'
@@ -10,7 +10,7 @@ import { useTema } from '../utils/tema.js'
 const { accentActual } = useTema()
 const router = useRouter()
 const { ruta } = useEmpresaNav()
-const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
+const usuario = computed(() => safeJsonParse(localStorage.getItem('usuario'), {}))
 const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 
 const ACCESOS_EMPRESA = [
@@ -107,20 +107,20 @@ const cargar = async () => {
       const res = await apiFetch(`/api/dashboard/?periodo=${periodoActivo.value}`)
       if (!res.ok) throw new Error('Error al cargar el dashboard')
       const data = await res.json()
-      kpisGlobal.value     = data.kpis
-      topEmpresas.value    = data.charts.top_empresas
-      sinActividad.value   = data.sin_actividad || []
+      if (data.kpis)   kpisGlobal.value    = data.kpis
+      if (data.charts) topEmpresas.value   = data.charts.top_empresas || []
+      sinActividad.value    = data.sin_actividad  || []
       empresasAlertas.value = data.empresas_alertas || []
-      pendiente = () => renderGraficosGlobal(data.charts)
+      if (data.charts) pendiente = () => renderGraficosGlobal(data.charts)
     } else {
       const res = await apiFetchEmpresa(`/api/empresa/dashboard/?periodo=${periodoActivo.value}`)
       if (!res.ok) throw new Error('Error al cargar el dashboard')
       const data = await res.json()
       sinAcceso.value = !!data.sin_acceso
       if (data.permisos_dashboard) permisosDash.value = data.permisos_dashboard
-      kpisEmpresa.value    = { ...kpisEmpresa.value, ...data.kpis }
-      widgetsEmpresa.value = data.widgets || widgetsEmpresa.value
-      pendiente = () => renderGraficosEmpresa(data.charts)
+      if (data.kpis)    kpisEmpresa.value    = { ...kpisEmpresa.value, ...data.kpis }
+      if (data.widgets) widgetsEmpresa.value = data.widgets
+      if (data.charts)  pendiente = () => renderGraficosEmpresa(data.charts)
     }
   } catch (e) {
     error.value = e.message
@@ -140,12 +140,12 @@ const cargarGraficos = async (p) => {
       const res = await apiFetch(`/api/dashboard/?periodo=${p}`)
       if (!res.ok) return
       const data = await res.json()
-      renderGraficosGlobal(data.charts)
+      if (data.charts) renderGraficosGlobal(data.charts)
     } else {
       const res = await apiFetchEmpresa(`/api/empresa/dashboard/?periodo=${p}`)
       if (!res.ok) return
       const data = await res.json()
-      renderGraficosEmpresa(data.charts)
+      if (data.charts) renderGraficosEmpresa(data.charts)
     }
   } finally {
     cargandoGraficos.value = false
@@ -158,7 +158,7 @@ const cambiarPeriodo = (p) => { periodoActivo.value = p; cargarGraficos(p) }
 const renderGraficosGlobal = (charts) => {
   ;[crecimientoChart, distribucionChart, planesChart, combustibleChart, topEmpresasChart,
     mrrHistChart, usuariosNuevosChart, marcasGlobalChart, activosChart
-  ].forEach(c => c?.destroy())
+  ].forEach(c => { try { c?.destroy() } catch {} })
 
   const ac = accentActual()
 
@@ -260,7 +260,7 @@ const renderGraficosEmpresa = (charts) => {
   ;[vehiculosChart, mantencionesChart, flotaChart, gastosChart, rutasChart, conductoresChart,
     gastos12mChart, marcasFlotaChart, mantEstadoChart, alertasTipoChart,
     docsEstadoChart, kmMesChart
-  ].forEach(c => c?.destroy())
+  ].forEach(c => { try { c?.destroy() } catch {} })
 
   const ac = accentActual()
 
@@ -376,7 +376,7 @@ onUnmounted(() => {
     vehiculosChart, mantencionesChart, flotaChart, gastosChart, rutasChart, conductoresChart,
     gastos12mChart, marcasFlotaChart, mantEstadoChart, alertasTipoChart,
     docsEstadoChart, kmMesChart
-  ].forEach(c => c?.destroy())
+  ].forEach(c => { try { c?.destroy() } catch {} })
 })
 </script>
 

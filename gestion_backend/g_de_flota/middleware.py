@@ -50,9 +50,11 @@ class BloqueoSuscripcionMiddleware:
         try:
             sus = empresa.suscripcion
         except Exception:
-            # Sin suscripción asignada → bloqueado
+            # Sin suscripción asignada → 402 solo si realmente es falta de suscripción
+            if not empresa.pk:
+                return self.get_response(request)
             return JsonResponse({
-                'error':  'Tu empresa no tiene un plan activo. Contacta al administrador.',
+                'error':  'Tu empresa aún no tiene una suscripción activa. Realiza el pago de tu plan para continuar.',
                 'codigo': 'SUSCRIPCION_BLOQUEADA',
                 'estado': 'sin_suscripcion',
             }, status=402)
@@ -84,6 +86,39 @@ class BloqueoSuscripcionMiddleware:
             response['X-Gracia-Dias'] = str(dias if dias is not None else 0)
 
         return response
+
+class ErrorHandlerMiddleware:
+    """
+    Captura cualquier excepción no manejada y retorna JSON en lugar de HTML.
+    Evita que Django devuelva páginas de error 500 a una SPA que espera JSON.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        return self.get_response(request)
+
+    def process_exception(self, request, exception):
+        import traceback as tb
+        try:
+            from .audit import registrar_log
+            user = request.user if hasattr(request, 'user') else None
+            registrar_log(
+                'SEGURIDAD', 'excepcion_no_manejada',
+                request if user and user.is_authenticated else None,
+                detalle={
+                    'error':     str(exception),
+                    'traceback': tb.format_exc()[-800:],
+                },
+            )
+        except Exception:
+            pass
+        return JsonResponse({
+            'error':  'Error interno del servidor.',
+            'codigo': 'ERROR_INTERNO',
+        }, status=500)
+
 
 class ConfiguracionSeguridadMiddleware:
     def __init__(self, get_response):

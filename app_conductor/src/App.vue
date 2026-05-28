@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
 import { useThemeStore } from '@/stores/theme.js'
@@ -24,6 +24,32 @@ async function cerrarSesionBloqueo() {
 }
 
 
+// ── Status Bar ───────────────────────────────────────────────────────────────
+async function aplicarColorStatusBar(color) {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    const { StatusBar } = await import('@capacitor/status-bar')
+    await StatusBar.setBackgroundColor({ color })
+  } catch {}
+}
+
+async function inicializarStatusBar() {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    const { StatusBar, Style } = await import('@capacitor/status-bar')
+    await StatusBar.setOverlaysWebView({ overlay: false })
+    await StatusBar.setStyle({ style: Style.Light })
+    await StatusBar.setBackgroundColor({ color: themeStore.temaActual.colorGrad[0] })
+  } catch (e) {
+    console.warn('[StatusBar]', e)
+  }
+}
+
+// Sincronizar color de status bar cuando el conductor cambia de tema
+watch(() => themeStore.temaActualId, () => {
+  aplicarColorStatusBar(themeStore.temaActual.colorGrad[0])
+})
+
 // ── Push Notifications (solo dispositivos nativos) ────────────────────────────
 async function inicializarPush() {
   // Solo funciona en iOS / Android; en el navegador no hacemos nada
@@ -39,17 +65,23 @@ async function inicializarPush() {
     // Registrar para recibir el token FCM
     await PushNotifications.register()
 
-    // ── Token FCM obtenido → enviarlo al backend ──────────────────────────────
+    // ── Token FCM obtenido → enviarlo al backend (con reintento) ─────────────
     PushNotifications.addListener('registration', async ({ value: token }) => {
-      try {
-        const { apiFetch } = await import('@/services/api.js')
-        await apiFetch('/api/conductor/push-token/', {
-          method: 'POST',
-          body:   JSON.stringify({ token }),
-        })
-      } catch {
-        // Sin sesión todavía o sin conexión — se intentará al reconectar
+      const _enviarToken = async (intentos = 0) => {
+        try {
+          const { apiFetch } = await import('@/services/api.js')
+          await apiFetch('/api/conductor/push-token/', {
+            method: 'POST',
+            body:   JSON.stringify({ token }),
+          })
+        } catch {
+          // Reintentar hasta 3 veces con backoff exponencial
+          if (intentos < 3) {
+            setTimeout(() => _enviarToken(intentos + 1), 5000 * (intentos + 1))
+          }
+        }
       }
+      await _enviarToken()
     })
 
     // ── Error de registro ─────────────────────────────────────────────────────
@@ -123,7 +155,8 @@ function mostrarToastPush(titulo, cuerpo, data = {}) {
 }
 
 onMounted(async () => {
-  await themeStore.cargarTema()   // ← carga y aplica el tema guardado del conductor
+  await themeStore.cargarTema()
+  await inicializarStatusBar()
   await inicializarPush()
   window.addEventListener('suscripcion-bloqueada', onBloqueada)
 })

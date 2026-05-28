@@ -40,6 +40,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'g_de_flota.middleware.ErrorHandlerMiddleware',
     'g_de_flota.middleware.ConfiguracionSeguridadMiddleware',
     'g_de_flota.middleware.BloqueoSuscripcionMiddleware',
 ]

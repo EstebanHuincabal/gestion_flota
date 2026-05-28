@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
-import { apiFetch } from '../../utils/api.js'
+import { apiFetch, safeJsonParse } from '../../utils/api.js'
 import NotificacionesBell from '../../components/NotificacionesBell.vue'
 import PlanUsageBanner from './PlanUsageBanner.vue'
 import BannerSuscripcion from './BannerSuscripcion.vue'
@@ -11,11 +11,11 @@ import { useSessionTimer } from '../../utils/useSessionTimer.js'
 
 const router  = useRouter()
 const route   = useRoute()
-const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
+const usuario = computed(() => safeJsonParse(localStorage.getItem('usuario'), {}))
 const collapsed = ref(false)
 
 // Permisos reactivos — inicializados desde sessionStorage para renderizado inmediato
-const planPermisos = ref(JSON.parse(sessionStorage.getItem('plan_permisos') || '[]'))
+const planPermisos = ref(safeJsonParse(sessionStorage.getItem('plan_permisos'), []))
 
 function puedeVer(permiso) {
   if (!permiso) return true
@@ -27,14 +27,12 @@ async function refrescarPermisos() {
     const res = await apiFetch('/api/usuario/perfil/')
     if (!res.ok) return
     const data = await res.json()
-    const nuevos = JSON.stringify(data.plan_permisos || [])
+    const nuevos   = JSON.stringify(data.plan_permisos || [])
     const actuales = sessionStorage.getItem('plan_permisos') || '[]'
     sessionStorage.setItem('plan_permisos', nuevos)
     sessionStorage.setItem('plan_modulos',  JSON.stringify(data.plan_modulos || []))
     sessionStorage.setItem('plan_nombre',   data.plan_nombre || '')
-    if (nuevos !== actuales) {
-      planPermisos.value = data.plan_permisos || []
-    }
+    if (nuevos !== actuales) planPermisos.value = data.plan_permisos || []
   } catch {}
 }
 
@@ -52,8 +50,18 @@ async function refrescarConteoSolicitudes() {
   } catch {}
 }
 
+async function refrescarNotificaciones() {
+  try {
+    const res = await apiFetch('/api/notificaciones/no-leidas/')
+    if (!res.ok) return
+    // NotificacionesBell se actualiza vía su propio polling;
+    // este evento permite que otros componentes reactivos se enteren
+    window.dispatchEvent(new CustomEvent('notificaciones-actualizadas'))
+  } catch {}
+}
+
 function conectarWSSolicitudes() {
-  const usr = JSON.parse(localStorage.getItem('usuario') || '{}')
+  const usr = safeJsonParse(localStorage.getItem('usuario'), {})
   const empresaId = usr.empresa_id
   const token     = localStorage.getItem('access_token')
   if (!empresaId || !token) return
@@ -88,6 +96,9 @@ onMounted(() => {
   refrescarConteoSolicitudes()
   conectarWSSolicitudes()
   pollingSol = setInterval(refrescarConteoSolicitudes, 30_000)
+  // Notificaciones: refrescar cada 60 s para actualizar el badge sin WebSocket
+  refrescarNotificaciones()
+  setInterval(refrescarNotificaciones, 60_000)
   // Escuchar bloqueo 402
   window.addEventListener('suscripcion-bloqueada', onSuscripcionBloqueada)
 })

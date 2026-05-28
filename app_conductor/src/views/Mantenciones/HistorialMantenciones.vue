@@ -27,8 +27,9 @@ const hasMore    = ref(false)
 const PAGE_SIZE  = 20
 
 // ── Detalle (bottom-sheet) ────────────────────────────────────────────────────
-const detalleVisible = ref(false)
-const detalleItem    = ref(null)
+const detalleVisible  = ref(false)
+const detalleItem     = ref(null)
+const fotoAmpliadaHist = ref(null)
 
 // ── Pull-to-refresh ───────────────────────────────────────────────────────────
 let startY        = 0
@@ -80,8 +81,9 @@ async function cargarMas() {
     )
     historial.value.push(...(data.historial || []))
     hasMore.value = data.has_more ?? false
-  } catch {
+  } catch (e) {
     pagina.value--  // revertir si falla
+    error.value = e?.message || 'Error al cargar más registros.'
   } finally {
     cargandoMas.value = false
   }
@@ -89,10 +91,14 @@ async function cargarMas() {
 
 // ── Helpers de formato ────────────────────────────────────────────────────────
 const fmtFecha = (iso) => {
-  if (!iso) return '—'
-  return new Date(iso + (iso.length === 10 ? 'T00:00' : '')).toLocaleDateString('es-CL', {
-    day: 'numeric', month: 'long', year: 'numeric',
-  })
+  if (!iso || typeof iso !== 'string') return '—'
+  try {
+    return new Date(iso + (iso.length === 10 ? 'T00:00' : '')).toLocaleDateString('es-CL', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    })
+  } catch {
+    return '—'
+  }
 }
 
 const fmtPrecio = (v) => {
@@ -236,7 +242,8 @@ onMounted(() => cargar(true))
             v-if="m.foto_comprobante_url"
             :src="m.foto_comprobante_url"
             alt="Comprobante"
-            class="w-full h-20 object-cover rounded-xl border border-gray-100 mt-3"
+            class="w-full max-h-40 object-contain rounded-xl border border-gray-100 mt-3 bg-gray-50 cursor-zoom-in"
+            @click.stop="fotoAmpliadaHist = m.foto_comprobante_url"
           />
         </div>
       </div>
@@ -329,8 +336,10 @@ onMounted(() => cargar(true))
             <img
               :src="detalleItem.foto_comprobante_url"
               alt="Comprobante"
-              class="w-full max-h-52 object-cover rounded-2xl border border-gray-100"
+              class="w-full max-h-64 object-contain rounded-2xl border border-gray-100 bg-gray-50 cursor-zoom-in"
+              @click="fotoAmpliadaHist = detalleItem.foto_comprobante_url"
             />
+            <p class="text-[10px] text-gray-400 mt-1 text-center">Toca para ampliar</p>
           </div>
 
           <!-- Quién completó -->
@@ -356,6 +365,28 @@ onMounted(() => cargar(true))
         </div>
       </div>
     </Teleport>
+
+    <!-- ── Foto ampliada ──────────────────────────────────────────────────── -->
+    <Transition name="fade-foto">
+      <div
+        v-if="fotoAmpliadaHist"
+        class="fixed inset-0 z-[70] bg-black/95 flex flex-col"
+        @click="fotoAmpliadaHist = null"
+      >
+        <div class="flex items-center p-4 shrink-0"
+             :style="`padding-top: max(1rem, env(safe-area-inset-top))`">
+          <button class="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center text-white">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="flex-1 flex items-center justify-center p-4">
+          <img :src="fotoAmpliadaHist" class="max-w-full max-h-full object-contain" alt="Foto completa"
+               @click.stop/>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -522,4 +553,7 @@ onMounted(() => cargar(true))
 
 @keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
 @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+
+.fade-foto-enter-active, .fade-foto-leave-active { transition: opacity 0.2s ease; }
+.fade-foto-enter-from,   .fade-foto-leave-to     { opacity: 0; }
 </style>
