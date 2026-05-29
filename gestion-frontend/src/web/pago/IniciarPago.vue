@@ -16,7 +16,7 @@ const exito         = ref('')   // mensaje de éxito tras cobro automático
 // ── datos del plan y suscripción ────────────────────────────────────
 const plan        = ref(null)
 const suscripcion = ref(null)
-const ciclo       = ref('mensual')
+const ciclo       = 'mensual'   // solo facturación mensual
 
 // ── tarjeta guardada ────────────────────────────────────────────────
 const tarjeta       = ref(null)   // { card_type, last_4, created_at } o null
@@ -47,7 +47,6 @@ onMounted(async () => {
     if (resSus.ok) {
       const d = await resSus.json()
       suscripcion.value = d.suscripcion || null
-      if (suscripcion.value?.ciclo) ciclo.value = suscripcion.value.ciclo
     }
     if (resTarjeta.ok) {
       const d = await resTarjeta.json()
@@ -84,17 +83,10 @@ const diasHastaRenovacion = computed(() => {
 // ── computados de precio ────────────────────────────────────────────
 const precio = computed(() => {
   if (!plan.value) return null
-  const v = ciclo.value === 'anual' ? plan.value.precio_anual : plan.value.precio_mensual
+  const v = plan.value.precio_mensual
   return v ? parseInt(v) : null
 })
 const precioFormato = computed(() => precio.value ? formatCLP(precio.value) : null)
-const ahorroPct = computed(() => {
-  if (!plan.value?.precio_mensual || !plan.value?.precio_anual) return 0
-  const m = parseFloat(plan.value.precio_mensual)
-  const a = parseFloat(plan.value.precio_anual)
-  if (!m || !a) return 0
-  return Math.round((1 - a / (m * 12)) * 100)
-})
 
 const badgeSuscripcion = computed(() => {
   const e = suscripcion.value?.estado
@@ -120,7 +112,7 @@ async function pagarConWebpay() {
   try {
     const res  = await apiFetch('/api/pago/iniciar/', {
       method: 'POST',
-      body: { plan_id: plan.value.id, ciclo: ciclo.value, usar_tarjeta: false },
+      body: { plan_id: plan.value.id, ciclo: ciclo, usar_tarjeta: false },
     })
     const data = await res.json()
     if (!res.ok) {
@@ -158,7 +150,7 @@ async function pagarConTarjeta() {
   try {
     const res  = await apiFetch('/api/pago/iniciar/', {
       method: 'POST',
-      body: { plan_id: plan.value.id, ciclo: ciclo.value, usar_tarjeta: true },
+      body: { plan_id: plan.value.id, ciclo: ciclo, usar_tarjeta: true },
     })
     const data = await res.json()
     if (!res.ok) {
@@ -380,36 +372,6 @@ async function eliminarTarjeta() {
 
       <!-- ── Formulario de pago (solo cuando se puede pagar) ──────── -->
       <template v-else>
-
-        <!-- Selector de ciclo -->
-        <div class="seccion">
-          <h3 class="seccion-title">Ciclo de facturación</h3>
-          <div class="ciclo-tabs">
-            <button :class="['ciclo-btn', { active: ciclo === 'mensual' }]" @click="ciclo = 'mensual'">
-              <div class="ciclo-btn-inner">
-                <span class="ciclo-nombre">Mensual</span>
-                <span class="ciclo-precio" v-if="plan.precio_mensual">
-                  {{ formatCLP(parseInt(plan.precio_mensual)) }} / mes
-                </span>
-                <span class="ciclo-precio sin-precio" v-else>Sin precio configurado</span>
-              </div>
-              <div v-if="ciclo === 'mensual'" class="ciclo-check">✓</div>
-            </button>
-            <button :class="['ciclo-btn', { active: ciclo === 'anual' }]" @click="ciclo = 'anual'">
-              <div class="ciclo-btn-inner">
-                <span class="ciclo-nombre">
-                  Anual
-                  <span v-if="ahorroPct > 0" class="ahorro-badge">{{ ahorroPct }}% dcto.</span>
-                </span>
-                <span class="ciclo-precio" v-if="plan.precio_anual">
-                  {{ formatCLP(parseInt(plan.precio_anual)) }} / año
-                </span>
-                <span class="ciclo-precio sin-precio" v-else>Sin precio configurado</span>
-              </div>
-              <div v-if="ciclo === 'anual'" class="ciclo-check">✓</div>
-            </button>
-          </div>
-        </div>
 
         <!-- Resumen del cobro -->
         <div v-if="precioFormato" class="resumen-cobro">

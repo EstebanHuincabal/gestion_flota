@@ -214,8 +214,6 @@ def dashboard_global_view(request):
             p = e.plan
             if p.precio_mensual:
                 total += p.precio_mensual
-            elif p.precio_anual:
-                total += (p.precio_anual / Decimal('12')).quantize(Decimal('1'))
         return int(total)
 
     inicio_mes  = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

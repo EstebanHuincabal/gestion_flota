@@ -12,7 +12,6 @@ const busqueda      = ref('')
 // ── Modal pago manual ────────────────────────────────────────
 const modalPago       = ref(null)   // suscripción seleccionada o null
 const pagoMonto       = ref('')
-const pagoCiclo       = ref('mensual')
 const pagoMetodo      = ref('Transferencia bancaria')
 const pagoNota        = ref('')
 const pagoGuardando   = ref(false)
@@ -21,7 +20,6 @@ const pagoError       = ref('')
 function abrirModalPago(s) {
   modalPago.value   = s
   pagoMonto.value   = ''
-  pagoCiclo.value   = 'mensual'
   pagoMetodo.value  = 'Transferencia bancaria'
   pagoNota.value    = ''
   pagoError.value   = ''
@@ -44,7 +42,6 @@ async function confirmarPagoManual() {
       body: {
         accion:  'pago_manual',
         monto:   Number(pagoMonto.value),
-        ciclo:   pagoCiclo.value,
         metodo:  pagoMetodo.value,
         nota:    pagoNota.value,
       },
@@ -302,14 +299,6 @@ function imprimirComprobante(p, empresaNombre) {
               placeholder="Ej: 29990"
               @keydown.enter="confirmarPagoManual"
             />
-          </div>
-
-          <div class="m-campo">
-            <label class="m-label">Ciclo</label>
-            <select v-model="pagoCiclo" class="m-input">
-              <option value="mensual">Mensual (30 días)</option>
-              <option value="anual">Anual (365 días)</option>
-            </select>
           </div>
 
           <div class="m-campo">

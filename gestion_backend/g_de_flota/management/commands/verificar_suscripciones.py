@@ -221,7 +221,7 @@ class Command(BaseCommand):
         import uuid
 
         plan  = sus.plan
-        monto = int(plan.precio_anual if sus.ciclo == 'anual' else plan.precio_mensual or 0)
+        monto = int(plan.precio_mensual or 0)
         if not monto:
             self.stdout.write(f'  [AUTOCOBRO SKIP] {sus.empresa.nombre} — sin monto configurado.')
             return
@@ -294,11 +294,7 @@ class Command(BaseCommand):
 
         sus.estado = 'activa'
         sus.fecha_inicio      = ahora
-        sus.fecha_fin_periodo = (
-            ahora + timezone.timedelta(days=365)
-            if sus.ciclo == 'anual'
-            else ahora + timezone.timedelta(days=30)
-        )
+        sus.fecha_fin_periodo = ahora + timezone.timedelta(days=30)
         sus.save()
 
         self.stdout.write(self.style.SUCCESS(

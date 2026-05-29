@@ -1,6 +1,7 @@
 import hashlib
 import base64
 from django.db import models
+from django.core.validators import MinValueValidator
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.conf import settings
 from cryptography.fernet import Fernet
@@ -92,9 +93,14 @@ class UsuarioManager(BaseUserManager):
         return self._construir(email, password, rut=rut, nombre_completo=nombre_completo, **extra)
 
     def create_superuser(self, email, password=None, **extra):
+        # `is_superuser`/`is_staff` solo otorgan acceso al panel /admin/ de Django
+        # (mantenimiento/infraestructura). NO se asigna rol=SUPERADMIN aquí: el rol
+        # de negocio del SaaS está desacoplado y se concede explícitamente (p. ej.
+        # con el comando `crear_superusuario`). Así un superusuario de Django no
+        # entra automáticamente al sistema como super administrador.
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
-        extra.setdefault("rol", Rol.SUPERADMIN)
+        extra.setdefault("rol", Rol.USUARIO)
         if extra.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
         rut             = extra.pop("rut", None)
@@ -107,15 +113,10 @@ class UsuarioManager(BaseUserManager):
 # ─────────────────────────────────────────
 
 class PlanSuscripcion(models.Model):
-    PLANES = [
-        ('basico', 'Básico'),
-        ('pro', 'Pro'),
-        ('enterprise', 'Enterprise'),
-    ]
-    nombre          = models.CharField(max_length=20, choices=PLANES, unique=True)
-    descripcion     = models.CharField(max_length=500, blank=True, default='')
-    precio_mensual  = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    precio_anual    = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    nombre          = models.CharField(max_length=30, unique=True)
+    descripcion     = models.CharField(max_length=100, blank=True, default='')
+    precio_mensual  = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True,
+                                          validators=[MinValueValidator(0)])
     max_flotas      = models.PositiveIntegerField(default=1)
     max_vehiculos   = models.PositiveIntegerField(default=10)
     max_conductores = models.PositiveIntegerField(default=10)
@@ -132,8 +133,12 @@ class PlanSuscripcion(models.Model):
         verbose_name     = "Plan de Suscripción"
         verbose_name_plural = "Planes de Suscripción"
 
+    # El nombre es texto libre; lo que se muestra es el nombre tal cual.
+    def get_nombre_display(self):
+        return self.nombre
+
     def __str__(self):
-        return self.get_nombre_display()
+        return self.nombre
 
 
 REGIONES_CHILE = [
@@ -989,7 +994,7 @@ class Suscripcion(models.Model):
         ('suspendida', 'Suspendida'),
         ('cancelada',  'Cancelada'),
     ]
-    CICLOS = [('mensual', 'Mensual'), ('anual', 'Anual')]
+    CICLOS = [('mensual', 'Mensual')]
 
     empresa           = models.OneToOneField(Empresa, on_delete=models.CASCADE, related_name='suscripcion')
     plan              = models.ForeignKey(PlanSuscripcion, on_delete=models.PROTECT)

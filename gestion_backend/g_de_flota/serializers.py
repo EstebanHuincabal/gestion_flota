@@ -903,7 +903,7 @@ class PlanSuscripcionSerializer(serializers.ModelSerializer):
         model  = PlanSuscripcion
         fields = [
             'id', 'nombre', 'nombre_display', 'descripcion',
-            'precio_mensual', 'precio_anual', 'precio_display',
+            'precio_mensual', 'precio_display',
             'max_flotas', 'max_vehiculos', 'max_conductores', 'max_usuarios',
             'modulos', 'activo', 'orden', 'empresas_activas',
             'created_at', 'updated_at',

@@ -2,12 +2,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
+import ConfirmModal from '../../components/ConfirmModal.vue'
 
 const toast   = useToast()
 const planes  = ref([])
 const empresas = ref([])
 const cargando = ref(false)
-const precioCiclo = ref('mensual') // 'mensual' | 'anual'
 
 // ── KPIs ──────────────────────────────────────────────────────────────────
 const kpis = computed(() => {
@@ -56,7 +56,7 @@ const cargandoPermisos = ref(false)
 
 const formPlan = ref({
   nombre: 'basico', descripcion: '',
-  precio_mensual: '', precio_anual: '',
+  precio_mensual: '',
   max_flotas: 2, max_vehiculos: 10,
   max_conductores: 15, max_usuarios: 3,
   modulos: [], activo: true, orden: 0,
@@ -93,8 +93,8 @@ const toggleCategoria = (permisosCat) => {
 const abrirModalCrear = async () => {
   editandoPlan.value = null
   formPlan.value = {
-    nombre: 'basico', descripcion: '',
-    precio_mensual: '', precio_anual: '',
+    nombre: '', descripcion: '',
+    precio_mensual: '',
     max_flotas: 2, max_vehiculos: 10,
     max_conductores: 15, max_usuarios: 3,
     modulos: [], activo: true, orden: 0,
@@ -114,7 +114,6 @@ const abrirModalEditar = async (plan) => {
     nombre:          plan.nombre,
     descripcion:     plan.descripcion || '',
     precio_mensual:  plan.precio_mensual ?? '',
-    precio_anual:    plan.precio_anual ?? '',
     max_flotas:      plan.max_flotas,
     max_vehiculos:   plan.max_vehiculos,
     max_conductores: plan.max_conductores,
@@ -144,12 +143,41 @@ const toggleModulo = (key) => {
 
 const guardandoPlan = ref(false)
 const guardarPlan = async () => {
+  const f = formPlan.value
+  if (!f.nombre.trim()) {
+    toast.error('El nombre del plan es obligatorio.')
+    return
+  }
+  if (f.nombre.trim().length > 30) {
+    toast.error('El nombre no puede superar los 30 caracteres.')
+    return
+  }
+  if ((f.descripcion || '').length > 100) {
+    toast.error('La descripción no puede superar los 100 caracteres.')
+    return
+  }
+  if (f.orden === '' || f.orden === null || Number(f.orden) < 0) {
+    toast.error('El orden de visualización no puede ser negativo.')
+    return
+  }
+  const numericos = {
+    'Precio mensual':    f.precio_mensual,
+    'Máx. flotas':       f.max_flotas,
+    'Máx. vehículos':    f.max_vehiculos,
+    'Máx. conductores':  f.max_conductores,
+    'Máx. usuarios':     f.max_usuarios,
+  }
+  for (const [label, val] of Object.entries(numericos)) {
+    if (val !== '' && val !== null && Number(val) < 0) {
+      toast.error(`${label} no puede ser un número negativo.`)
+      return
+    }
+  }
   guardandoPlan.value = true
   try {
     const body = {
       ...formPlan.value,
       precio_mensual: formPlan.value.precio_mensual === '' ? null : Number(formPlan.value.precio_mensual),
-      precio_anual:   formPlan.value.precio_anual   === '' ? null : Number(formPlan.value.precio_anual),
     }
     const url    = editandoPlan.value ? `/api/configuracion/planes/${editandoPlan.value.id}/` : '/api/configuracion/planes/'
     const method = editandoPlan.value ? 'PUT' : 'POST'
@@ -177,15 +205,27 @@ const guardarPlan = async () => {
   guardandoPlan.value = false
 }
 
-const eliminarPlan = async (plan) => {
-  if (!confirm(`¿Eliminar el plan ${plan.nombre_display}? Esta acción no se puede deshacer.`)) return
-  const res = await apiFetch(`/api/configuracion/planes/${plan.id}/`, { method: 'DELETE' })
+const confirmPlan = ref({ visible: false, plan: null, accion: 'desactivar' })
+
+const pedirToggle = (plan) => {
+  confirmPlan.value = { visible: true, plan, accion: plan.activo ? 'desactivar' : 'activar' }
+}
+const cancelarToggle = () => {
+  confirmPlan.value = { visible: false, plan: null, accion: 'desactivar' }
+}
+const confirmarToggle = async () => {
+  const { plan } = confirmPlan.value
+  cancelarToggle()
+  const res = await apiFetch(`/api/configuracion/planes/${plan.id}/`, {
+    method: 'PUT',
+    body:   { activo: !plan.activo },
+  })
   if (res.ok) {
-    toast.success('Plan eliminado.')
+    toast.success(plan.activo ? 'Plan desactivado.' : 'Plan activado.')
     await cargarPlanes()
   } else {
     const err = await res.json()
-    toast.error(err.error || 'No se pudo eliminar.')
+    toast.error(err.error || 'No se pudo actualizar el plan.')
   }
 }
 
@@ -211,20 +251,10 @@ onMounted(async () => {
 
 // ── Precio display ─────────────────────────────────────────────────────────
 const precioDisplay = (plan) => {
-  if (precioCiclo.value === 'anual' && plan.precio_anual) {
-    return `$${Number(plan.precio_anual).toLocaleString('es-CL')}/año`
-  }
   if (plan.precio_mensual) {
     return `$${Number(plan.precio_mensual).toLocaleString('es-CL')}/mes`
   }
   return 'A convenir'
-}
-
-const descuento = (plan) => {
-  if (!plan.precio_mensual || !plan.precio_anual) return null
-  const anualMensualizado = plan.precio_anual / 12
-  const pct = Math.round((1 - anualMensualizado / plan.precio_mensual) * 100)
-  return pct > 0 ? pct : null
 }
 
 const colorPlan = (nombre) => ({
@@ -241,6 +271,19 @@ const badgePlan = (nombre) => ({
 </script>
 
 <template>
+
+  <ConfirmModal
+    v-if="confirmPlan.visible"
+    :titulo="confirmPlan.accion === 'desactivar' ? 'Desactivar plan' : 'Activar plan'"
+    :mensaje="confirmPlan.accion === 'desactivar'
+      ? `¿Desactivar &quot;${confirmPlan.plan?.nombre_display}&quot;? Las empresas que ya lo tienen lo conservan; solo dejará de ofrecerse a nuevos clientes.`
+      : `¿Activar &quot;${confirmPlan.plan?.nombre_display}&quot;? Volverá a ofrecerse a nuevos clientes.`"
+    :label-ok="confirmPlan.accion === 'desactivar' ? 'Desactivar' : 'Activar'"
+    :peligroso="confirmPlan.accion === 'desactivar'"
+    @confirmar="confirmarToggle"
+    @cancelar="cancelarToggle"
+  />
+
   <div class="page p-6 max-w-7xl mx-auto">
 
     <!-- Encabezado -->
@@ -277,25 +320,6 @@ const badgePlan = (nombre) => ({
       </div>
     </div>
 
-    <!-- Toggle mensual / anual -->
-    <div class="flex justify-center mb-6">
-      <div class="inline-flex bg-gray-100 rounded-lg p-1">
-        <button @click="precioCiclo = 'mensual'"
-          :class="['px-4 py-1.5 text-sm font-medium rounded-md transition-all',
-            precioCiclo === 'mensual' ? 'bg-white shadow text-gray-900' : 'text-gray-500']">
-          Mensual
-        </button>
-        <button @click="precioCiclo = 'anual'"
-          :class="['px-4 py-1.5 text-sm font-medium rounded-md transition-all',
-            precioCiclo === 'anual' ? 'bg-white shadow text-gray-900' : 'text-gray-500']">
-          Anual
-          <span class="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-semibold">
-            Ahorra
-          </span>
-        </button>
-      </div>
-    </div>
-
     <!-- Loader -->
     <div v-if="cargando" class="flex justify-center py-16">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
@@ -318,9 +342,6 @@ const badgePlan = (nombre) => ({
           </div>
 
           <p class="text-2xl font-bold text-gray-900">{{ precioDisplay(plan) }}</p>
-          <p v-if="precioCiclo === 'anual' && descuento(plan)" class="text-xs text-green-600 mt-0.5">
-            {{ descuento(plan) }}% de descuento vs mensual
-          </p>
           <p class="text-xs text-gray-500 mt-1.5">{{ plan.descripcion }}</p>
         </div>
 
@@ -374,9 +395,12 @@ const badgePlan = (nombre) => ({
               class="text-xs px-2.5 py-1 border border-gray-300 bg-white text-gray-700 rounded-md font-medium hover:bg-gray-50 transition-colors">
               Editar
             </button>
-            <button v-if="plan.empresas_activas === 0" @click="eliminarPlan(plan)"
-              class="text-xs px-2.5 py-1 border border-red-200 bg-red-50 text-red-600 rounded-md font-medium hover:bg-red-100 transition-colors">
-              Eliminar
+            <button @click="pedirToggle(plan)"
+              :class="['text-xs px-2.5 py-1 border rounded-md font-medium transition-colors',
+                plan.activo
+                  ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100']">
+              {{ plan.activo ? 'Desactivar' : 'Activar' }}
             </button>
           </div>
         </div>
@@ -415,11 +439,8 @@ const badgePlan = (nombre) => ({
             <div class="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label class="field-label">Nombre del plan</label>
-                <select v-model="formPlan.nombre" class="field-input">
-                  <option value="basico">Básico</option>
-                  <option value="pro">Pro</option>
-                  <option value="enterprise">Enterprise</option>
-                </select>
+                <input v-model="formPlan.nombre" type="text" class="field-input"
+                  placeholder="Ej: Premium" maxlength="30" />
               </div>
               <div>
                 <label class="field-label">Orden de visualización</label>
@@ -430,19 +451,14 @@ const badgePlan = (nombre) => ({
             <div class="mb-4">
               <label class="field-label">Descripción</label>
               <textarea v-model="formPlan.descripcion" class="field-input" rows="2"
-                placeholder="Descripción del plan..."></textarea>
+                maxlength="100" placeholder="Descripción del plan..."></textarea>
             </div>
 
-            <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="mb-4">
               <div>
                 <label class="field-label">Precio mensual (CLP, sin puntos)</label>
                 <input v-model="formPlan.precio_mensual" type="number" class="field-input"
-                  placeholder="Ej: 49000"/>
-              </div>
-              <div>
-                <label class="field-label">Precio anual (CLP, sin puntos)</label>
-                <input v-model="formPlan.precio_anual" type="number" class="field-input"
-                  placeholder="Ej: 470400"/>
+                  min="0" placeholder="Ej: 49000"/>
               </div>
             </div>
 

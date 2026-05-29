@@ -5,7 +5,6 @@ import { apiFetch } from '../../utils/api.js'
 
 const router  = useRouter()
 const planes  = ref([])
-const ciclo   = ref('mensual')
 const cargandoPlanes = ref(true)
 
 onMounted(async () => {
@@ -17,13 +16,13 @@ onMounted(async () => {
 })
 
 function precio(plan) {
-  const p = ciclo.value === 'anual' ? plan.precio_anual : plan.precio_mensual
+  const p = plan.precio_mensual
   if (!p) return 'A consultar'
   return new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(Number(p))
 }
 
 function contratar(plan) {
-  router.push({ name: 'registro', query: { plan_id: plan.id, ciclo: ciclo.value } })
+  router.push({ name: 'registro', query: { plan_id: plan.id } })
 }
 
 const FEATURES = [
@@ -149,26 +148,6 @@ function scrollAPrecios() {
           Planes simples y transparentes
         </h2>
         <p class="text-gray-500 mb-8">Sin costos ocultos. Cambia de plan cuando lo necesites.</p>
-
-        <!-- Toggle mensual/anual -->
-        <div class="inline-flex items-center gap-3 bg-white border border-gray-200 rounded-xl p-1.5 shadow-sm">
-          <button
-            @click="ciclo = 'mensual'"
-            class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all"
-            :class="ciclo === 'mensual' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-          >Mensual</button>
-          <button
-            @click="ciclo = 'anual'"
-            class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
-            :class="ciclo === 'anual' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-          >
-            Anual
-            <span
-              class="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-              :class="ciclo === 'anual' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'"
-            >-15%</span>
-          </button>
-        </div>
       </div>
 
       <!-- Skeleton cargando -->
@@ -201,7 +180,7 @@ function scrollAPrecios() {
             <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">{{ plan.nombre_display }}</p>
             <div class="flex items-end gap-1 mb-2">
               <span class="text-4xl font-extrabold text-gray-900">{{ precio(plan) }}</span>
-              <span v-if="plan.precio_mensual || plan.precio_anual" class="text-gray-400 text-sm pb-1">/{{ ciclo === 'mensual' ? 'mes' : 'año' }}</span>
+              <span v-if="plan.precio_mensual" class="text-gray-400 text-sm pb-1">/mes</span>
             </div>
             <p v-if="plan.descripcion" class="text-sm text-gray-500">{{ plan.descripcion }}</p>
           </div>

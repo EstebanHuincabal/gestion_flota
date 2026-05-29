@@ -89,7 +89,6 @@ class PlanesPublicosView(APIView):
                 'nombre_display':  p.get_nombre_display(),
                 'descripcion':     p.descripcion,
                 'precio_mensual':  str(p.precio_mensual) if p.precio_mensual else None,
-                'precio_anual':    str(p.precio_anual)   if p.precio_anual   else None,
                 'max_flotas':      p.max_flotas,
                 'max_vehiculos':   p.max_vehiculos,
                 'max_conductores': p.max_conductores,
@@ -149,7 +148,7 @@ class AutoRegistroView(APIView):
         emp_d   = body.get('empresa', {})
         usr_d   = body.get('usuario', {})
         plan_id = body.get('plan_id')
-        ciclo   = body.get('ciclo', 'mensual')
+        ciclo   = 'mensual'   # solo facturación mensual
 
         # ── Validaciones básicas de campos requeridos ────────────────────────
         errores = {}
@@ -176,8 +175,6 @@ class AutoRegistroView(APIView):
             errores['usuario_telefono'] = 'El teléfono del administrador es obligatorio.'
         if not plan_id:
             errores['plan_id'] = 'Debes seleccionar un plan.'
-        if ciclo not in ('mensual', 'anual'):
-            errores['ciclo'] = 'El ciclo debe ser mensual o anual.'
 
         if errores:
             return Response({'errores': errores}, status=status.HTTP_400_BAD_REQUEST)

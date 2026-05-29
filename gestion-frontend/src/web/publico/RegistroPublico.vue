@@ -17,7 +17,7 @@ const errorGral = ref('')
 const planes          = ref([])
 const cargandoPlanes  = ref(true)
 const planSeleccionado = ref(null)
-const ciclo            = ref('mensual')
+const ciclo            = 'mensual'   // solo facturación mensual
 
 onMounted(async () => {
   try {
@@ -31,7 +31,6 @@ onMounted(async () => {
     planSeleccionado.value = planes.value.find(p => p.id == route.query.plan_id) || null
     if (planSeleccionado.value && paso.value === 1) paso.value = 2
   }
-  if (route.query.ciclo) ciclo.value = route.query.ciclo
 })
 
 // ── Datos empresa ─────────────────────────────────────────────────────────────
@@ -207,7 +206,7 @@ const aceptaTerminos = ref(false)
 
 // ── Precio formateado ─────────────────────────────────────────────────────────
 function precio(plan) {
-  const p = ciclo.value === 'anual' ? plan.precio_anual : plan.precio_mensual
+  const p = plan.precio_mensual
   if (!p) return 'A consultar'
   return new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(Number(p))
 }
@@ -254,7 +253,7 @@ async function pagar() {
         empresa: { ...empresa.value },
         usuario: { ...usuario.value },
         plan_id: planSeleccionado.value.id,
-        ciclo:   ciclo.value,
+        ciclo:   ciclo,
       }),
     })
     const regData = await regRes.json()
@@ -295,7 +294,7 @@ async function pagar() {
       },
       body: JSON.stringify({
         plan_id: planSeleccionado.value.id,
-        ciclo:   ciclo.value,
+        ciclo:   ciclo,
       }),
     })
     const pagoData = await pagoRes.json()
@@ -365,25 +364,6 @@ async function pagar() {
         <h2 class="text-2xl font-extrabold text-gray-900 mb-1">Elige tu plan</h2>
         <p class="text-gray-500 mb-6 text-sm">Selecciona el plan que mejor se adapte a tu empresa.</p>
 
-        <!-- Toggle ciclo -->
-        <div class="flex items-center gap-3 mb-6">
-          <span class="text-sm font-medium" :class="ciclo==='mensual'?'text-gray-900':'text-gray-400'">Mensual</span>
-          <button
-            @click="ciclo = ciclo === 'mensual' ? 'anual' : 'mensual'"
-            class="relative w-11 h-6 rounded-full transition-colors"
-            :class="ciclo === 'anual' ? 'bg-indigo-600' : 'bg-gray-300'"
-          >
-            <span
-              class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
-              :class="ciclo === 'anual' ? 'translate-x-5' : 'translate-x-0'"
-            />
-          </button>
-          <span class="text-sm font-medium" :class="ciclo==='anual'?'text-gray-900':'text-gray-400'">
-            Anual
-            <span class="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">-15%</span>
-          </span>
-        </div>
-
         <div v-if="cargandoPlanes" class="grid gap-4">
           <div v-for="i in 3" :key="i" class="h-32 rounded-2xl bg-white border border-gray-100 animate-pulse"/>
         </div>
@@ -402,7 +382,7 @@ async function pagar() {
               </div>
               <div class="text-right">
                 <p class="text-2xl font-extrabold text-gray-900">{{ precio(plan) }}</p>
-                <p class="text-xs text-gray-400">/{{ ciclo === 'mensual' ? 'mes' : 'año' }}</p>
+                <p class="text-xs text-gray-400">/mes</p>
               </div>
             </div>
           </button>
@@ -609,11 +589,11 @@ async function pagar() {
             <div class="flex items-center justify-between p-4 rounded-xl bg-indigo-50 border border-indigo-100">
               <div>
                 <p class="font-bold text-gray-900">{{ planSeleccionado?.nombre_display }}</p>
-                <p class="text-sm text-gray-500">Facturación {{ ciclo }}</p>
+                <p class="text-sm text-gray-500">Facturación mensual</p>
               </div>
               <div class="text-right">
                 <p class="text-xl font-extrabold text-indigo-700">{{ precio(planSeleccionado) }}</p>
-                <p class="text-xs text-gray-400">/{{ ciclo === 'mensual' ? 'mes' : 'año' }}</p>
+                <p class="text-xs text-gray-400">/mes</p>
               </div>
             </div>
           </div>

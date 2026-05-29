@@ -448,17 +448,25 @@ El componente `PermisoToast.vue` muestra una notificación de acceso denegado cu
 
 ### Planes disponibles
 
-| Plan | Flotas | Vehículos | Conductores | Usuarios |
-|---|---|---|---|---|
-| `basico` | 1 | 10 | 10 | 5 |
-| `pro` | configurable | configurable | configurable | configurable |
-| `enterprise` | configurable | configurable | configurable | configurable |
+El Superadmin puede crear **cuantos planes quiera**, con el **nombre libre** que defina (campo `PlanSuscripcion.nombre`, texto libre único, máx. 30 caracteres). Ya no existe una lista fija de códigos (`basico`/`pro`/`enterprise`). El comando `seed_planes` solo siembra unos planes de ejemplo iniciales.
 
-Además de los límites cuantitativos, cada plan define:
+Validaciones del formulario de plan (frontend `Planes.vue` + backend): nombre máx. **30** caracteres, descripción máx. **100**, orden de visualización **≥ 0**, y todos los valores numéricos (precio mensual y límites) **no pueden ser negativos**.
+
+La facturación es **únicamente mensual**. No existe ciclo anual: se eliminó el campo `precio_anual` y toda la lógica/selección de ciclo anual (cobros, renovaciones a 30 días, registro público, landing y pago). El campo `ciclo` de los pagos/suscripciones se conserva en BD (siempre `'mensual'` de aquí en adelante) solo para que el historial de pagos antiguos que fueron anuales siga siendo legible.
+
+Cada plan define sus propios límites cuantitativos (flotas, vehículos, conductores, usuarios) y, además:
 - **`modulos`**: qué secciones del sistema son visibles para las empresas suscritas.
 - **`permisos`**: qué acciones (crear, editar, eliminar, exportar, etc.) están disponibles dentro de esos módulos.
 
 Todos los usuarios de una empresa comparten los mismos módulos y permisos — ambos determinados exclusivamente por el plan. No existe configuración de permisos por usuario individual.
+
+#### Desactivar planes (no se eliminan)
+
+Los planes **no se eliminan** desde la interfaz; se **desactivan** (`activo=False`). Al desactivar un plan:
+- Las empresas que ya lo tienen **lo conservan y siguen pagando con normalidad** (no se tocan `Empresa.plan` ni su `Suscripcion`).
+- El plan **deja de ofrecerse a nuevos clientes**: la lista de planes para empresas (`GET /api/configuracion/planes/`) ya filtra `activo=True`.
+
+Desde `Planes.vue`, cada tarjeta tiene un botón **Desactivar/Activar** (toggle vía `PUT` con `{ activo }`). Un plan inactivo puede reactivarse en cualquier momento.
 
 #### Permisos de solicitudes de conductores (por tipo)
 

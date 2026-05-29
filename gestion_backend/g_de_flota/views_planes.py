@@ -545,7 +545,7 @@ class PagoIniciarView(APIView):
             return Response({'error': 'Sin acceso.'}, status=403)
 
         plan_id       = request.data.get('plan_id')
-        ciclo         = request.data.get('ciclo', 'mensual')
+        ciclo         = 'mensual'   # solo facturación mensual
         usar_tarjeta  = request.data.get('usar_tarjeta', False)
         empresa       = request.user.empresa
 
@@ -571,7 +571,7 @@ class PagoIniciarView(APIView):
                     'dias_restantes': dias,
                 }, status=400)
 
-        monto = int(plan.precio_anual if ciclo == 'anual' else plan.precio_mensual or 0)
+        monto = int(plan.precio_mensual or 0)
         if not monto:
             return Response({'error': 'Este plan no tiene precio configurado.'}, status=400)
 
@@ -652,11 +652,7 @@ class PagoIniciarView(APIView):
             sus.estado = 'activa'
             sus.plan   = plan
             sus.fecha_inicio      = timezone.now()
-            sus.fecha_fin_periodo = (
-                timezone.now() + timezone.timedelta(days=365)
-                if ciclo == 'anual'
-                else timezone.now() + timezone.timedelta(days=30)
-            )
+            sus.fecha_fin_periodo = timezone.now() + timezone.timedelta(days=30)
             sus.save()
             empresa.plan = plan
             empresa.save(update_fields=['plan'])
@@ -778,14 +774,10 @@ class PagoRetornoView(View):
                 pago.save()
 
                 sus        = pago.suscripcion
-                sus.ciclo  = pago.ciclo
+                sus.ciclo  = 'mensual'
                 sus.estado = 'activa'
                 sus.fecha_inicio      = timezone.now()
-                sus.fecha_fin_periodo = (
-                    timezone.now() + timezone.timedelta(days=365)
-                    if pago.ciclo == 'anual'
-                    else timezone.now() + timezone.timedelta(days=30)
-                )
+                sus.fecha_fin_periodo = timezone.now() + timezone.timedelta(days=30)
                 sus.save()
 
                 # Sincronizar plan en Empresa
@@ -1139,7 +1131,7 @@ class SuscripcionesAdminView(APIView):
 
         elif accion == 'pago_manual':
             # Registra un pago manual (transferencia, efectivo, etc.) y activa la suscripción
-            ciclo  = request.data.get('ciclo', 'mensual')
+            ciclo  = 'mensual'
             monto  = int(request.data.get('monto', 0))
             metodo = request.data.get('metodo', 'Transferencia bancaria')
             nota   = request.data.get('nota', '').strip()
@@ -1148,7 +1140,7 @@ class SuscripcionesAdminView(APIView):
                 return Response({'error': 'El monto es requerido.'}, status=400)
 
             ahora = timezone.now()
-            dias_periodo = 365 if ciclo == 'anual' else 30
+            dias_periodo = 30
 
             # Si ya tiene fecha activa, extender desde ahí; si no, desde hoy
             base = sus.fecha_fin_periodo if sus.fecha_fin_periodo and sus.fecha_fin_periodo > ahora else ahora

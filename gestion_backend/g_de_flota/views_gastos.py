@@ -657,8 +657,6 @@ class FinanzasSaasView(APIView):
         for e in empresas_con_plan:
             if e.plan.precio_mensual:
                 mrr += e.plan.precio_mensual
-            elif e.plan.precio_anual:
-                mrr += e.plan.precio_anual / 12
         mrr_int = int(mrr)
         arr     = mrr_int * 12
 
@@ -669,8 +667,6 @@ class FinanzasSaasView(APIView):
             for e in emps:
                 if plan.precio_mensual:
                     plan_mrr += plan.precio_mensual
-                elif plan.precio_anual:
-                    plan_mrr += plan.precio_anual / 12
             ingresos_por_plan.append({
                 'plan':     plan.nombre,
                 'empresas': emps.count(),
@@ -691,8 +687,6 @@ class FinanzasSaasView(APIView):
                 return Decimal(0)
             if p.precio_mensual:
                 return p.precio_mensual
-            if p.precio_anual:
-                return p.precio_anual / 12
             return Decimal(0)
 
         mrr_ganado    = sum(int(_precio_plan(c.plan_despues)) for c in nuevas)
@@ -800,8 +794,6 @@ class FinanzasHistoricoView(APIView):
         for e in empresas_con_plan:
             if e.plan.precio_mensual:
                 mrr_actual += e.plan.precio_mensual
-            elif e.plan.precio_anual:
-                mrr_actual += e.plan.precio_anual / 12
 
         resultado = []
         for i in range(meses_count - 1, -1, -1):
