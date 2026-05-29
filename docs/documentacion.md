@@ -157,7 +157,7 @@ gestion_flota/
 │   │       ├── planes/
 │   │       ├── reportes/         # Reportes empresa y superadmin
 │   │       ├── rutas/            # Rutas y trabajos
-│   │       │   ├── Rutas.vue     # Vista principal con tabla, panel y modales
+│   │       │   ├── Rutas.vue     # Vista principal con tabla, panel y modales (incl. carga masiva)
 │   │       │   └── MapaRuta.vue  # Componente Leaflet reutilizable
 │   │       ├── solicitudes/      # Solicitudes de conductores (panel web)
 │   │       │   └── SolicitudesConductores.vue  # Tabla + modales + badge WS
@@ -687,6 +687,19 @@ Si la ruta tiene `hora_programada`, **solo puede iniciarse con hasta 30 minutos 
 - **App móvil (`DetalleRuta.vue`):** el botón "Iniciar ruta" se reemplaza por un banner ámbar con el tiempo restante (calculado en el cliente). Al llegar al margen, el banner desaparece y el botón aparece sin necesidad de recargar.
 - **Panel web (`Rutas.vue`):** aplica la misma validación server-side; si el admin intenta iniciar prematuramente, recibe el error con el tiempo restante.
 
+#### Mejoras del módulo (selector de ubicación, combustible, carga masiva)
+
+- **Ingreso de ubicaciones (paso 2 del modal):** cada parada (origen/destino/intermedias) tiene un **buscador de dirección por texto** (Nominatim, debounce 500ms) con autocompletado, y un toggle de **coordenadas manuales** (validación de rango Chile: lat −56/−17, lng −76/−65). Debajo de la lista de paradas hay **un solo mapa** Leaflet (`MapaRuta`) que muestra todos los marcadores de las paradas con coordenadas. El mapa incluye:
+- **Buscador de ciudad** (prop `buscador`): busca en Nominatim (debounce 500ms, Chile) y centra/encuadra el mapa en la ciudad elegida (no crea paradas).
+- **Clic para fijar ubicación** (prop `seleccionable`, evento `map-click`): se selecciona una parada (las tarjetas son clicables y la activa se resalta) y al hacer clic en el mapa se asigna esa coordenada a la parada activa, con **geocodificación inversa** para rellenar el nombre/dirección.
+- **Gasto estimado de combustible (solo frontend):** estimación con valores por defecto — consumo **10 L/100km** (no hay consumo por vehículo en el modelo) y precios fijos **$1.250 diésel / $1.380 bencina**, según `tipo_combustible` del vehículo. Se muestra en el paso 3 del modal, en la columna "Costo est." de la tabla (prefijo `~`) y en el panel de detalle. Sin endpoint nuevo.
+- **Carga masiva por Excel (`xlsx`):** botón "Carga masiva" → modal para descargar la plantilla `.xlsx`, subir el archivo (máx. 5MB), previsualizar/validar e importar las válidas una a una con barra de progreso. Columnas: `nombre, tipo, conductor_rut, fecha_programada, hora_programada, origen_direccion, destino_direccion, notas`.
+  - **Direcciones, no coordenadas:** la plantilla pide la **dirección de origen/destino** (texto). Al subir el archivo se **geocodifican** con Nominatim (caché + throttle ~1 req/s, con barra "Ubicando direcciones X/Y"); si una dirección no se puede ubicar, la fila se marca como error.
+  - **Vehículo inferido del RUT:** no hay columna de patente. Con solo el `conductor_rut` se asigna el **vehículo activo** de ese conductor (el preview muestra la patente inferida).
+  - **RUT con formato `12.333.444-5`** (acepta con/sin puntos); fecha `AAAA-MM-DD` y hora `HH:mm` en columnas separadas (parseo con `cellDates`).
+  - Validaciones del preview: nombre, tipo `carga`/`personas`, dirección ubicable (en Chile), fecha futura, hora `HH:mm`, y RUT (formato + existencia como conductor de la empresa). El backend **no crea** conductores; solo los busca por RUT.
+  - El POST `/api/empresa/rutas/` acepta `vehiculo_patente` y `conductor_rut` como alternativa a `vehiculo_id`/`conductor_id`.
+
 **Vistas:** `Rutas.vue` · `MapaRuta.vue`  
 **Backend:** `views_rutas.py`  
 **Modelos:** `Ruta` · `Parada` · `EventoRuta`  
@@ -1045,6 +1058,8 @@ Registro de eventos de seguridad y actividad del sistema. Accesible únicamente 
 **Campos calculados en el serializer** (no almacenados en BD):
 - `navegador` — nombre del browser extraído del `user_agent` (Chrome, Edge, Firefox, Opera, Safari, Internet Explorer, Otro)
 - `descripcion` — oración legible en español que resume el evento (ej: "Juan subió Permiso de circulación para ABC-123")
+
+> **Etiquetas de acción:** el badge de cada fila usa el mapa `ACCION_LABELS` del frontend (`Logs.vue`); la descripción del modal usa `_generar_descripcion` del backend (`serializers.py`). Ambos deben cubrir toda acción registrada con `registrar_log`, o el log mostrará el código crudo (ej. `pago_iniciado`). Incluyen pagos/suscripción (`pago_iniciado`, `pago_aprobado`, `pago_oneclick`, `pago_manual_registrado`, `suscripcion_reactivada`, `gracia_extendida`, `tarjeta_eliminada`, `terminos_actualizados`), correo (`email_config_guardada`, `email_test_enviado`) y errores (`pago_error`, `oneclick_error`, `excepcion_no_manejada`).
 
 **Diff antes/después en ediciones** — los eventos de edición de vehículo, conductor, flota, mantención y documento incluyen en `detalle.cambios` una lista de campos modificados con valor anterior y nuevo:
 ```json

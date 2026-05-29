@@ -8,15 +8,26 @@
           <h1 class="text-2xl font-bold text-gray-900">Rutas y trabajos</h1>
           <p class="text-sm text-gray-500 mt-0.5">Planificación y seguimiento de rutas vehiculares</p>
         </div>
-        <button @click="abrirModalCrear"
-          :disabled="esSuperadmin && !empresaActiva"
-          :title="esSuperadmin && !empresaActiva ? 'Selecciona una empresa primero' : ''"
-          class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-          </svg>
-          Nueva ruta
-        </button>
+        <div class="flex items-center gap-2">
+          <button @click="abrirModalCarga"
+            :disabled="esSuperadmin && !empresaActiva"
+            :title="esSuperadmin && !empresaActiva ? 'Selecciona una empresa primero' : ''"
+            class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-700 bg-white border border-indigo-200 rounded-lg hover:bg-indigo-50 transition disabled:opacity-50 disabled:cursor-not-allowed">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 12V4m0 0L8 8m4-4l4 4"/>
+            </svg>
+            Carga masiva
+          </button>
+          <button @click="abrirModalCrear"
+            :disabled="esSuperadmin && !empresaActiva"
+            :title="esSuperadmin && !empresaActiva ? 'Selecciona una empresa primero' : ''"
+            class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            Nueva ruta
+          </button>
+        </div>
       </div>
 
       <!-- ── Selector empresa (solo SUPERADMIN) ── -->
@@ -124,6 +135,7 @@
               <th class="px-4 py-3 text-left font-semibold">Vehículo</th>
               <th class="px-4 py-3 text-left font-semibold">Fecha</th>
               <th class="px-4 py-3 text-right font-semibold">Distancia / Duración</th>
+              <th class="px-4 py-3 text-right font-semibold">Costo est.</th>
               <th class="px-4 py-3 text-center font-semibold">Estado</th>
               <th class="px-4 py-3 text-center font-semibold">Acciones</th>
             </tr>
@@ -154,6 +166,10 @@
               <td class="px-4 py-3 text-right">
                 <p class="font-medium text-gray-800">{{ ruta.distancia_km ? ruta.distancia_km.toLocaleString('es-CL') + ' km' : '—' }}</p>
                 <p class="text-xs text-gray-400">{{ ruta.duracion_min ? formatDuracion(ruta.duracion_min) : '' }}</p>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <p class="font-medium text-gray-800">{{ combustibleRuta(ruta) ? '~' + formatCLP(combustibleRuta(ruta).total) : '—' }}</p>
+                <p v-if="combustibleRuta(ruta)" class="text-xs text-gray-400">combustible</p>
               </td>
               <td class="px-4 py-3 text-center" @click.stop>
                 <span :class="['px-2.5 py-1 rounded-full text-xs font-semibold', badgeEstado(ruta.estado)]">
@@ -217,7 +233,7 @@
     <Transition name="panel">
       <div v-if="panelAbierto" class="fixed inset-0 z-30 flex justify-end">
         <div class="absolute inset-0 bg-black/20" @click="panelAbierto = false"></div>
-        <div class="relative bg-white w-full max-w-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div class="relative bg-white w-full max-w-3xl shadow-2xl flex flex-col overflow-hidden">
           <!-- Header panel -->
           <div class="flex items-start justify-between p-5 border-b border-gray-100">
             <div>
@@ -284,6 +300,10 @@
                 <div>
                   <p class="text-xs text-gray-400 mb-0.5">Duración estimada</p>
                   <p class="font-medium text-gray-800">{{ rutaDetalle?.duracion_min ? formatDuracion(rutaDetalle.duracion_min) : '—' }}</p>
+                </div>
+                <div v-if="combustibleRuta(rutaDetalle)">
+                  <p class="text-xs text-gray-400 mb-0.5">Combustible estimado</p>
+                  <p class="font-medium text-gray-800">~{{ formatCLP(combustibleRuta(rutaDetalle).total) }}</p>
                 </div>
                 <div v-if="rutaDetalle?.km_reales">
                   <p class="text-xs text-gray-400 mb-0.5">Km recorridos</p>
@@ -376,7 +396,7 @@
     <Transition name="modal">
       <div v-if="modalCrear" class="fixed inset-0 z-40 flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/40" @click="cerrarModal"></div>
-        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
 
           <!-- Header modal -->
           <div class="flex items-center justify-between p-5 border-b border-gray-100">
@@ -556,24 +576,30 @@
               <p class="text-xs text-gray-500 mb-1">Ingresa el origen, destino y las paradas intermedias.</p>
 
               <div v-for="(parada, idx) in form.paradas" :key="idx"
-                class="border border-gray-200 rounded-xl p-3 relative">
+                @click="paradaActiva = idx"
+                :class="['border rounded-xl p-3 relative cursor-pointer transition',
+                  paradaActiva === idx ? 'border-indigo-400 ring-2 ring-indigo-200 bg-indigo-50/30' : 'border-gray-200 hover:border-indigo-200']">
                 <div class="flex items-center justify-between mb-2">
-                  <span :class="['text-xs font-semibold px-2 py-0.5 rounded-full',
-                    parada.tipo === 'origen' ? 'bg-green-100 text-green-700' :
-                    parada.tipo === 'destino' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700']">
-                    {{ parada.tipo === 'origen' ? 'Origen' : parada.tipo === 'destino' ? 'Destino' : `Parada ${idx}` }}
-                  </span>
-                  <button v-if="parada.tipo === 'parada'" @click="quitarParada(idx)"
+                  <div class="flex items-center gap-2">
+                    <span :class="['text-xs font-semibold px-2 py-0.5 rounded-full',
+                      parada.tipo === 'origen' ? 'bg-green-100 text-green-700' :
+                      parada.tipo === 'destino' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700']">
+                      {{ parada.tipo === 'origen' ? 'Origen' : parada.tipo === 'destino' ? 'Destino' : `Parada ${idx}` }}
+                    </span>
+                    <span v-if="paradaActiva === idx" class="text-xs text-indigo-600 font-medium">📍 clic en el mapa para fijar</span>
+                  </div>
+                  <button v-if="parada.tipo === 'parada'" @click.stop="quitarParada(idx)"
                     class="p-1 text-red-400 hover:bg-red-50 rounded-lg transition">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                     </svg>
                   </button>
                 </div>
+                <!-- Buscador de dirección -->
                 <div class="relative">
                   <input :value="parada.nombre || parada.direccion"
                     @input="e => buscarDireccion(e.target.value, idx)"
-                    type="text" :placeholder="parada.tipo === 'origen' ? 'Buscar dirección de origen...' : parada.tipo === 'destino' ? 'Buscar dirección de destino...' : 'Buscar parada...'"
+                    type="text" :placeholder="parada.tipo === 'origen' ? 'Buscar dirección de origen...' : parada.tipo === 'destino' ? 'Buscar dirección de destino...' : 'Buscar dirección de parada...'"
                     class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
                   <div v-if="geoSugerencias[idx]?.length"
                     class="absolute top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
@@ -584,8 +610,24 @@
                     </button>
                   </div>
                 </div>
-                <div v-if="parada.latitud" class="mt-1 text-xs text-green-600">
-                  ✓ {{ parada.latitud.toFixed(4) }}, {{ parada.longitud.toFixed(4) }}
+
+                <!-- Coordenadas manuales (toggle) -->
+                <button type="button" @click="coordsAbiertas[idx] = !coordsAbiertas[idx]"
+                  class="mt-1.5 text-xs text-gray-400 hover:text-indigo-500 transition">
+                  {{ coordsAbiertas[idx] ? '− Ocultar coordenadas' : '± Coordenadas manuales' }}
+                </button>
+                <div v-if="coordsAbiertas[idx]" class="grid grid-cols-2 gap-2 mt-1">
+                  <input v-model.number="parada.latitud" @change="validarCoordParada(idx)" type="number" step="any"
+                    placeholder="Latitud (-33.44)"
+                    class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                  <input v-model.number="parada.longitud" @change="validarCoordParada(idx)" type="number" step="any"
+                    placeholder="Longitud (-70.66)"
+                    class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                </div>
+                <p v-if="coordsError[idx]" class="mt-1 text-xs text-red-500">{{ coordsError[idx] }}</p>
+
+                <div v-if="parada.latitud && parada.longitud" class="mt-1 text-xs text-green-600">
+                  ✓ {{ Number(parada.latitud).toFixed(4) }}, {{ Number(parada.longitud).toFixed(4) }}
                 </div>
               </div>
 
@@ -593,6 +635,19 @@
                 class="w-full border-2 border-dashed border-gray-200 text-gray-400 rounded-xl py-2.5 text-sm hover:border-indigo-300 hover:text-indigo-500 transition">
                 + Agregar parada intermedia
               </button>
+
+              <!-- Mapa único con todas las paradas -->
+              <p class="text-xs text-gray-400 mt-1">📍 Selecciona una parada arriba y haz clic en el mapa para fijar su ubicación.</p>
+              <div style="height:260px" class="rounded-xl overflow-hidden border border-gray-200 mt-1">
+                <MapaRuta
+                  map-id="paradas-mapa"
+                  :paradas="form.paradas.filter(p => p.latitud && p.longitud)"
+                  :polyline="[]"
+                  :buscador="true"
+                  :seleccionable="true"
+                  @map-click="onMapaClick"
+                />
+              </div>
             </div>
 
             <!-- Paso 3 — Calcular y confirmar -->
@@ -627,6 +682,19 @@
                     <p class="text-xs text-gray-400">Duración estimada</p>
                     <p class="font-bold text-gray-800">{{ calculoResult.duracion_min ? formatDuracion(calculoResult.duracion_min) : '—' }}</p>
                   </div>
+                </div>
+
+                <!-- Combustible estimado -->
+                <div class="mt-3 bg-indigo-50/60 border border-indigo-100 rounded-lg p-3 text-sm">
+                  <div class="flex items-center justify-between">
+                    <span class="text-gray-700 font-medium">⛽ Combustible estimado</span>
+                    <span class="font-bold text-gray-900">{{ combustibleCalc ? formatCLP(combustibleCalc.total) : 'Sin datos' }}</span>
+                  </div>
+                  <p v-if="combustibleCalc" class="text-xs text-gray-500 mt-0.5">
+                    {{ combustibleCalc.litros }} L × {{ formatCLP(combustibleCalc.precioLitro) }}/L
+                    ({{ labelCombustible(combustibleCalc.combustible) }} · {{ combustibleCalc.consumo_l100 }} L/100km estimado)
+                  </p>
+                  <p v-else class="text-xs text-gray-400 mt-0.5">Calcula la distancia para estimar el combustible.</p>
                 </div>
               </div>
 
@@ -723,6 +791,147 @@
         </div>
       </div>
     </Transition>
+
+    <!-- ── Modal Carga masiva ── -->
+    <Transition name="modal">
+      <div v-if="modalCarga" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/40" @click="cerrarModalCarga"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+          <div class="flex items-center justify-between p-5 border-b border-gray-100">
+            <h3 class="text-lg font-bold text-gray-900">Carga masiva de rutas</h3>
+            <button @click="cerrarModalCarga" :disabled="importando"
+              class="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg disabled:opacity-50">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="p-5 overflow-y-auto space-y-4">
+            <!-- Paso 1: plantilla -->
+            <div>
+              <p class="text-sm font-semibold text-gray-700 mb-1">1. Descarga la plantilla</p>
+              <button @click="descargarPlantillaExcel"
+                class="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 transition">
+                ⬇ Descargar plantilla Excel
+              </button>
+            </div>
+
+            <!-- Paso 2: archivo -->
+            <div>
+              <p class="text-sm font-semibold text-gray-700 mb-1">2. Completa los datos y sube el archivo</p>
+              <label class="flex items-center justify-center gap-2 w-full border-2 border-dashed border-gray-200 rounded-xl py-4 text-sm text-gray-500 cursor-pointer hover:border-indigo-300 hover:text-indigo-600 transition">
+                📂 {{ archivoNombre || 'Seleccionar archivo' }}
+                <input type="file" accept=".xlsx,.xls" class="hidden" @change="onArchivoCarga"/>
+              </label>
+              <p class="text-xs text-gray-400 mt-1">Acepta: .xlsx · máx 5MB · columnas: nombre, tipo, conductor_rut, fecha_programada, hora_programada, origen_direccion, destino_direccion, notas</p>
+            </div>
+
+            <div v-if="errorCarga" class="bg-red-50 border border-red-100 rounded-lg p-3 text-xs text-red-700">{{ errorCarga }}</div>
+            <div v-if="parseandoArchivo" class="text-sm text-gray-400">Leyendo archivo...</div>
+
+            <!-- Validando conductor/vehículo/mantención -->
+            <div v-if="validandoCarga">
+              <p class="text-sm text-gray-600 mb-1">Verificando conductor y vehículo... {{ progresoVal }} / {{ progresoValTotal }}</p>
+              <div class="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div class="h-full bg-amber-500 transition-all"
+                  :style="{ width: progresoValTotal ? (progresoVal / progresoValTotal * 100) + '%' : '0%' }"></div>
+              </div>
+            </div>
+
+            <!-- Geocodificando direcciones -->
+            <div v-if="geocodificando">
+              <p class="text-sm text-gray-600 mb-1">Ubicando direcciones... {{ progresoGeo }} / {{ progresoGeoTotal }}</p>
+              <div class="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div class="h-full bg-indigo-600 transition-all"
+                  :style="{ width: progresoGeoTotal ? (progresoGeo / progresoGeoTotal * 100) + '%' : '0%' }"></div>
+              </div>
+            </div>
+
+            <!-- Vista previa -->
+            <div v-if="filasParseadas.length">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-sm font-semibold text-gray-700">Vista previa</p>
+                <p class="text-xs text-gray-500">
+                  {{ filasValidas.length }} válidas
+                  <span v-if="filasParseadas.some(f => f._advertencias?.length)" class="text-amber-600">
+                    · {{ filasParseadas.filter(f => f._advertencias?.length && f.valida).length }} con avisos
+                  </span>
+                  <span v-if="filasParseadas.length - filasValidas.length > 0" class="text-red-500">
+                    · {{ filasParseadas.length - filasValidas.length }} con errores (no se crearán)
+                  </span>
+                </p>
+              </div>
+              <div class="border border-gray-100 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                <table class="w-full text-xs">
+                  <thead class="bg-gray-50 text-gray-500 sticky top-0">
+                    <tr>
+                      <th class="px-2 py-2 text-left font-semibold">#</th>
+                      <th class="px-2 py-2 text-left font-semibold">Nombre</th>
+                      <th class="px-2 py-2 text-left font-semibold">Origen → Destino</th>
+                      <th class="px-2 py-2 text-left font-semibold">RUT</th>
+                      <th class="px-2 py-2 text-left font-semibold">Vehículo</th>
+                      <th class="px-2 py-2 text-left font-semibold">Fecha</th>
+                      <th class="px-2 py-2 text-left font-semibold">Hora</th>
+                      <th class="px-2 py-2 text-left font-semibold">Estado</th>
+                      <th class="px-2 py-2 text-left font-semibold">Avisos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="f in filasParseadas" :key="f._fila"
+                      :class="!f.valida && !f._importada ? 'bg-red-50' : f._advertencias?.length ? 'bg-amber-50/50' : ''">
+                      <td class="px-2 py-1.5 text-gray-400">{{ f._fila }}</td>
+                      <td class="px-2 py-1.5 text-gray-700">{{ f.nombre || '—' }}</td>
+                      <td class="px-2 py-1.5 text-gray-600 max-w-[180px] truncate"
+                        :title="`${f.origen_direccion || ''} → ${f.destino_direccion || ''}`">
+                        {{ (f.origen_nombre || f.origen_direccion || '—') }} → {{ (f.destino_nombre || f.destino_direccion || '—') }}
+                      </td>
+                      <td class="px-2 py-1.5 text-gray-600">{{ f.conductor_rut || '—' }}</td>
+                      <td class="px-2 py-1.5 text-gray-600">{{ patenteDeConductor(f.conductor_rut) || '—' }}</td>
+                      <td class="px-2 py-1.5 text-gray-600">{{ f.fecha_programada || '—' }}</td>
+                      <td class="px-2 py-1.5 text-gray-600">{{ f.hora_programada || '—' }}</td>
+                      <td class="px-2 py-1.5">
+                        <span v-if="f._importada" class="text-green-600 font-medium">✓ Importada</span>
+                        <span v-else-if="!f.valida" class="text-red-600 font-medium" :title="f.errores?.join('\n')">✗ {{ f.errores?.[0] }}</span>
+                        <span v-else-if="f._advertencias?.length" class="text-amber-600 font-medium">⚠ Con avisos</span>
+                        <span v-else class="text-indigo-600 font-medium">✓ OK</span>
+                      </td>
+                      <td class="px-2 py-1.5 max-w-[200px]">
+                        <ul v-if="f._advertencias?.length" class="space-y-0.5">
+                          <li v-for="(a, ai) in f._advertencias" :key="ai"
+                            class="text-amber-700 leading-tight">
+                            ⚠ {{ a.mensaje }}
+                          </li>
+                        </ul>
+                        <span v-else class="text-gray-300">—</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Progreso -->
+            <div v-if="importando">
+              <p class="text-sm text-gray-600 mb-1">Importando... {{ progresoActual }} / {{ progresoTotal }} rutas</p>
+              <div class="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div class="h-full bg-indigo-600 transition-all"
+                  :style="{ width: progresoTotal ? (progresoActual / progresoTotal * 100) + '%' : '0%' }"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end gap-2 p-4 border-t border-gray-100">
+            <button @click="cerrarModalCarga" :disabled="importando"
+              class="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg disabled:opacity-50">Cancelar</button>
+            <button @click="importarRutas" :disabled="!filasValidas.length || importando"
+              class="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">
+              {{ importando ? 'Importando...' : `Importar ${filasValidas.length} ruta(s) válida(s)` }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -731,6 +940,7 @@ import { ref, computed, onMounted } from 'vue'
 import { apiFetch as apiFetchBase } from '../../utils/api.js'
 import { apiFetchEmpresa as apiFetch, getEmpresaActiva, setEmpresaActiva } from '../../utils/empresaActiva.js'
 import MapaRuta from './MapaRuta.vue'
+import { validarRut } from '../../utils/validators.js'
 
 // ── Estado principal ──────────────────────────────────────────────────────
 const rutas       = ref([])
@@ -952,6 +1162,9 @@ function abrirModalCrear() {
   form.value          = formInicial()
   calculoResult.value = null
   paso.value          = 1
+  paradaActiva.value  = 0
+  coordsAbiertas.value = {}
+  coordsError.value    = {}
   modalCrear.value    = true
 }
 
@@ -984,6 +1197,9 @@ function abrirModalEditar(ruta) {
   }
   calculoResult.value = null
   paso.value          = 1
+  paradaActiva.value  = 0
+  coordsAbiertas.value = {}
+  coordsError.value    = {}
   modalCrear.value    = true
 }
 
@@ -1143,6 +1359,49 @@ function seleccionarDireccion(sug, idx) {
   geoSugerencias.value[idx] = []
 }
 
+// Coordenadas manuales por parada (toggle + validación de rango Chile)
+const coordsAbiertas = ref({})
+const coordsError    = ref({})
+
+// Parada que recibirá el próximo clic en el mapa
+const paradaActiva = ref(0)
+
+async function onMapaClick({ lat, lng }) {
+  const p = form.value.paradas[paradaActiva.value]
+  if (!p) return
+  p.latitud  = lat
+  p.longitud = lng
+  coordsError.value[paradaActiva.value] = ''
+  try {
+    const url  = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=es`
+    const res  = await fetch(url)
+    const data = await res.json()
+    const nom  = data.display_name?.split(',').slice(0, 3).join(',').trim()
+    if (nom) { p.nombre = nom; p.direccion = data.display_name }
+  } catch { /* sin geocodificación, usamos las coordenadas como nombre */ }
+  if (!p.nombre) { p.nombre = `${lat.toFixed(5)}, ${lng.toFixed(5)}`; p.direccion = p.nombre }
+}
+
+function validarCoordParada(idx) {
+  const p = form.value.paradas[idx]
+  coordsError.value[idx] = ''
+  const la = parseFloat(p.latitud)
+  const ln = parseFloat(p.longitud)
+  if (Number.isNaN(la) || Number.isNaN(ln)) return   // aún incompleto
+  if (!_enChile(la, ln)) {
+    coordsError.value[idx] = 'Las coordenadas no corresponden a Chile.'
+    p.latitud = null
+    p.longitud = null
+    return
+  }
+  p.latitud = la
+  p.longitud = ln
+  if (!p.nombre) {
+    p.nombre    = `${la.toFixed(5)}, ${ln.toFixed(5)}`
+    p.direccion = p.nombre
+  }
+}
+
 function agregarParada() {
   const destinoIdx = form.value.paradas.findIndex(p => p.tipo === 'destino')
   form.value.paradas.splice(destinoIdx, 0, { tipo: 'parada', orden: destinoIdx, nombre: '', direccion: '', latitud: null, longitud: null, notas: '' })
@@ -1214,6 +1473,49 @@ function formatTimestamp(iso) {
     ' ' + d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
 }
 
+// ── Combustible (estimado solo-frontend, valores por defecto) ──────────────────
+const CONSUMO_DEFAULT = 10     // L/100km (no hay consumo por vehículo en el modelo)
+const PRECIO_BENCINA  = 1380
+const PRECIO_DIESEL   = 1250
+
+function calcularCombustible(distanciaKm, vehiculo) {
+  if (!distanciaKm) return null
+  const consumo     = CONSUMO_DEFAULT
+  const litros      = (distanciaKm / 100) * consumo
+  const precioLitro = vehiculo?.tipo_combustible === 'diesel' ? PRECIO_DIESEL : PRECIO_BENCINA
+  return {
+    litros:       Math.round(litros * 10) / 10,
+    precioLitro,
+    total:        Math.round(litros * precioLitro),
+    combustible:  vehiculo?.tipo_combustible || 'bencina',
+    consumo_l100: consumo,
+  }
+}
+
+function formatCLP(n) {
+  if (n == null) return '—'
+  return '$' + Math.round(n).toLocaleString('es-CL')
+}
+
+function labelCombustible(tipo) {
+  return { bencina: 'bencina', diesel: 'diésel', electrico: 'eléctrico', hibrido: 'híbrido' }[tipo] || tipo
+}
+
+// Combustible del paso 3 (cálculo en curso) según el vehículo seleccionado.
+const vehiculoSeleccionado = computed(() =>
+  vehiculos.value.find(v => v.id === form.value.vehiculo_id) || null
+)
+const combustibleCalc = computed(() =>
+  calcularCombustible(calculoResult.value?.distancia_km, vehiculoSeleccionado.value)
+)
+
+// Combustible de una fila de la tabla / detalle (busca el vehículo por id).
+function combustibleRuta(ruta) {
+  if (!ruta?.distancia_km) return null
+  const v = vehiculos.value.find(x => x.id === ruta.vehiculo_id) || null
+  return calcularCombustible(ruta.distancia_km, v)
+}
+
 function badgeEstado(estado) {
   return {
     activo:     'bg-green-100 text-green-700',
@@ -1238,6 +1540,317 @@ function toast(tipo, mensaje) {
 }
 
 // ── Inicialización ────────────────────────────────────────────────────────
+// ── Carga masiva (Excel / xlsx) ───────────────────────────────────────────────
+const modalCarga       = ref(false)
+const archivoNombre    = ref('')
+const filasParseadas   = ref([])
+const parseandoArchivo = ref(false)
+const importando       = ref(false)
+const progresoActual   = ref(0)
+const progresoTotal    = ref(0)
+const errorCarga       = ref('')
+const geocodificando   = ref(false)
+const progresoGeo      = ref(0)
+const progresoGeoTotal = ref(0)
+const validandoCarga   = ref(false)
+const progresoVal      = ref(0)
+const progresoValTotal = ref(0)
+
+const filasValidas = computed(() => filasParseadas.value.filter(f => f.valida))
+
+// Geocodificación de direcciones (Nominatim) con caché y throttle para respetar el rate limit.
+const _geoCache = new Map()
+const _delay = (ms) => new Promise(r => setTimeout(r, ms))
+
+async function _geocodificar(direccion) {
+  const key = String(direccion || '').trim().toLowerCase()
+  if (!key) return null
+  if (_geoCache.has(key)) return _geoCache.get(key)
+  let r = null
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccion)}&countrycodes=cl&limit=1&accept-language=es`
+    const res  = await fetch(url)
+    const data = res.ok ? await res.json() : []
+    if (data.length) {
+      r = {
+        lat:    parseFloat(data[0].lat),
+        lng:    parseFloat(data[0].lon),
+        nombre: data[0].display_name?.split(',').slice(0, 3).join(',').trim() || String(direccion).trim(),
+      }
+    }
+  } catch { /* sin red → r queda null */ }
+  _geoCache.set(key, r)
+  await _delay(700)   // ~1 req/s recomendado por Nominatim
+  return r
+}
+
+function abrirModalCarga() {
+  modalCarga.value       = true
+  archivoNombre.value    = ''
+  filasParseadas.value   = []
+  errorCarga.value       = ''
+  progresoActual.value   = 0
+  progresoTotal.value    = 0
+}
+function cerrarModalCarga() {
+  if (importando.value) return
+  modalCarga.value = false
+}
+
+async function descargarPlantillaExcel() {
+  const XLSX = await import('xlsx')
+  const datos = [
+    ['nombre','tipo','conductor_rut','fecha_programada','hora_programada','origen_direccion','destino_direccion','notas'],
+    ['STG -> VAL #090','carga','12.333.444-5','2025-06-01','08:30','Av. Vicuña Mackenna 4860, Macul','Muelle Prat, Valparaíso',''],
+  ]
+  const ws = XLSX.utils.aoa_to_sheet(datos)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Rutas')
+  XLSX.writeFile(wb, 'plantilla_rutas.xlsx')
+}
+
+// Normaliza celdas que Excel puede entregar como Date (fecha/hora) o como texto.
+function _celdaFecha(v) {
+  if (v == null || v === '') return ''
+  if (v instanceof Date) {
+    const y = v.getFullYear(), m = String(v.getMonth() + 1).padStart(2, '0'), d = String(v.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  return String(v).trim()
+}
+function _celdaHora(v) {
+  if (v == null || v === '') return ''
+  if (v instanceof Date) {
+    return `${String(v.getHours()).padStart(2, '0')}:${String(v.getMinutes()).padStart(2, '0')}`
+  }
+  const m = String(v).trim().match(/^(\d{1,2}):(\d{2})/)
+  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : String(v).trim()
+}
+
+// Vehículo inferido a partir del RUT del conductor (para mostrar en el preview).
+function patenteDeConductor(rut) {
+  if (!rut) return ''
+  const c = conductores.value.find(x => _normRut(x.rut) === _normRut(rut))
+  return c?.vehiculo?.patente || ''
+}
+
+function _enChile(la, ln) {
+  return la >= -56 && la <= -17 && ln >= -76 && ln <= -65
+}
+
+function _normRut(r) {
+  return String(r || '').replace(/\./g, '').trim().toLowerCase()
+}
+
+function _validarFilaCarga(f, i) {
+  const errores = []
+  if (!f.nombre || !String(f.nombre).trim()) errores.push('Nombre requerido')
+  if (!['carga','personas'].includes(String(f.tipo || '').toLowerCase().trim())) errores.push('Tipo inválido')
+  if (!f.origen_direccion)  errores.push('Dirección de origen requerida')
+  else if (!f._origen_ok)   errores.push('No se pudo ubicar la dirección de origen')
+  if (!f.destino_direccion) errores.push('Dirección de destino requerida')
+  else if (!f._destino_ok)  errores.push('No se pudo ubicar la dirección de destino')
+  for (const [etq, ok, la, ln] of [['origen', f._origen_ok, f.origen_lat, f.origen_lng], ['destino', f._destino_ok, f.destino_lat, f.destino_lng]]) {
+    if (ok && !_enChile(la, ln)) errores.push(`${etq} fuera de Chile`)
+  }
+  if (f.fecha_programada) {
+    const d = new Date(`${String(f.fecha_programada).trim()}T00:00:00`)
+    if (Number.isNaN(d.getTime())) errores.push('Fecha inválida (use AAAA-MM-DD)')
+    else { const hoy = new Date(); hoy.setHours(0,0,0,0); if (d < hoy) errores.push('Fecha en el pasado') }
+  }
+  if (f.hora_programada && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(f.hora_programada).trim())) {
+    errores.push('Hora inválida (use HH:mm)')
+  }
+  // Conductor: el RUT es opcional, pero si viene debe ser válido y existir como
+  // conductor de esta empresa. El vehículo se infiere del conductor (no se pide patente).
+  if (f.conductor_rut) {
+    if (!validarRut(f.conductor_rut).valido) {
+      errores.push('RUT con formato inválido (ej: 12.333.444-5)')
+    } else if (!conductores.value.some(c => _normRut(c.rut) === _normRut(f.conductor_rut))) {
+      errores.push('Conductor no registrado en la empresa')
+    }
+  }
+  return { ...f, _fila: i + 1, valida: errores.length === 0, errores }
+}
+
+async function onArchivoCarga(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) { errorCarga.value = 'El archivo supera los 5 MB.'; e.target.value = ''; return }
+  archivoNombre.value    = file.name
+  errorCarga.value       = ''
+  parseandoArchivo.value = true
+  try {
+    const XLSX    = await import('xlsx')
+    const buffer  = await file.arrayBuffer()
+    const wb      = XLSX.read(buffer, { cellDates: true })
+    const ws      = wb.Sheets[wb.SheetNames[0]]
+    const filas   = XLSX.utils.sheet_to_json(ws, { header: 1 }).slice(1)
+      .filter(fila => fila.length && fila.some(c => c !== '' && c != null))
+      .map(fila => ({
+        nombre:            fila[0],
+        tipo:              String(fila[1] || '').toLowerCase().trim(),
+        conductor_rut:     fila[2] != null ? String(fila[2]).trim() : '',
+        fecha_programada:  _celdaFecha(fila[3]),
+        hora_programada:   _celdaHora(fila[4]),
+        origen_direccion:  fila[5] != null ? String(fila[5]).trim() : '',
+        destino_direccion: fila[6] != null ? String(fila[6]).trim() : '',
+        notas:             fila[7] || '',
+      }))
+
+    if (!filas.length) {
+      errorCarga.value = 'El archivo no tiene filas de datos.'
+      return
+    }
+
+    // Geocodificar las direcciones a coordenadas (Nominatim).
+    parseandoArchivo.value = false
+    geocodificando.value   = true
+    progresoGeoTotal.value = filas.length
+    progresoGeo.value      = 0
+    validandoCarga.value   = false
+    progresoVal.value      = 0
+    const procesadas = []
+    for (const f of filas) {
+      const o = f.origen_direccion  ? await _geocodificar(f.origen_direccion)  : null
+      const d = f.destino_direccion ? await _geocodificar(f.destino_direccion) : null
+      procesadas.push({
+        ...f,
+        origen_nombre:  o?.nombre || f.origen_direccion,
+        origen_lat:     o ? o.lat : NaN,
+        origen_lng:     o ? o.lng : NaN,
+        _origen_ok:     !!o,
+        destino_nombre: d?.nombre || f.destino_direccion,
+        destino_lat:    d ? d.lat : NaN,
+        destino_lng:    d ? d.lng : NaN,
+        _destino_ok:    !!d,
+      })
+      progresoGeo.value++
+    }
+    geocodificando.value = false
+    const conValidacion  = procesadas.map(_validarFilaCarga)
+
+    // Validar conductor/vehículo/mantención para cada fila válida con fecha y conductor.
+    const filasSujetas = conValidacion.filter(
+      f => f.valida && (f.conductor_rut || patenteDeConductor(f.conductor_rut)) && f.fecha_programada
+    )
+    if (filasSujetas.length) {
+      validandoCarga.value   = true
+      progresoValTotal.value = filasSujetas.length
+      progresoVal.value      = 0
+      for (const f of filasSujetas) {
+        const cond  = conductores.value.find(c => _normRut(c.rut) === _normRut(f.conductor_rut))
+        const veh   = cond?.vehiculo?.id ? vehiculos.value.find(v => v.patente === cond.vehiculo.patente) : null
+        try {
+          const res = await apiFetch('/api/empresa/rutas/validar/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              conductor_id:     cond?.id || null,
+              vehiculo_id:      veh?.id || null,
+              fecha_programada: f.fecha_programada,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            const idx  = conValidacion.findIndex(x => x._fila === f._fila)
+            if (idx !== -1) {
+              conValidacion[idx]._advertencias = data.advertencias || []
+              // Errores duros del backend (vehículo en mantención, conductor bloqueado, etc.)
+              // se agregan a los errores de la fila para bloquear la importación.
+              if (data.errores?.length) {
+                conValidacion[idx].valida  = false
+                conValidacion[idx].errores = data.errores.map(e => e.mensaje)
+              }
+            }
+          }
+        } catch { /* sin red → ignorar, no bloquea */ }
+        progresoVal.value++
+      }
+      validandoCarga.value = false
+    }
+
+    filasParseadas.value = conValidacion
+  } catch {
+    errorCarga.value     = 'No se pudo leer el archivo. Verifica que sea un .xlsx válido.'
+    filasParseadas.value = []
+  } finally {
+    parseandoArchivo.value = false
+    geocodificando.value   = false
+    e.target.value = ''
+  }
+}
+
+function _mensajeError(errData) {
+  if (!errData) return 'Error desconocido'
+  // El backend puede devolver { error: '...' } o { conductor_id: '...', vehiculo_id: '...' }
+  if (errData.error) return errData.error
+  const msgs = [errData.conductor_id, errData.vehiculo_id, errData.fecha_programada]
+    .filter(Boolean)
+  return msgs.length ? msgs[0] : JSON.stringify(errData)
+}
+
+async function importarRutas() {
+  const validas = filasValidas.value
+  if (!validas.length) return
+  importando.value     = true
+  progresoTotal.value  = validas.length
+  progresoActual.value = 0
+  let exitosas = 0
+
+  // Copia las filas para anotar el resultado de cada una.
+  const resultados = filasParseadas.value.map(f => ({ ...f }))
+
+  for (const ruta of validas) {
+    const idx = resultados.findIndex(f => f._fila === ruta._fila)
+    let patente = null
+    if (ruta.conductor_rut) {
+      const cond = conductores.value.find(c => _normRut(c.rut) === _normRut(ruta.conductor_rut))
+      if (cond?.vehiculo?.patente) patente = cond.vehiculo.patente
+    }
+    try {
+      const res = await apiFetch('/api/empresa/rutas/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          nombre:           ruta.nombre,
+          tipo:             ruta.tipo,
+          vehiculo_patente: patente,
+          conductor_rut:    ruta.conductor_rut || null,
+          fecha_programada: ruta.fecha_programada || null,
+          hora_programada:  ruta.hora_programada || null,
+          notas:            ruta.notas || '',
+          paradas: [
+            { tipo: 'origen',  orden: 1, nombre: ruta.origen_nombre,  lat: ruta.origen_lat,  lng: ruta.origen_lng },
+            { tipo: 'destino', orden: 2, nombre: ruta.destino_nombre, lat: ruta.destino_lat, lng: ruta.destino_lng },
+          ],
+        }),
+      })
+      if (res.ok) {
+        exitosas++
+        if (idx !== -1) resultados[idx] = { ...resultados[idx], _importada: true }
+      } else {
+        const errData = await res.json().catch(() => null)
+        const msg = _mensajeError(errData)
+        if (idx !== -1) resultados[idx] = { ...resultados[idx], valida: false, errores: [msg], _importada: false }
+      }
+    } catch {
+      if (idx !== -1) resultados[idx] = { ...resultados[idx], valida: false, errores: ['Error de conexión'], _importada: false }
+    }
+    progresoActual.value++
+  }
+
+  importando.value = false
+  // Actualiza la tabla del preview con los resultados de importación.
+  filasParseadas.value = resultados
+
+  const fallidas = validas.length - exitosas
+  toast(exitosas > 0 ? 'exito' : 'error', `${exitosas} rutas importadas${fallidas ? ` · ${fallidas} fallidas` : ''}`)
+  if (exitosas > 0) await cargarRutas()
+  // No cierra el modal si hubo fallos, para que el usuario vea cuáles y por qué.
+  if (exitosas > 0 && fallidas === 0) modalCarga.value = false
+}
+
 onMounted(async () => {
   if (esSuperadmin.value) {
     const res = await apiFetchBase('/api/empresas/')

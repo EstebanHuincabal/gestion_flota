@@ -1026,6 +1026,33 @@ def _generar_descripcion(accion, detalle, nombre):
         'asignar_plan_vehiculo':         lambda: f'{u} asignó el plan #{d.get("plan_id","")} al vehículo #{d.get("vehiculo_id","")}.',
         'desasignar_plan_vehiculo':      lambda: f'{u} eliminó la asignación #{d.get("asignacion_id","")} de plan.',
         'generar_alertas_predictivas':   lambda: f'{u} generó alertas predictivas.',
+        # Pagos y suscripción
+        'pago_iniciado':          lambda: f'{u} inició un pago del plan "{d.get("plan","")}" por ${d.get("monto","")}.',
+        'pago_aprobado':          lambda: f'Pago aprobado del plan "{d.get("plan","")}" por ${d.get("monto","")}.',
+        'pago_oneclick':          lambda: f'{u} pagó el plan "{d.get("plan","")}" por ${d.get("monto","")} con tarjeta guardada.',
+        'pago_manual_registrado': lambda: f'{u} registró un pago manual de ${d.get("monto","")} ({d.get("metodo","")}) para "{d.get("empresa","")}".',
+        'pago_error_crear':       lambda: f'Error al iniciar un pago con Transbank: {d.get("error","")}.',
+        'pago_error':             lambda: f'Error al procesar un pago: {d.get("error","")}.',
+        'oneclick_error':         lambda: f'Error al cobrar con tarjeta guardada: {d.get("error","")}.',
+        'suscripcion_reactivada': lambda: f'{u} reactivó la suscripción de "{d.get("empresa","")}".',
+        'gracia_extendida':       lambda: f'{u} extendió el período de gracia {d.get("dias_extra","")} días.',
+        'tarjeta_eliminada':      lambda: f'{u} eliminó la tarjeta guardada de "{d.get("empresa","")}".',
+        'terminos_actualizados':  lambda: f'{u} actualizó los términos y condiciones (v{d.get("version","")}).',
+        # Email
+        'email_config_guardada':  lambda: f'{u} actualizó la configuración de correo.',
+        'email_test_enviado':     lambda: f'{u} envió un correo de prueba a {d.get("destino","")}.',
+        # Solicitudes de conductores
+        'solicitud_creada':       lambda: f'{u} creó una solicitud de {d.get("tipo","")}: "{d.get("titulo","")}".',
+        'solicitud_aprobada':     lambda: f'{u} aprobó la solicitud de {d.get("tipo","")}: "{d.get("titulo","")}".',
+        'solicitud_rechazada':    lambda: f'{u} rechazó la solicitud de {d.get("tipo","")}: "{d.get("titulo","")}".',
+        # App del conductor
+        'mantencion_iniciada_conductor':   lambda: f'{u} inició una mantención desde la app móvil.',
+        'mantencion_completada_conductor': lambda: f'{u} completó una mantención desde la app móvil.',
+        'checklist_completado':   lambda: f'{u} completó el checklist pre-viaje.',
+        'checklist_push_fallido': lambda: 'Falló el envío de la notificación push del checklist.',
+        # Cuenta / sistema
+        'password_cambiado':      lambda: f'{u} cambió su contraseña.',
+        'excepcion_no_manejada':  lambda: f'Error interno del servidor: {d.get("error","")}.',
     }
 
     fn = desc.get(accion)

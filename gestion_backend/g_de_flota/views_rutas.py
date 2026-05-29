@@ -1,6 +1,7 @@
 from datetime import date, date as _date, datetime, timedelta
 
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_time
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,6 +19,14 @@ from .ruta_calculator import calcular_ruta_osrm, calcular_ruta_fallback
 # ─────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────
+
+def _a_fecha(v):
+    """Convierte 'AAAA-MM-DD' a date; deja pasar None o date."""
+    return parse_date(v) if isinstance(v, str) else v
+
+def _a_hora(v):
+    """Convierte 'HH:mm' a time; deja pasar None o time."""
+    return parse_time(v) if isinstance(v, str) else v
 
 def _iso(val):
     """Convierte date/datetime a isoformat, o devuelve el string tal cual."""
@@ -67,7 +76,7 @@ def _ruta_dict(ruta, detalle=False):
         'vehiculo_id':      ruta.vehiculo_id,
         'vehiculo':         str(ruta.vehiculo) if ruta.vehiculo else None,
         'fecha_programada': _iso(ruta.fecha_programada),
-        'hora_programada':  ruta.hora_programada.strftime('%H:%M') if ruta.hora_programada else None,
+        'hora_programada':  (ruta.hora_programada.strftime('%H:%M') if hasattr(ruta.hora_programada, 'strftime') else str(ruta.hora_programada)) if ruta.hora_programada else None,
         'fecha_inicio':     _iso(ruta.fecha_inicio),
         'fecha_fin':        _iso(ruta.fecha_fin),
         'km_inicio':        ruta.km_inicio,
@@ -470,6 +479,23 @@ class RutasListView(APIView):
             return Response({'error': 'Empresa no encontrada.'}, status=404)
 
         data         = request.data
+
+        # Carga masiva: permitir identificar vehículo/conductor por patente/RUT
+        # como alternativa a vehiculo_id/conductor_id.
+        if not data.get('vehiculo_id') and data.get('vehiculo_patente'):
+            v = Vehiculo.objects.filter(
+                patente=str(data['vehiculo_patente']).upper(), flota__empresa=empresa
+            ).first()
+            if v:
+                data['vehiculo_id'] = v.id
+        if not data.get('conductor_id') and data.get('conductor_rut'):
+            import hashlib
+            from .models import normalizar_rut
+            rut_hash = hashlib.sha256(normalizar_rut(str(data['conductor_rut'])).encode()).hexdigest()
+            c = Usuario.objects.filter(rut_hash=rut_hash, empresa=empresa, rol='CONDUCTOR').first()
+            if c:
+                data['conductor_id'] = c.id
+
         paradas_data = data.get('paradas', [])
         tipos        = [p.get('tipo') for p in paradas_data]
 
@@ -500,8 +526,8 @@ class RutasListView(APIView):
             descripcion=data.get('descripcion', ''),
             estado='pendiente',
             notas=data.get('notas', ''),
-            fecha_programada=data.get('fecha_programada') or None,
-            hora_programada=data.get('hora_programada') or None,
+            fecha_programada=_a_fecha(data.get('fecha_programada') or None),
+            hora_programada=_a_hora(data.get('hora_programada') or None),
         )
 
         conductor_id = data.get('conductor_id')
@@ -604,9 +630,9 @@ class RutaDetailView(APIView):
             if campo in data:
                 setattr(ruta, campo, data[campo])
         if 'fecha_programada' in data:
-            ruta.fecha_programada = data['fecha_programada'] or None
+            ruta.fecha_programada = _a_fecha(data['fecha_programada'] or None)
         if 'hora_programada' in data:
-            ruta.hora_programada = data['hora_programada'] or None
+            ruta.hora_programada = _a_hora(data['hora_programada'] or None)
 
         if 'conductor_id' in data:
             cid = data['conductor_id']
