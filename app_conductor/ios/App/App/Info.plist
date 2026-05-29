@@ -47,5 +47,9 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Se necesita tu ubicación para el seguimiento de rutas en tiempo real.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Se necesita tu ubicación para enviar tu posición mientras la ruta está activa.</string>
 </dict>
 </plist>

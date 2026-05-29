@@ -17,7 +17,7 @@
       </div>
     </div>
 
-    <div :id="mapId" style="height: 100%; width: 100%; border-radius: 0.5rem; z-index: 0;"></div>
+    <div :id="mapId" style="height: 100%; width: 100%; border-radius: 0.5rem; z-index: 1;"></div>
   </div>
 </template>
 
@@ -166,6 +166,14 @@ onUnmounted(() => {
   clearTimeout(buscadorTimer)
   if (mapa) { mapa.remove(); mapa = null }
 })
+
+// Necesario cuando el mapa se monta dentro de un v-if: Leaflet no puede medir
+// el contenedor hasta que sea visible. Llama esto después de que el DOM aparezca.
+function invalidarTamano() {
+  if (mapa) mapa.invalidateSize()
+}
+
+defineExpose({ invalidarTamano })
 </script>
 
 <style scoped>

@@ -754,6 +754,16 @@ class Documento(models.Model):
 # Módulo de Rutas y Trabajos
 # ─────────────────────────────────────────
 
+class Ubicacion(models.Model):
+    vehiculo = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name='ubicaciones')
+    latitud = models.FloatField()
+    longitud = models.FloatField()
+    velocidad = models.FloatField(default=0.0)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.vehiculo.patente} - {self.timestamp}"
+
 class Ruta(models.Model):
     TIPOS = [
         ('carga',    'Carga'),

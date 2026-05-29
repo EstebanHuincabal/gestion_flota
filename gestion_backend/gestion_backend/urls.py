@@ -76,6 +76,7 @@ from g_de_flota.views_solicitudes import (
 )
 from g_de_flota.views_calendario import calendario_eventos
 from g_de_flota.views_publico import PlanesPublicosView, AutoRegistroView, VerificarRutView
+from g_de_flota.views_geo import GeolocalizacionView, RegistrarUbicacionView
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -89,6 +90,8 @@ urlpatterns = [
     
     path('api/dashboard/',            dashboard_global_view,  name='dashboard-global'),
     path('api/empresa/dashboard/',    empresa_dashboard_view, name='empresa-dashboard'),
+    path('api/empresa/geolocalizacion/',  GeolocalizacionView.as_view(), name='geolocalizacion'),
+    path('api/conductor/ubicacion/',      RegistrarUbicacionView.as_view(), name='conductor-ubicacion'),
 
     # Configuración Global del Sistema — Planes de Suscripción
     path('api/configuracion/planes/',               planes_lista_crear,      name='config-planes-lista'),

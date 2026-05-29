@@ -4,10 +4,25 @@ import { RouterView, useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
 import { useThemeStore } from '@/stores/theme.js'
 import { useAuthStore } from '@/stores/auth.js'
+import { iniciarEnvioUbicacion, detenerEnvioUbicacion } from '@/services/geolocalizacion.js'
 
 const router     = useRouter()
 const themeStore = useThemeStore()
 const auth       = useAuthStore()
+
+// ── GPS: enviar ubicación siempre que el conductor esté autenticado ───────────
+// Arranca al iniciar sesión, se detiene al cerrar sesión.
+watch(
+  () => auth.estaAutenticado && auth.esConductor,
+  async (activo) => {
+    if (activo) {
+      await iniciarEnvioUbicacion()
+    } else {
+      detenerEnvioUbicacion()
+    }
+  },
+  { immediate: true }
+)
 
 // ── Bloqueo por suscripción ───────────────────────────────────
 const bloqueado      = ref(false)
@@ -118,6 +133,19 @@ async function inicializarPush() {
   }
 }
 
+// ── Permisos de cámara y GPS ──────────────────────────────────────────────────
+async function inicializarPermisos() {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    const { Camera }       = await import('@capacitor/camera')
+    const { Geolocation }  = await import('@capacitor/geolocation')
+    await Camera.requestPermissions({ permissions: ['camera', 'photos'] })
+    await Geolocation.requestPermissions()
+  } catch (e) {
+    console.warn('[Permisos]', e)
+  }
+}
+
 // Toast nativo mínimo para notificaciones en primer plano
 // (reutilizado por toda la app mediante un elemento fijo al root)
 const _toasts = []
@@ -164,6 +192,7 @@ onMounted(async () => {
   await themeStore.cargarTema()
   await inicializarStatusBar()
   await inicializarPush()
+  await inicializarPermisos()
   window.addEventListener('suscripcion-bloqueada', onBloqueada)
   window.addEventListener('sesion-expirada', onSesionExpirada)
 })

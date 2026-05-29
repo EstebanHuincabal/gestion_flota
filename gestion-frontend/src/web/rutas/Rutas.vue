@@ -640,6 +640,7 @@
               <p class="text-xs text-gray-400 mt-1">📍 Selecciona una parada arriba y haz clic en el mapa para fijar su ubicación.</p>
               <div style="height:260px" class="rounded-xl overflow-hidden border border-gray-200 mt-1">
                 <MapaRuta
+                  ref="mapaParadasRef"
                   map-id="paradas-mapa"
                   :paradas="form.paradas.filter(p => p.latitud && p.longitud)"
                   :polyline="[]"
@@ -936,7 +937,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { apiFetch as apiFetchBase } from '../../utils/api.js'
 import { apiFetchEmpresa as apiFetch, getEmpresaActiva, setEmpresaActiva } from '../../utils/empresaActiva.js'
 import MapaRuta from './MapaRuta.vue'
@@ -1036,6 +1037,7 @@ const paso          = ref(1)
 const guardando     = ref(false)
 const calculando    = ref(false)
 const calculoResult = ref(null)
+const mapaParadasRef = ref(null)   // ref al MapaRuta del paso 2
 const errorModal    = ref('')
 
 // ── Validación pre-vuelo ──────────────────────────────────────────────────
@@ -1257,6 +1259,9 @@ async function siguientePaso() {
     }
 
     paso.value++
+    // Leaflet no puede medir el contenedor hasta que el DOM del paso 2 sea visible.
+    await nextTick()
+    mapaParadasRef.value?.invalidarTamano()
     return
   }
 

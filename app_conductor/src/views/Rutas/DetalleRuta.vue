@@ -1,11 +1,12 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRutasStore } from '@/stores/rutas.js'
 import { apiFetch }      from '@/services/api.js'
 import BottomNav  from '@/components/BottomNav.vue'
 import MapaRuta   from '@/components/MapaRuta.vue'
 import { formatDuracion, formatFechaRuta } from '@/utils/formato.js'
+import { iniciarEnvioUbicacion, detenerEnvioUbicacion } from '@/services/geolocalizacion.js'
 
 const vueRoute   = useRoute()
 const router     = useRouter()
@@ -124,6 +125,7 @@ async function confirmarIniciar() {
       rutaId.value,
       kmInicio.value ? Number(kmInicio.value) : undefined,
     )
+    await iniciarEnvioUbicacion()
     modalIniciar.value = false
     await cargarDetalle()
   } catch (e) {
@@ -141,6 +143,7 @@ async function confirmarFinalizar() {
   procesando.value = true
   errorModal.value = ''
   try {
+    detenerEnvioUbicacion()
     await rutasStore.finalizarRuta(rutaId.value, {
       km_fin: Number(kmFin.value),
     })
@@ -184,6 +187,10 @@ onMounted(async () => {
     await rutasStore.cargarRutas()
   }
   await cargarDetalle()
+})
+
+onUnmounted(() => {
+  detenerEnvioUbicacion()
 })
 
 // ── Checklist pre-viaje ───────────────────────────────────────────────────────

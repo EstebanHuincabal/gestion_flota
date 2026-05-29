@@ -128,6 +128,16 @@ class WebSocketService {
     }
   }
 
+  // ── Envío de mensajes ──────────────────────────────────────────────────────
+
+  send(data) {
+    if (this._ws?.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify(data))
+      return true
+    }
+    return false
+  }
+
   // ── Estado ─────────────────────────────────────────────────────────────────
 
   get conectado() {
