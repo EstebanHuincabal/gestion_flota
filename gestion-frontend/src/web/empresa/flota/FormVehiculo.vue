@@ -143,11 +143,11 @@ onMounted(async () => {
         <div class="form-row">
           <div class="form-group">
             <label class="label">Marca</label>
-            <input v-model="form.marca" type="text" class="input" placeholder="Ej: Toyota" autocomplete="off"/>
+            <input v-model="form.marca" type="text" class="input" placeholder="Ej: Toyota" autocomplete="off" maxlength="60"/>
           </div>
           <div class="form-group">
             <label class="label">Modelo</label>
-            <input v-model="form.modelo" type="text" class="input" placeholder="Ej: Hilux" autocomplete="off"/>
+            <input v-model="form.modelo" type="text" class="input" placeholder="Ej: Hilux" autocomplete="off" maxlength="60"/>
           </div>
         </div>
 

@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
+import { validarNombre, validarTelefono } from '../../utils/validators.js'
+import InputTelefono from '../../components/InputTelefono.vue'
 
 const router = useRouter()
 const route  = useRoute()
@@ -15,7 +17,7 @@ const error     = ref('')
 const errores   = ref({})
 const empresas  = ref([])
 
-const form = ref({ nombre_completo: '', email: '', rol: 'USUARIO', empresa_id: null })
+const form = ref({ nombre: '', apellido_paterno: '', apellido_materno: '', telefono: '', email: '', rol: 'USUARIO', empresa_id: null })
 
 const rolesDisponibles = [
   { value: 'SUPERADMIN', label: 'Super Administrador' },
@@ -31,10 +33,13 @@ const cargar = async () => {
     ])
     if (!resU.ok) throw new Error('Usuario no encontrado')
     const u = await resU.json()
-    form.value.nombre_completo = u.nombre
-    form.value.email           = u.email
-    form.value.rol             = u.rol
-    form.value.empresa_id      = u.empresa_id
+    form.value.nombre           = u.primer_nombre || ''
+    form.value.apellido_paterno = u.apellido_paterno || ''
+    form.value.apellido_materno = u.apellido_materno || ''
+    form.value.telefono         = u.telefono || ''
+    form.value.email            = u.email
+    form.value.rol              = u.rol
+    form.value.empresa_id       = u.empresa_id
     if (resE.ok) empresas.value = (await resE.json()).filter(e => e.estado === 'activa')
   } catch (e) {
     error.value = e.message
@@ -46,6 +51,16 @@ const cargar = async () => {
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  const nomR = validarNombre(form.value.nombre, 2, 30)
+  if (!nomR.valido) { errores.value = { nombre: [nomR.error] }; return }
+  const apPatR = validarNombre(form.value.apellido_paterno, 2, 30)
+  if (!apPatR.valido) { errores.value = { apellido_paterno: [apPatR.error] }; return }
+  const apMatR = validarNombre(form.value.apellido_materno, 2, 30)
+  if (!apMatR.valido) { errores.value = { apellido_materno: [apMatR.error] }; return }
+  const telR = validarTelefono(form.value.telefono)
+  if (!telR.valido) { errores.value = { telefono: [telR.error] }; return }
+
   guardando.value = true
   try {
     const payload = { ...form.value }
@@ -94,20 +109,45 @@ onMounted(cargar)
 
         <div class="form-row">
           <div class="form-group">
-            <label class="label">Nombre completo</label>
-            <input v-model="form.nombre_completo" type="text" class="input"
-              :class="{ 'input-error': errores.nombre_completo }"
-              placeholder="Nombre completo" required autocomplete="off"/>
-            <p v-if="errores.nombre_completo" class="field-error">{{ errores.nombre_completo[0] }}</p>
+            <label class="label">Nombre</label>
+            <input v-model="form.nombre" type="text" class="input"
+              :class="{ 'input-error': errores.nombre }"
+              placeholder="Ej: Juan" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
-
           <div class="form-group">
             <label class="label">Email</label>
             <input v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="usuario@ejemplo.com" required autocomplete="off"/>
+              placeholder="usuario@ejemplo.com" required autocomplete="off" maxlength="50"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Apellido paterno</label>
+            <input v-model="form.apellido_paterno" type="text" class="input"
+              :class="{ 'input-error': errores.apellido_paterno }"
+              placeholder="Ej: Pérez" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.apellido_paterno" class="field-error">{{ errores.apellido_paterno[0] }}</p>
+          </div>
+          <div class="form-group">
+            <label class="label">Apellido materno</label>
+            <input v-model="form.apellido_materno" type="text" class="input"
+              :class="{ 'input-error': errores.apellido_materno }"
+              placeholder="Ej: González" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.apellido_materno" class="field-error">{{ errores.apellido_materno[0] }}</p>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Teléfono</label>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
+          </div>
+          <div class="form-group"/>
         </div>
 
         <div class="form-row">

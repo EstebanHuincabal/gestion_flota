@@ -61,7 +61,7 @@ onMounted(cargar)
       <form @submit.prevent="guardar" class="form">
         <div class="form-group">
           <label class="label">Nombre de la flota</label>
-          <input v-model="form.nombre" type="text" class="input" :class="{ 'input-error': errores.nombre }" required/>
+          <input v-model="form.nombre" type="text" class="input" :class="{ 'input-error': errores.nombre }" required maxlength="100"/>
           <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
         </div>
         <div class="form-actions">

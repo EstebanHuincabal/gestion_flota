@@ -494,6 +494,8 @@ Permite al Superadmin crear, editar, suspender y eliminar empresas cliente. Incl
 
 **Vistas:** `ListaEmpresas.vue` · `NuevaEmpresa.vue` · `EditarEmpresa.vue` · `DetalleEmpresa.vue`
 
+El **nombre de la empresa** admite un máximo de **30 caracteres** (mínimo 2) y la **dirección** un máximo de **40 caracteres**. Ambos límites se aplican en el modelo/serializer (`Empresa.nombre` con `max_length=30`; `direccion` con `max_length=40` en `EmpresaSerializer`), en la validación del registro público (`views_publico.py`) y en los formularios web (`NuevaEmpresa.vue`, `EditarEmpresa.vue`, `RegistroPublico.vue`).
+
 ### 9.2 Usuarios y Permisos
 
 Gestión de usuarios dentro de cada empresa: creación, edición, cambio de contraseña, bloqueo/desbloqueo y asignación de permisos granulares.

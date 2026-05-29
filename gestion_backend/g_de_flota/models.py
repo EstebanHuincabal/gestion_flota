@@ -162,7 +162,7 @@ ESTADO_EMPRESA = [
 
 
 class Empresa(models.Model):
-    nombre            = models.CharField(max_length=255)
+    nombre            = models.CharField(max_length=30)
     rut_cifrado       = models.TextField(null=True, blank=True)
     rut_hash          = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     email_cifrado     = models.TextField(null=True, blank=True)
@@ -263,7 +263,10 @@ class Usuario(AbstractUser):
     email          = models.EmailField()
     rut_cifrado    = models.TextField(null=True, blank=True)
     rut_hash       = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
-    nombre_cifrado = models.TextField(null=True, blank=True)
+    nombre_cifrado = models.TextField(null=True, blank=True)   # nombre completo (compatibilidad)
+    primer_nombre_cifrado    = models.TextField(null=True, blank=True)
+    apellido_paterno_cifrado = models.TextField(null=True, blank=True)
+    apellido_materno_cifrado = models.TextField(null=True, blank=True)
     rol            = models.CharField(max_length=20, choices=Rol.choices, default=Rol.USUARIO)
     empresa        = models.ForeignKey(
         Empresa, on_delete=models.SET_NULL,
@@ -310,6 +313,18 @@ class Usuario(AbstractUser):
         return descifrar(self.nombre_cifrado) if self.nombre_cifrado else None
 
     @property
+    def primer_nombre(self) -> str | None:
+        return descifrar(self.primer_nombre_cifrado) if self.primer_nombre_cifrado else None
+
+    @property
+    def apellido_paterno(self) -> str | None:
+        return descifrar(self.apellido_paterno_cifrado) if self.apellido_paterno_cifrado else None
+
+    @property
+    def apellido_materno(self) -> str | None:
+        return descifrar(self.apellido_materno_cifrado) if self.apellido_materno_cifrado else None
+
+    @property
     def telefono(self) -> str | None:
         return descifrar(self.telefono_cifrado) if self.telefono_cifrado else None
 
@@ -324,6 +339,17 @@ class Usuario(AbstractUser):
 
     def set_nombre(self, nombre_plain: str):
         self.nombre_cifrado = cifrar(nombre_plain)
+
+    def set_nombre_partes(self, nombre: str, ap_paterno: str = '', ap_materno: str = ''):
+        """Guarda el nombre separado en partes y mantiene nombre_cifrado (nombre completo)."""
+        nombre     = (nombre or '').strip()
+        ap_paterno = (ap_paterno or '').strip()
+        ap_materno = (ap_materno or '').strip()
+        self.primer_nombre_cifrado    = cifrar(nombre)     if nombre     else None
+        self.apellido_paterno_cifrado = cifrar(ap_paterno) if ap_paterno else None
+        self.apellido_materno_cifrado = cifrar(ap_materno) if ap_materno else None
+        completo = ' '.join(p for p in [nombre, ap_paterno, ap_materno] if p)
+        self.nombre_cifrado = cifrar(completo) if completo else None
 
     def set_telefono(self, valor: str):
         self.telefono_cifrado = cifrar(valor)

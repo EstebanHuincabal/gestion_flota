@@ -143,7 +143,7 @@ function onRutUsrInput(e) {
 
 function validarPaso2() {
   const e = {}
-  const nomEmpR = validarNombre(empresa.value.nombre, 2, 255)
+  const nomEmpR = validarNombre(empresa.value.nombre, 2, 30)
   if (!nomEmpR.valido) e.nombre = nomEmpR.error
   if (empresa.value.rut) {
     const r = validarRut(empresa.value.rut)
@@ -162,7 +162,7 @@ function validarPaso2() {
 }
 
 // ── Datos usuario ─────────────────────────────────────────────────────────────
-const usuario = ref({ nombre_completo: '', rut: '', email: '', password: '' })
+const usuario = ref({ nombre: '', apellido_paterno: '', apellido_materno: '', telefono: '', rut: '', email: '', password: '' })
 const errUsr  = ref({})
 const verPwd  = ref(false)
 
@@ -178,8 +178,14 @@ function _normRut(rut) {
 
 function validarPaso3() {
   const e = {}
-  const nomR = validarNombre(usuario.value.nombre_completo, 2, 150)
-  if (!nomR.valido) e.nombre_completo = nomR.error
+  const nomR = validarNombre(usuario.value.nombre, 2, 30)
+  if (!nomR.valido) e.nombre = nomR.error
+  const apPatR = validarNombre(usuario.value.apellido_paterno, 2, 30)
+  if (!apPatR.valido) e.apellido_paterno = apPatR.error
+  const apMatR = validarNombre(usuario.value.apellido_materno, 2, 30)
+  if (!apMatR.valido) e.apellido_materno = apMatR.error
+  const telR = validarTelefono(usuario.value.telefono)
+  if (!telR.valido) e.telefono = telR.error
   if (usuario.value.rut) {
     const r = validarRut(usuario.value.rut)
     if (!r.valido) e.rut = r.error
@@ -416,7 +422,7 @@ async function pagar() {
           <div class="grid sm:grid-cols-2 gap-4">
             <div class="field sm:col-span-2">
               <label class="field-label">Nombre de la empresa <span class="text-red-500">*</span></label>
-              <input v-model="empresa.nombre" type="text" placeholder="Ej: Transportes del Norte S.A." class="field-input" :class="{'field-input-error': errEmp.nombre}" @input="errEmp.nombre=''" autocomplete="off" maxlength="255" />
+              <input v-model="empresa.nombre" type="text" placeholder="Ej: Transportes del Norte S.A." class="field-input" :class="{'field-input-error': errEmp.nombre}" @input="errEmp.nombre=''" autocomplete="off" maxlength="30" />
               <p v-if="errEmp.nombre" class="field-error">{{ errEmp.nombre }}</p>
             </div>
 
@@ -436,7 +442,7 @@ async function pagar() {
           <div class="grid sm:grid-cols-2 gap-4">
             <div class="field">
               <label class="field-label">Email de contacto</label>
-              <input v-model="empresa.email" type="email" placeholder="contacto@empresa.cl" class="field-input" :class="{'field-input-error': errEmp.email}" @input="errEmp.email=''" autocomplete="off" />
+              <input v-model="empresa.email" type="email" placeholder="contacto@empresa.cl" class="field-input" :class="{'field-input-error': errEmp.email}" @input="errEmp.email=''" autocomplete="off" maxlength="50" />
               <p v-if="errEmp.email" class="field-error">{{ errEmp.email }}</p>
             </div>
             <div class="field">
@@ -451,7 +457,7 @@ async function pagar() {
 
           <div class="field">
             <label class="field-label">Dirección</label>
-            <input v-model="empresa.direccion" type="text" placeholder="Av. Providencia 1234, Of. 5" class="field-input" autocomplete="off" maxlength="255" />
+            <input v-model="empresa.direccion" type="text" placeholder="Av. Providencia 1234, Of. 5" class="field-input" autocomplete="off" maxlength="40" />
           </div>
 
           <div class="grid sm:grid-cols-2 gap-4">
@@ -508,10 +514,30 @@ async function pagar() {
 
         <div class="bg-white rounded-2xl border border-gray-100 p-6 space-y-4">
 
-          <div class="field">
-            <label class="field-label">Nombre completo <span class="text-red-500">*</span></label>
-            <input v-model="usuario.nombre_completo" type="text" placeholder="Juan Pérez" class="field-input" :class="{'field-input-error': errUsr.nombre_completo}" @input="errUsr.nombre_completo=''" maxlength="150" />
-            <p v-if="errUsr.nombre_completo" class="field-error">{{ errUsr.nombre_completo }}</p>
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div class="field">
+              <label class="field-label">Nombre <span class="text-red-500">*</span></label>
+              <input v-model="usuario.nombre" type="text" placeholder="Ej: Juan" class="field-input" :class="{'field-input-error': errUsr.nombre}" @input="errUsr.nombre=''" maxlength="30" />
+              <p v-if="errUsr.nombre" class="field-error">{{ errUsr.nombre }}</p>
+            </div>
+            <div class="field">
+              <label class="field-label">Apellido paterno <span class="text-red-500">*</span></label>
+              <input v-model="usuario.apellido_paterno" type="text" placeholder="Ej: Pérez" class="field-input" :class="{'field-input-error': errUsr.apellido_paterno}" @input="errUsr.apellido_paterno=''" maxlength="30" />
+              <p v-if="errUsr.apellido_paterno" class="field-error">{{ errUsr.apellido_paterno }}</p>
+            </div>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div class="field">
+              <label class="field-label">Apellido materno <span class="text-red-500">*</span></label>
+              <input v-model="usuario.apellido_materno" type="text" placeholder="Ej: González" class="field-input" :class="{'field-input-error': errUsr.apellido_materno}" @input="errUsr.apellido_materno=''" maxlength="30" />
+              <p v-if="errUsr.apellido_materno" class="field-error">{{ errUsr.apellido_materno }}</p>
+            </div>
+            <div class="field">
+              <label class="field-label">Teléfono <span class="text-red-500">*</span></label>
+              <InputTelefono v-model="usuario.telefono" :error="!!errUsr.telefono" @update:modelValue="errUsr.telefono=''" />
+              <p v-if="errUsr.telefono" class="field-error">{{ errUsr.telefono }}</p>
+            </div>
           </div>
 
           <div class="field">
@@ -525,7 +551,7 @@ async function pagar() {
 
           <div class="field">
             <label class="field-label">Correo electrónico <span class="text-red-500">*</span></label>
-            <input v-model="usuario.email" type="email" placeholder="admin@empresa.cl" class="field-input" :class="{'field-input-error': errUsr.email}" @input="errUsr.email=''" maxlength="150" />
+            <input v-model="usuario.email" type="email" placeholder="admin@empresa.cl" class="field-input" :class="{'field-input-error': errUsr.email}" @input="errUsr.email=''" maxlength="50" />
             <p v-if="errUsr.email" class="field-error">{{ errUsr.email }}</p>
           </div>
 
@@ -606,8 +632,9 @@ async function pagar() {
           <div>
             <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Administrador</p>
             <div class="space-y-1 text-sm text-gray-700">
-              <div class="flex justify-between"><span class="text-gray-500">Nombre</span> <span class="font-medium">{{ usuario.nombre_completo }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-500">Nombre</span> <span class="font-medium">{{ [usuario.nombre, usuario.apellido_paterno, usuario.apellido_materno].filter(Boolean).join(' ') }}</span></div>
               <div class="flex justify-between"><span class="text-gray-500">Email</span> <span class="font-medium">{{ usuario.email }}</span></div>
+              <div v-if="usuario.telefono" class="flex justify-between"><span class="text-gray-500">Teléfono</span> <span class="font-medium">{{ usuario.telefono }}</span></div>
             </div>
           </div>
         </div>

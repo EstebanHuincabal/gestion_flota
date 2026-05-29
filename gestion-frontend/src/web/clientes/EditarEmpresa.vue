@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
-import { validarTelefono, validarNombre } from '../../utils/validators.js'
+import { validarTelefono, validarNombre, validarEmail } from '../../utils/validators.js'
 import InputTelefono from '../../components/InputTelefono.vue'
 
 const router = useRouter()
@@ -114,8 +114,13 @@ const guardar = async () => {
   error.value   = ''
   errores.value = {}
 
-  const nombreR = validarNombre(form.value.nombre, 2, 255)
+  const nombreR = validarNombre(form.value.nombre, 2, 30)
   if (!nombreR.valido) { errores.value = { nombre: [nombreR.error] }; return }
+
+  if (form.value.email) {
+    const emailR = validarEmail(form.value.email)
+    if (!emailR.valido) { errores.value = { email: [emailR.error] }; return }
+  }
 
   if (form.value.telefono) {
     const telR = validarTelefono(form.value.telefono)
@@ -223,7 +228,7 @@ onMounted(async () => {
             <label class="label" for="nombre">Nombre de la empresa <span class="required">*</span></label>
             <input id="nombre" v-model="form.nombre" type="text" class="input"
               :class="{ 'input-error': errores.nombre }"
-              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off" maxlength="255"/>
+              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off" maxlength="30"/>
             <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
 
@@ -318,7 +323,7 @@ onMounted(async () => {
             <label class="label" for="email">Email de contacto</label>
             <input id="email" v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="contacto@empresa.cl" autocomplete="off" maxlength="150"/>
+              placeholder="contacto@empresa.cl" autocomplete="off" maxlength="50"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
 
@@ -335,7 +340,7 @@ onMounted(async () => {
         <div class="form-group">
           <label class="label" for="direccion">Dirección</label>
           <input id="direccion" v-model="form.direccion" type="text" class="input"
-            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off" maxlength="255"/>
+            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off" maxlength="40"/>
         </div>
 
         <div class="form-row">

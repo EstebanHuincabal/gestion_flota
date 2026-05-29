@@ -59,11 +59,11 @@ _REGIONES_CODIGOS = {code for code, _ in REGIONES_CHILE}
 
 class EmpresaSerializer(serializers.Serializer):
     id       = serializers.IntegerField(read_only=True)
-    nombre   = serializers.CharField()
+    nombre   = serializers.CharField(max_length=30)
     rut      = serializers.CharField()
     email    = serializers.EmailField(required=False, allow_blank=True, default='')
     telefono = serializers.CharField(required=False, allow_blank=True, default='')
-    direccion = serializers.CharField(required=False, allow_blank=True, default='')
+    direccion = serializers.CharField(required=False, allow_blank=True, default='', max_length=40)
     comuna   = serializers.CharField(required=False, allow_blank=True, default='')
     ciudad   = serializers.CharField(required=False, allow_blank=True, default='')
     region   = serializers.CharField(required=False, allow_blank=True, default='')
@@ -96,6 +96,8 @@ class EmpresaSerializer(serializers.Serializer):
 
     def validate_nombre(self, value):
         value = value.strip()
+        if len(value) > 30:
+            raise serializers.ValidationError("El nombre no puede superar los 30 caracteres.")
         qs = Empresa.objects.filter(nombre__iexact=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
@@ -194,7 +196,11 @@ class EmpresaSerializer(serializers.Serializer):
 # ─────────────────────────────────────────
 
 class UsuarioListSerializer(serializers.ModelSerializer):
-    nombre     = serializers.SerializerMethodField()
+    nombre           = serializers.SerializerMethodField()
+    primer_nombre    = serializers.SerializerMethodField()
+    apellido_paterno = serializers.SerializerMethodField()
+    apellido_materno = serializers.SerializerMethodField()
+    telefono         = serializers.SerializerMethodField()
     rut        = serializers.SerializerMethodField()
     empresa    = serializers.SerializerMethodField()
     empresa_id = serializers.SerializerMethodField()
@@ -202,11 +208,24 @@ class UsuarioListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Usuario
-        fields = ['id', 'nombre', 'rut', 'email', 'rol', 'empresa', 'empresa_id',
+        fields = ['id', 'nombre', 'primer_nombre', 'apellido_paterno', 'apellido_materno',
+                  'telefono', 'rut', 'email', 'rol', 'empresa', 'empresa_id',
                   'is_active', 'is_blocked', 'permisos']
 
     def get_nombre(self, obj):
         return obj.nombre
+
+    def get_primer_nombre(self, obj):
+        return obj.primer_nombre
+
+    def get_apellido_paterno(self, obj):
+        return obj.apellido_paterno
+
+    def get_apellido_materno(self, obj):
+        return obj.apellido_materno
+
+    def get_telefono(self, obj):
+        return obj.telefono
 
     def get_rut(self, obj):
         return obj.rut
@@ -226,18 +245,35 @@ class UsuarioListSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────
 
 class UsuarioCrearSerializer(serializers.Serializer):
-    nombre_completo = serializers.CharField()
-    rut             = serializers.CharField()
-    email           = serializers.EmailField()
-    password        = serializers.CharField(write_only=True)
-    rol             = serializers.ChoiceField(choices=Rol.choices)
-    empresa_id      = serializers.IntegerField(required=False, allow_null=True)
-    permisos        = serializers.ListField(
+    nombre           = serializers.CharField()
+    apellido_paterno = serializers.CharField()
+    apellido_materno = serializers.CharField()
+    telefono         = serializers.CharField()
+    rut              = serializers.CharField()
+    email            = serializers.EmailField()
+    password         = serializers.CharField(write_only=True)
+    rol              = serializers.ChoiceField(choices=Rol.choices)
+    empresa_id       = serializers.IntegerField(required=False, allow_null=True)
+    permisos         = serializers.ListField(
         child=serializers.CharField(), required=False, allow_empty=True
     )
 
-    def validate_nombre_completo(self, value):
+    def validate_nombre(self, value):
         return value.strip().title()
+
+    def validate_apellido_paterno(self, value):
+        return value.strip().title()
+
+    def validate_apellido_materno(self, value):
+        return value.strip().title()
+
+    def validate_telefono(self, value):
+        limpio = re.sub(r'[\s\-\(\)]', '', value or '')
+        if not re.match(r'^(\+56)?9\d{8}$', limpio):
+            raise serializers.ValidationError(
+                'Teléfono inválido. Use el formato +569 XXXXXXXX o 9XXXXXXXX.'
+            )
+        return limpio
 
     def validate_email(self, value):
         return value.strip().lower()
@@ -263,16 +299,27 @@ class UsuarioCrearSerializer(serializers.Serializer):
         rol           = validated_data.pop('rol')
         password      = validated_data.pop('password')
         codigos_permisos = validated_data.pop('permisos', [])
+        nombre        = validated_data['nombre']
+        ap_paterno    = validated_data['apellido_paterno']
+        ap_materno    = validated_data['apellido_materno']
+        telefono      = validated_data['telefono']
         empresa       = Empresa.objects.filter(pk=empresa_id).first() if empresa_id else None
 
+        nombre_completo = ' '.join(p for p in [nombre, ap_paterno, ap_materno] if p)
         user = Usuario.objects.create_user(
             email           = validated_data['email'],
             rut             = validated_data['rut'],
-            nombre_completo = validated_data['nombre_completo'],
+            nombre_completo = nombre_completo,
             password        = password,
             rol             = rol,
             empresa         = empresa,
         )
+        user.set_nombre_partes(nombre, ap_paterno, ap_materno)
+        user.set_telefono(telefono)
+        user.save(update_fields=[
+            'primer_nombre_cifrado', 'apellido_paterno_cifrado',
+            'apellido_materno_cifrado', 'nombre_cifrado', 'telefono_cifrado',
+        ])
         if codigos_permisos and rol == Rol.USUARIO:
             permisos = Permiso.objects.filter(codigo__in=codigos_permisos)
             user.permisos.set(permisos)
@@ -284,17 +331,36 @@ class UsuarioCrearSerializer(serializers.Serializer):
 # ─────────────────────────────────────────
 
 class UsuarioEditarSerializer(serializers.Serializer):
-    nombre_completo = serializers.CharField(required=False)
-    email           = serializers.EmailField(required=False)
-    rol             = serializers.ChoiceField(choices=Rol.choices, required=False)
-    empresa_id      = serializers.IntegerField(required=False, allow_null=True)
-    is_active       = serializers.BooleanField(required=False)
-    permisos        = serializers.ListField(
+    nombre           = serializers.CharField(required=False)
+    apellido_paterno = serializers.CharField(required=False)
+    apellido_materno = serializers.CharField(required=False)
+    telefono         = serializers.CharField(required=False)
+    email            = serializers.EmailField(required=False)
+    rol              = serializers.ChoiceField(choices=Rol.choices, required=False)
+    empresa_id       = serializers.IntegerField(required=False, allow_null=True)
+    is_active        = serializers.BooleanField(required=False)
+    permisos         = serializers.ListField(
         child=serializers.CharField(), required=False, allow_empty=True
     )
 
-    def validate_nombre_completo(self, value):
+    def validate_nombre(self, value):
         return value.strip().title()
+
+    def validate_apellido_paterno(self, value):
+        return value.strip().title()
+
+    def validate_apellido_materno(self, value):
+        return value.strip().title()
+
+    def validate_telefono(self, value):
+        if not value:
+            return value
+        limpio = re.sub(r'[\s\-\(\)]', '', value)
+        if not re.match(r'^(\+56)?9\d{8}$', limpio):
+            raise serializers.ValidationError(
+                'Teléfono inválido. Use el formato +569 XXXXXXXX o 9XXXXXXXX.'
+            )
+        return limpio
 
     def validate_email(self, value):
         return value.strip().lower()
@@ -310,8 +376,17 @@ class UsuarioEditarSerializer(serializers.Serializer):
 
     def update(self, instance, validated_data):
         codigos_permisos = validated_data.pop('permisos', None)
-        if 'nombre_completo' in validated_data:
-            instance.set_nombre(validated_data['nombre_completo'])
+        # Si llega cualquier parte del nombre, recomponer con las 3 (usando las existentes)
+        if any(k in validated_data for k in ('nombre', 'apellido_paterno', 'apellido_materno')):
+            nombre     = validated_data.get('nombre',           instance.primer_nombre or '')
+            ap_paterno = validated_data.get('apellido_paterno', instance.apellido_paterno or '')
+            ap_materno = validated_data.get('apellido_materno', instance.apellido_materno or '')
+            instance.set_nombre_partes(nombre, ap_paterno, ap_materno)
+        if 'telefono' in validated_data:
+            if validated_data['telefono']:
+                instance.set_telefono(validated_data['telefono'])
+            else:
+                instance.telefono_cifrado = None
         if 'email' in validated_data:
             instance.email = validated_data['email']
         if 'rol' in validated_data:
@@ -334,6 +409,9 @@ class UsuarioEditarSerializer(serializers.Serializer):
 
 class ConductorListSerializer(serializers.ModelSerializer):
     nombre   = serializers.SerializerMethodField()
+    primer_nombre    = serializers.SerializerMethodField()
+    apellido_paterno = serializers.SerializerMethodField()
+    apellido_materno = serializers.SerializerMethodField()
     rut      = serializers.SerializerMethodField()
     telefono = serializers.SerializerMethodField()
     licencia = serializers.SerializerMethodField()
@@ -342,9 +420,13 @@ class ConductorListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Usuario
-        fields = ['id', 'nombre', 'rut', 'email', 'telefono', 'licencia', 'vehiculo', 'is_active', 'empresa_nombre']
+        fields = ['id', 'nombre', 'primer_nombre', 'apellido_paterno', 'apellido_materno',
+                  'rut', 'email', 'telefono', 'licencia', 'vehiculo', 'is_active', 'empresa_nombre']
 
     def get_nombre(self, obj):   return obj.nombre
+    def get_primer_nombre(self, obj):    return obj.primer_nombre
+    def get_apellido_paterno(self, obj): return obj.apellido_paterno
+    def get_apellido_materno(self, obj): return obj.apellido_materno
     def get_rut(self, obj):      return obj.rut
     def get_empresa_nombre(self, obj): return obj.empresa.nombre if obj.empresa else None
 
@@ -482,13 +564,15 @@ class ConductorDetalleSerializer(ConductorListSerializer):
 
 
 class ConductorCrearSerializer(serializers.Serializer):
-    nombre_completo = serializers.CharField()
+    nombre           = serializers.CharField()
+    apellido_paterno = serializers.CharField()
+    apellido_materno = serializers.CharField()
     rut             = serializers.CharField()
     email           = serializers.EmailField()
     password        = serializers.CharField(write_only=True)
-    telefono        = serializers.CharField(required=False, allow_blank=True)
+    telefono        = serializers.CharField()
     licencia        = serializers.CharField(required=False, allow_blank=True)
-    
+
     # Opciones de asignación inicial
     vehiculo_id          = serializers.IntegerField(required=False, allow_null=True)
     crear_vehiculo       = serializers.BooleanField(default=False)
@@ -498,7 +582,13 @@ class ConductorCrearSerializer(serializers.Serializer):
     vehiculo_flota_id    = serializers.IntegerField(required=False, allow_null=True)
     vehiculo_flota_nuevo = serializers.CharField(required=False, allow_blank=True)
 
-    def validate_nombre_completo(self, value):
+    def validate_nombre(self, value):
+        return value.strip().title()
+
+    def validate_apellido_paterno(self, value):
+        return value.strip().title()
+
+    def validate_apellido_materno(self, value):
         return value.strip().title()
 
     def validate_email(self, value):
@@ -514,9 +604,7 @@ class ConductorCrearSerializer(serializers.Serializer):
         return rut_norm
 
     def validate_telefono(self, value):
-        if not value:
-            return value
-        limpio = re.sub(r'[\s\-\(\)]', '', value)
+        limpio = re.sub(r'[\s\-\(\)]', '', value or '')
         if not re.match(r'^(\+56)?9\d{8}$', limpio):
             raise serializers.ValidationError(
                 'Teléfono inválido. Use el formato +569 XXXXXXXX o 9XXXXXXXX.'
@@ -572,7 +660,10 @@ class ConductorCrearSerializer(serializers.Serializer):
         telefono = validated_data.pop('telefono', None)
         licencia = validated_data.pop('licencia', None)
         password = validated_data.pop('password')
-        
+        nombre     = validated_data['nombre']
+        ap_paterno = validated_data['apellido_paterno']
+        ap_materno = validated_data['apellido_materno']
+
         # Datos de vehículo/asignación
         vehiculo_id       = validated_data.pop('vehiculo_id', None)
         crear_vehiculo    = validated_data.pop('crear_vehiculo', False)
@@ -582,21 +673,22 @@ class ConductorCrearSerializer(serializers.Serializer):
         v_flota_id        = validated_data.pop('vehiculo_flota_id', None)
         v_flota_nuevo     = validated_data.pop('vehiculo_flota_nuevo', '').strip()
 
+        nombre_completo = ' '.join(p for p in [nombre, ap_paterno, ap_materno] if p)
         user = Usuario.objects.create_user(
             email           = validated_data['email'],
             rut             = validated_data['rut'],
-            nombre_completo = validated_data['nombre_completo'],
+            nombre_completo = nombre_completo,
             password        = password,
             rol             = Rol.CONDUCTOR,
             empresa         = empresa,
         )
-        
+
+        user.set_nombre_partes(nombre, ap_paterno, ap_materno)
         if telefono:
             user.set_telefono(telefono)
         if licencia:
             user.set_licencia(licencia)
-        if telefono or licencia:
-            user.save()
+        user.save()
 
         # Lógica de asignación
         final_vehiculo_id = None
@@ -633,13 +725,21 @@ class ConductorCrearSerializer(serializers.Serializer):
 
 
 class ConductorEditarSerializer(serializers.Serializer):
-    nombre_completo = serializers.CharField(required=False)
+    nombre           = serializers.CharField(required=False)
+    apellido_paterno = serializers.CharField(required=False)
+    apellido_materno = serializers.CharField(required=False)
     email           = serializers.EmailField(required=False)
     telefono        = serializers.CharField(required=False, allow_blank=True)
     licencia        = serializers.CharField(required=False, allow_blank=True)
     is_active       = serializers.BooleanField(required=False)
 
-    def validate_nombre_completo(self, value):
+    def validate_nombre(self, value):
+        return value.strip().title()
+
+    def validate_apellido_paterno(self, value):
+        return value.strip().title()
+
+    def validate_apellido_materno(self, value):
         return value.strip().title()
 
     def validate_email(self, value):
@@ -661,8 +761,11 @@ class ConductorEditarSerializer(serializers.Serializer):
 
     def update(self, instance, validated_data):
         changed = False
-        if 'nombre_completo' in validated_data:
-            instance.set_nombre(validated_data['nombre_completo'])
+        if any(k in validated_data for k in ('nombre', 'apellido_paterno', 'apellido_materno')):
+            nombre     = validated_data.get('nombre',           instance.primer_nombre or '')
+            ap_paterno = validated_data.get('apellido_paterno', instance.apellido_paterno or '')
+            ap_materno = validated_data.get('apellido_materno', instance.apellido_materno or '')
+            instance.set_nombre_partes(nombre, ap_paterno, ap_materno)
             changed = True
         if 'email' in validated_data:
             instance.email = validated_data['email']

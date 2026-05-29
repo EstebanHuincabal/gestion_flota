@@ -15,7 +15,9 @@ const error     = ref('')
 const errores   = ref({})
 
 const form = ref({
-  nombre_completo: '',
+  nombre:           '',
+  apellido_paterno: '',
+  apellido_materno: '',
   rut:      '',
   email:    '',
   password: '',
@@ -107,9 +109,13 @@ const guardar = async () => {
   error.value   = ''
   errores.value = {}
 
-  // Validar nombre completo
-  const nomR = validarNombre(form.value.nombre_completo, 2, 150)
-  if (!nomR.valido) { errores.value = { nombre_completo: [nomR.error] }; return }
+  // Validar nombre y apellidos (los tres obligatorios)
+  const nomR = validarNombre(form.value.nombre, 2, 30)
+  if (!nomR.valido) { errores.value = { nombre: [nomR.error] }; return }
+  const apPatR = validarNombre(form.value.apellido_paterno, 2, 30)
+  if (!apPatR.valido) { errores.value = { apellido_paterno: [apPatR.error] }; return }
+  const apMatR = validarNombre(form.value.apellido_materno, 2, 30)
+  if (!apMatR.valido) { errores.value = { apellido_materno: [apMatR.error] }; return }
 
   // Validar contraseña
   const pwdResult = validarPassword(form.value.password)
@@ -118,13 +124,11 @@ const guardar = async () => {
     return
   }
 
-  // Validar teléfono si se ingresó
-  if (form.value.telefono) {
-    const telResult = validarTelefono(form.value.telefono)
-    if (!telResult.valido) {
-      errores.value = { telefono: [telResult.error] }
-      return
-    }
+  // Validar teléfono (obligatorio)
+  const telResult = validarTelefono(form.value.telefono)
+  if (!telResult.valido) {
+    errores.value = { telefono: [telResult.error] }
+    return
   }
 
   // Verificación final del RUT contra la BD antes de crear
@@ -200,11 +204,11 @@ const guardar = async () => {
           <h3 class="section-title">Datos Personales</h3>
           <div class="form-row">
             <div class="form-group">
-              <label class="label">Nombre completo</label>
-              <input v-model="form.nombre_completo" type="text" class="input"
-                :class="{ 'input-error': errores.nombre_completo }"
-                placeholder="Ej: Juan Pérez González" required autocomplete="off"/>
-              <p v-if="errores.nombre_completo" class="field-error">{{ errores.nombre_completo[0] }}</p>
+              <label class="label">Nombre</label>
+              <input v-model="form.nombre" type="text" class="input"
+                :class="{ 'input-error': errores.nombre }"
+                placeholder="Ej: Juan" required autocomplete="off" maxlength="30"/>
+              <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
             </div>
             <div class="form-group">
               <label class="label">RUT</label>
@@ -217,13 +221,29 @@ const guardar = async () => {
               <p v-if="errores.rut" class="field-error">{{ errores.rut[0] }}</p>
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="label">Apellido paterno</label>
+              <input v-model="form.apellido_paterno" type="text" class="input"
+                :class="{ 'input-error': errores.apellido_paterno }"
+                placeholder="Ej: Pérez" required autocomplete="off" maxlength="30"/>
+              <p v-if="errores.apellido_paterno" class="field-error">{{ errores.apellido_paterno[0] }}</p>
+            </div>
+            <div class="form-group">
+              <label class="label">Apellido materno</label>
+              <input v-model="form.apellido_materno" type="text" class="input"
+                :class="{ 'input-error': errores.apellido_materno }"
+                placeholder="Ej: González" required autocomplete="off" maxlength="30"/>
+              <p v-if="errores.apellido_materno" class="field-error">{{ errores.apellido_materno[0] }}</p>
+            </div>
+          </div>
 
           <div class="form-row">
             <div class="form-group">
               <label class="label">Email</label>
               <input v-model="form.email" type="email" class="input"
                 :class="{ 'input-error': errores.email }"
-                placeholder="conductor@ejemplo.com" required autocomplete="off"/>
+                placeholder="conductor@ejemplo.com" required autocomplete="off" maxlength="50"/>
               <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
             </div>
             <div class="form-group">
@@ -245,7 +265,7 @@ const guardar = async () => {
 
           <div class="form-row">
             <div class="form-group">
-              <label class="label">Teléfono <span class="opcional">(opcional)</span></label>
+              <label class="label">Teléfono</label>
               <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
               <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
             </div>

@@ -48,7 +48,7 @@ const guardar = async () => {
         <div class="form-group">
           <label class="label">Nombre de la flota</label>
           <input v-model="form.nombre" type="text" class="input" :class="{ 'input-error': errores.nombre }"
-            placeholder="Ej: Flota Norte" required autocomplete="off"/>
+            placeholder="Ej: Flota Norte" required autocomplete="off" maxlength="100"/>
           <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
         </div>
         <div class="form-actions">

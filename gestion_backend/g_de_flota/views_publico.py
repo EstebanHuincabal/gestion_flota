@@ -156,13 +156,24 @@ class AutoRegistroView(APIView):
 
         if not emp_d.get('nombre', '').strip():
             errores['empresa_nombre'] = 'El nombre de la empresa es obligatorio.'
+        elif len(emp_d.get('nombre', '').strip()) > 30:
+            errores['empresa_nombre'] = 'El nombre de la empresa no puede superar los 30 caracteres.'
 
-        if not usr_d.get('nombre_completo', '').strip():
+        if len(emp_d.get('direccion', '').strip()) > 40:
+            errores['empresa_direccion'] = 'La dirección no puede superar los 40 caracteres.'
+
+        if not usr_d.get('nombre', '').strip():
             errores['usuario_nombre'] = 'El nombre del administrador es obligatorio.'
+        if not usr_d.get('apellido_paterno', '').strip():
+            errores['usuario_apellido_paterno'] = 'El apellido paterno es obligatorio.'
+        if not usr_d.get('apellido_materno', '').strip():
+            errores['usuario_apellido_materno'] = 'El apellido materno es obligatorio.'
         if not usr_d.get('email', '').strip():
             errores['usuario_email'] = 'El correo electrónico del administrador es obligatorio.'
         if not usr_d.get('password', ''):
             errores['usuario_password'] = 'La contraseña es obligatoria.'
+        if not usr_d.get('telefono', '').strip():
+            errores['usuario_telefono'] = 'El teléfono del administrador es obligatorio.'
         if not plan_id:
             errores['plan_id'] = 'Debes seleccionar un plan.'
         if ciclo not in ('mensual', 'anual'):
@@ -275,15 +286,25 @@ class AutoRegistroView(APIView):
         empresa.save()
 
         # ── Crear Usuario administrador ──────────────────────────────────────
+        nombre_usr     = usr_d.get('nombre', '').strip().title()
+        ap_paterno_usr = usr_d.get('apellido_paterno', '').strip().title()
+        ap_materno_usr = usr_d.get('apellido_materno', '').strip().title()
+        telefono_usr   = usr_d.get('telefono', '').strip()
+        nombre_completo_usr = ' '.join(p for p in [nombre_usr, ap_paterno_usr, ap_materno_usr] if p)
+
         usuario = Usuario.objects.create_user(
             email=email_usr,
             rut=rut_usr_norm or email_usr,
-            nombre_completo=usr_d.get('nombre_completo', '').strip(),
+            nombre_completo=nombre_completo_usr,
             password=usr_d.get('password'),
             rol=Rol.USUARIO,
             empresa=empresa,
             primer_login=True,
         )
+        usuario.set_nombre_partes(nombre_usr, ap_paterno_usr, ap_materno_usr)
+        if telefono_usr:
+            usuario.set_telefono(telefono_usr)
+        usuario.save()
 
         # ── Crear Suscripción en estado pendiente (activa tras el pago) ──────
         Suscripcion.objects.create(

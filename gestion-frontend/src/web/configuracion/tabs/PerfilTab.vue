@@ -91,7 +91,7 @@ onMounted(cargarPerfil)
         </div>
         <div class="form-group">
           <label class="label">Correo electrónico</label>
-          <input v-model="perfil.email" type="email" class="input" placeholder="tu@email.com" />
+          <input v-model="perfil.email" type="email" class="input" placeholder="tu@email.com" maxlength="50" />
         </div>
         <div class="form-footer">
           <button class="btn-primary" @click="guardarPerfil" :disabled="guardandoPerfil">
