@@ -521,10 +521,6 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
             </svg>
           </button>
         </div>
-        <button v-if="puedeExportar" class="btn-export" @click="exportar" title="Exportar CSV">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-          Exportar
-        </button>
         <button v-if="puedeCrear" class="btn-nuevo" @click="abrirNuevo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Registrar gasto
@@ -954,26 +950,6 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
             </div>
           </div>
 
-          <!-- Barras comparativas últimos meses -->
-          <div class="card">
-            <div class="card-head"><h3 class="card-title">Presupuesto vs Gasto ({{ anioSel }})</h3></div>
-            <div class="card-body">
-              <div v-if="!histPresupuesto.length" class="empty-msg">Sin presupuestos definidos para este año.</div>
-              <div v-else class="barras-comparativas">
-                <div v-for="p in histPresupuesto" :key="p.id" class="barra-mes">
-                  <div class="barra-col">
-                    <div class="barra-bg">
-                      <div class="barra-fill azul" :style="{ height: alturaBarraPresup(p.monto, histPresupuesto) + '%' }"></div>
-                    </div>
-                    <span class="barra-label">{{ meses[p.mes - 1].slice(0, 3) }}</span>
-                  </div>
-                </div>
-                <div class="barra-leyenda">
-                  <span class="leyenda-item"><span class="dot azul"></span> Presupuesto</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </template>

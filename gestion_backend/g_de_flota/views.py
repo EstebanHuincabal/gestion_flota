@@ -1315,7 +1315,7 @@ def conductores_detalle(request, pk):
     if request.method == 'GET':
         if request.user.rol != Rol.CONDUCTOR and not tiene_permiso(request.user, 'conductores.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        return Response(ConductorListSerializer(conductor).data)
+        return Response(ConductorDetalleSerializer(conductor).data)
 
     if request.method == 'PUT':
         if not tiene_permiso(request.user, 'conductores.editar'):

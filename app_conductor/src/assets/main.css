@@ -55,6 +55,7 @@
  */
 html {
   height: -webkit-fill-available;
+  height: 100dvh;
 }
 
 html, body, #app {
@@ -67,8 +68,8 @@ html, body, #app {
 }
 
 body {
-  min-height: 100dvh;
   min-height: -webkit-fill-available;   /* fallback iOS < 15.4 */
+  min-height: 100dvh;
   overscroll-behavior: none;            /* sin rebote de scroll en iOS/Android */
   user-select: none;
   -webkit-user-select: none;
@@ -101,12 +102,12 @@ button {
 
 /* Altura de pantalla dinámica (excluye barra de dirección del browser) */
 .min-h-dvh {
-  min-height: 100dvh;
   min-height: -webkit-fill-available;
+  min-height: 100dvh;
 }
 .h-dvh {
-  height: 100dvh;
   height: -webkit-fill-available;
+  height: 100dvh;
 }
 
 /* ── Scroll suave sin scrollbar en modales ───────────────────────────────── */

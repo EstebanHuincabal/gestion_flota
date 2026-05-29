@@ -2,23 +2,31 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
 import { Capacitor } from '@capacitor/core'
+import { Geolocation } from '@capacitor/geolocation'
+import { Camera } from '@capacitor/camera'
 import { useThemeStore } from '@/stores/theme.js'
 import { useAuthStore } from '@/stores/auth.js'
-import { iniciarEnvioUbicacion, detenerEnvioUbicacion } from '@/services/geolocalizacion.js'
+import { iniciarEnvioUbicacion, detenerEnvioUbicacion, onGpsStateChange } from '@/services/geolocalizacion.js'
+
+// El servicio notifica cuando el GPS se apaga o vuelve → actualizamos el banner
+onGpsStateChange((activo) => { gpsDesactivado.value = !activo })
 
 const router     = useRouter()
 const themeStore = useThemeStore()
 const auth       = useAuthStore()
 
 // ── GPS: enviar ubicación siempre que el conductor esté autenticado ───────────
-// Arranca al iniciar sesión, se detiene al cerrar sesión.
+// Verificar GPS solo una vez al autenticar — no en un intervalo para evitar
+// que el SO pregunte repetidamente por la ubicación precisa.
 watch(
   () => auth.estaAutenticado && auth.esConductor,
   async (activo) => {
     if (activo) {
+      await verificarGpsActivo()
       await iniciarEnvioUbicacion()
     } else {
       detenerEnvioUbicacion()
+      gpsDesactivado.value = false
     }
   },
   { immediate: true }
@@ -133,16 +141,52 @@ async function inicializarPush() {
   }
 }
 
-// ── Permisos de cámara y GPS ──────────────────────────────────────────────────
+// ── Permisos y validación de GPS ─────────────────────────────────────────────
+const gpsDesactivado = ref(false)
+
 async function inicializarPermisos() {
   if (!Capacitor.isNativePlatform()) return
   try {
-    const { Camera }       = await import('@capacitor/camera')
-    const { Geolocation }  = await import('@capacitor/geolocation')
-    await Camera.requestPermissions({ permissions: ['camera', 'photos'] })
-    await Geolocation.requestPermissions()
+    // Cámara: pedir permiso con imports estáticos (más fiable que dinámicos)
+    const camStatus = await Camera.checkPermissions()
+    if (camStatus.camera !== 'granted') {
+      await Camera.requestPermissions({ permissions: ['camera', 'photos'] })
+    }
   } catch (e) {
-    console.warn('[Permisos]', e)
+    console.warn('[Permisos cámara]', e)
+  }
+  try {
+    // GPS: pedir permiso del sistema
+    const geoStatus = await Geolocation.checkPermissions()
+    if (geoStatus.location !== 'granted') {
+      await Geolocation.requestPermissions()
+    }
+  } catch (e) {
+    console.warn('[Permisos GPS]', e)
+  }
+}
+
+async function verificarGpsActivo() {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    // Intenta obtener posición con timeout corto
+    // Si el hardware GPS está apagado lanza error code 2 (POSITION_UNAVAILABLE)
+    await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 5000 })
+    gpsDesactivado.value = false
+  } catch (e) {
+    // code 1 = permiso denegado, code 2 = GPS apagado, code 3 = timeout
+    if (e?.code === 2 || e?.message?.toLowerCase().includes('unavailable')) {
+      gpsDesactivado.value = true
+    }
+  }
+}
+
+function abrirAjustesUbicacion() {
+  // Abre los ajustes del sistema en Android e iOS
+  if (Capacitor.getPlatform() === 'android') {
+    window.open('android.settings.LOCATION_SOURCE_SETTINGS', '_system')
+  } else {
+    window.open('app-settings:', '_system')
   }
 }
 
@@ -205,6 +249,15 @@ onUnmounted(() => {
 
 <template>
   <RouterView />
+
+  <!-- Banner GPS desactivado -->
+  <Teleport to="body">
+    <div v-if="gpsDesactivado && auth.esConductor" class="gps-banner">
+      <span class="gps-banner-icon">📍</span>
+      <span class="gps-banner-texto">El GPS está desactivado. Actívalo para el seguimiento de rutas.</span>
+      <button class="gps-banner-btn" @click="abrirAjustesUbicacion">Activar</button>
+    </div>
+  </Teleport>
 
   <!-- Overlay bloqueante: suscripción suspendida/pendiente -->
   <Teleport to="body">
@@ -287,5 +340,36 @@ onUnmounted(() => {
 
 .bloqueo-btn:active {
   background: #B91C1C;
+}
+
+/* Banner GPS desactivado */
+.gps-banner {
+  position: fixed;
+  bottom: env(safe-area-inset-bottom, 0);
+  left: 0; right: 0;
+  z-index: 9000;
+  background: #F59E0B;
+  color: #78350F;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.15);
+}
+.gps-banner-icon { font-size: 1.1rem; flex-shrink: 0; }
+.gps-banner-texto { flex: 1; font-weight: 500; line-height: 1.3; }
+.gps-banner-btn {
+  flex-shrink: 0;
+  background: #78350F;
+  color: #fff;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
 }
 </style>

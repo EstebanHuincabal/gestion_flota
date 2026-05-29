@@ -164,7 +164,7 @@ onMounted(async () => {
     <!-- Card inferior -->
     <div
       class="bg-white rounded-t-3xl px-6 pt-8 shadow-2xl shrink-0 overflow-y-auto"
-      style="max-height: 72vh; padding-bottom: calc(2.5rem + env(safe-area-inset-bottom, 0px));"
+      style="max-height: min(75vh, 75dvh); padding-bottom: calc(2.5rem + env(safe-area-inset-bottom, 0px));"
     >
       <h2 class="text-gray-800 text-xl font-bold mb-1">Iniciar sesión</h2>
       <p class="text-gray-400 text-sm mb-6">Ingresa tus credenciales para continuar</p>

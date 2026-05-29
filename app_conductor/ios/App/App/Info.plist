@@ -50,6 +50,13 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Se necesita tu ubicación para el seguimiento de rutas en tiempo real.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Se necesita tu ubicación para enviar tu posición mientras la ruta está activa.</string>
+	<string>Se necesita tu ubicación en segundo plano para continuar enviando tu posición mientras la ruta está activa.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Se necesita tu ubicación en segundo plano para el seguimiento de rutas.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

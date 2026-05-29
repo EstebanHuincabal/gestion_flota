@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { apiFetch } from '../../utils/api.js'
+import { getEmpresaActiva, setEmpresaActiva, clearEmpresaActiva } from '../../utils/empresaActiva.js'
 
 // ── Selector de empresa ──────────────────────────────────────────────────────
 const empresas            = ref([])
@@ -31,8 +32,7 @@ function seleccionarEmpresa(emp) {
   empresaSeleccionada.value = emp
   busquedaEmpresa.value     = ''
   mostrarDropdown.value     = false
-  // Guardar en sessionStorage para badge de Base.vue
-  sessionStorage.setItem('empresaActiva', JSON.stringify({ id: emp.id, nombre: emp.nombre }))
+  setEmpresaActiva(emp)
 }
 
 function limpiarEmpresa() {
@@ -42,7 +42,7 @@ function limpiarEmpresa() {
   total.value       = 0
   pages.value       = 1
   desconectarWS()
-  sessionStorage.removeItem('empresaActiva')
+  clearEmpresaActiva()
 }
 
 // ── Estado principal ──────────────────────────────────────────────────────────
@@ -314,6 +314,9 @@ function handleClickOutside(e) {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(() => {
   cargarEmpresas()
+  // Restaurar empresa activa seleccionada en otra vista
+  const activa = getEmpresaActiva()
+  if (activa) empresaSeleccionada.value = activa
   document.addEventListener('click', handleClickOutside)
 })
 

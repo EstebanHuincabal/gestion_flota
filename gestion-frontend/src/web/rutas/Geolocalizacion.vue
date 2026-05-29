@@ -3,17 +3,62 @@
 
     <!-- Header -->
     <header class="bg-white border-b border-gray-200 px-6 py-3 flex flex-wrap gap-4 justify-between items-center shrink-0">
-      <div>
-        <h1 class="text-xl font-bold text-gray-900 flex items-center gap-2">
-          Geolocalización en tiempo real
-          <span v-if="conectado" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
-            <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>En vivo
-          </span>
-          <span v-else class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-            <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Reconectando...
-          </span>
-        </h1>
-        <p class="text-xs text-gray-400 mt-0.5">Última actualización: {{ tiempoDesdeActualizacion }}</p>
+      <div class="flex items-center gap-6">
+        <div>
+          <h1 class="text-xl font-bold text-gray-900 flex items-center gap-2">
+            Geolocalización en tiempo real
+            <span v-if="conectado" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>En vivo
+            </span>
+            <span v-else class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Reconectando...
+            </span>
+          </h1>
+          <p class="text-xs text-gray-400 mt-0.5">Última actualización: {{ tiempoDesdeActualizacion }}</p>
+        </div>
+
+        <!-- ── Selector empresa (solo SUPERADMIN) ── -->
+        <div v-if="esSuperadmin" class="relative">
+          <button
+            @click="mostrarDropdownEmpresa = !mostrarDropdownEmpresa"
+            :class="['flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition',
+              empresaActiva ? 'bg-white border-gray-200 text-gray-700' : 'bg-amber-50 border-amber-300 text-amber-700']"
+          >
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+            </svg>
+            <span class="font-medium">{{ empresaActiva ? empresaActiva.nombre : 'Seleccionar empresa' }}</span>
+            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+
+          <div v-if="mostrarDropdownEmpresa"
+            class="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-[2000] overflow-hidden">
+            <div class="p-2 border-b border-gray-100">
+              <input v-model="busquedaEmpresa" placeholder="Buscar empresa..."
+                class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                autofocus/>
+            </div>
+            <div class="max-h-60 overflow-y-auto">
+              <div v-if="!empresasFiltradas.length" class="px-4 py-3 text-sm text-gray-400 text-center">Sin resultados</div>
+              <button v-for="emp in empresasFiltradas" :key="emp.id"
+                @click="seleccionarEmpresa(emp)"
+                :class="['w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-gray-50 transition',
+                  empresaActiva?.id === emp.id ? 'text-indigo-600 font-semibold' : 'text-gray-700']"
+              >
+                <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                  {{ emp.nombre[0].toUpperCase() }}
+                </span>
+                {{ emp.nombre }}
+                <svg v-if="empresaActiva?.id === emp.id" class="w-4 h-4 ml-auto text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- KPI cards -->
@@ -36,6 +81,18 @@
         </svg>
         <p class="text-gray-600 font-medium mb-1">Módulo no disponible</p>
         <p class="text-sm text-gray-400">{{ errorCarga }}</p>
+      </div>
+    </div>
+
+    <!-- Sin empresa -->
+    <div v-else-if="esSuperadmin && !empresaActiva" class="flex-1 flex items-center justify-center text-center p-8">
+      <div>
+        <svg class="w-12 h-12 mx-auto mb-3 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+        </svg>
+        <p class="text-gray-600 font-medium mb-1">Selecciona una empresa</p>
+        <p class="text-sm text-gray-400">Elige una empresa del selector para ver su geolocalización</p>
       </div>
     </div>
 
@@ -163,6 +220,28 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { apiFetch } from '../../utils/api.js'
+import { getEmpresaActiva, setEmpresaActiva } from '../../utils/empresaActiva.js'
+
+const usuario      = ref(JSON.parse(localStorage.getItem('usuario') || '{}'))
+const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
+
+// Selector de empresa para SUPERADMIN
+const empresas             = ref([])
+const empresaActiva        = ref(getEmpresaActiva())
+const busquedaEmpresa      = ref('')
+const mostrarDropdownEmpresa = ref(false)
+const empresasFiltradas    = computed(() => {
+  const q = busquedaEmpresa.value.toLowerCase()
+  return !q ? empresas.value : empresas.value.filter(e => e.nombre.toLowerCase().includes(q))
+})
+async function seleccionarEmpresa(emp) {
+  mostrarDropdownEmpresa.value = false
+  busquedaEmpresa.value        = ''
+  empresaActiva.value          = { id: emp.id, nombre: emp.nombre }
+  setEmpresaActiva(emp)
+  await cargarVehiculos()
+  reconectarWS(emp.id)
+}
 
 const COLORES = {
   en_ruta:       '#1D9E75',
@@ -366,29 +445,36 @@ function actualizarVehiculo(data) {
     if (anterior === 'sin_señal' && data.estado !== 'sin_señal') toast(`${v.patente} recuperó señal GPS`, 'exito')
   }
   estadosAnteriores[data.vehiculo_id] = data.estado
-  vehiculos.value[idx].ultima_ubicacion = {
-    latitud: data.latitud, longitud: data.longitud,
-    velocidad: data.velocidad,
-    timestamp: data.timestamp,
+
+  // Reemplazar el objeto completo para garantizar reactividad de Vue 3
+  const actualizado = {
+    ...vehiculos.value[idx],
+    estado: data.estado,
+    ultima_ubicacion: {
+      latitud:   data.latitud,
+      longitud:  data.longitud,
+      velocidad: data.velocidad,
+      timestamp: data.timestamp,
+    },
   }
-  vehiculos.value[idx].estado = data.estado
+  vehiculos.value[idx] = actualizado
   calcularResumen()
 
   const marker = markers[data.vehiculo_id]
   if (marker) {
     if (anterior !== data.estado) {
-      marker.setIcon(crearIconoVehiculo(vehiculos.value[idx]))
-      marker.setPopupContent(popupVehiculo(vehiculos.value[idx]))
+      marker.setIcon(crearIconoVehiculo(actualizado))
+      marker.setPopupContent(popupVehiculo(actualizado))
       if (trailLines[data.vehiculo_id]) trailLines[data.vehiculo_id].setStyle({ color: COLORES[data.estado] || '#9CA3AF' })
     }
     animarMarcador(marker, data.latitud, data.longitud)
     agregarTrail(data.vehiculo_id, data.latitud, data.longitud)
   } else {
-    agregarMarcador(vehiculos.value[idx])
+    agregarMarcador(actualizado)
   }
 
   if (vehiculoSeleccionado.value?.id === data.vehiculo_id) {
-    vehiculoSeleccionado.value = { ...vehiculos.value[idx] }
+    vehiculoSeleccionado.value = { ...actualizado }
   }
 }
 
@@ -396,6 +482,41 @@ function calcularResumen() {
   const r = { total: vehiculos.value.length, en_ruta: 0, en_movimiento: 0, detenido: 0, sin_señal: 0 }
   vehiculos.value.forEach(v => { if (r[v.estado] !== undefined) r[v.estado]++ })
   resumen.value = r
+}
+
+// Polling de respaldo: recarga el estado completo desde el servidor cada 30s.
+// Evita que el mapa quede desactualizado si el WebSocket perdió algún mensaje.
+let intervaloPolling = null
+async function iniciarPolling() {
+  intervaloPolling = setInterval(async () => {
+    if (esSuperadmin.value && !empresaActiva.value) return
+    const url = esSuperadmin.value && empresaActiva.value
+      ? `/api/empresa/geolocalizacion/?empresa_id=${empresaActiva.value.id}`
+      : '/api/empresa/geolocalizacion/'
+    try {
+      const res = await apiFetch(url)
+      if (!res.ok) return
+      const data = await res.json()
+      ;(data.vehiculos || []).forEach(v => {
+        const idx = vehiculos.value.findIndex(x => x.id === v.id)
+        if (idx === -1) return
+        // Solo actualizar si el timestamp es más reciente que lo que tenemos
+        const tsNuevo     = v.ultima_ubicacion?.timestamp
+        const tsActual    = vehiculos.value[idx].ultima_ubicacion?.timestamp
+        const estadoCambio = v.estado !== vehiculos.value[idx].estado
+        // Actualizar si hay un timestamp nuevo O si el estado cambió (p. ej. sin_señal)
+        if (!estadoCambio && tsNuevo && tsActual && new Date(tsNuevo) <= new Date(tsActual)) return
+        actualizarVehiculo({
+          vehiculo_id: v.id,
+          latitud:     v.ultima_ubicacion?.latitud,
+          longitud:    v.ultima_ubicacion?.longitud,
+          velocidad:   v.ultima_ubicacion?.velocidad ?? 0,
+          estado:      v.estado,
+          timestamp:   v.ultima_ubicacion?.timestamp,
+        })
+      })
+    } catch { /* fail silent */ }
+  }, 30_000)
 }
 
 function seleccionarVehiculo(v) {
@@ -423,25 +544,73 @@ function conectarWS(empresaId) {
   ws.onerror  = () => ws.close()
 }
 
-onMounted(async () => {
-  await cargarLeaflet()
-  try {
-    const res = await apiFetch('/api/empresa/geolocalizacion/')
-    if (!res.ok) throw new Error(`${res.status}`)
-    const data = await res.json()
-    vehiculos.value = data.vehiculos || []
+function reconectarWS(empresaId) {
+  if (ws) { ws.close(); ws = null }
+  conectado.value = false
+  if (empresaId) conectarWS(empresaId)
+}
+
+// Limpia marcadores y trails del mapa para recargar con otra empresa
+function limpiarMapa() {
+  Object.values(markers).forEach(m => { try { m.remove() } catch {} })
+  Object.keys(markers).forEach(k => delete markers[k])
+  Object.values(trailLines).forEach(l => { try { l.remove() } catch {} })
+  Object.keys(trailLines).forEach(k => delete trailLines[k])
+  Object.values(rutaLines).forEach(l => { try { l.remove() } catch {} })
+  Object.keys(rutaLines).forEach(k => delete rutaLines[k])
+  Object.keys(trails).forEach(k => delete trails[k])
+  Object.keys(estadosAnteriores).forEach(k => delete estadosAnteriores[k])
+}
+
+async function cargarVehiculos() {
+  if (esSuperadmin.value && !empresaActiva.value) {
+    limpiarMapa()
+    vehiculos.value = []
+    vehiculoSeleccionado.value = null
     calcularResumen()
-    await nextTick()
-    inicializarMapa()
-    vehiculos.value.forEach(v => agregarMarcador(v))
-  } catch (e) {
-    errorCarga.value = 'No se pudieron cargar los datos de geolocalización. Verifica que el módulo esté habilitado en tu plan.'
-    await nextTick()
-    inicializarMapa()
+    errorCarga.value = ''
+    return
   }
 
-  const usuario = JSON.parse(localStorage.getItem('usuario') || '{}')
-  if (usuario.empresa_id) conectarWS(usuario.empresa_id)
+  const url = esSuperadmin.value && empresaActiva.value
+    ? `/api/empresa/geolocalizacion/?empresa_id=${empresaActiva.value.id}`
+    : '/api/empresa/geolocalizacion/'
+  try {
+    const res = await apiFetch(url)
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    limpiarMapa()
+    vehiculos.value = data.vehiculos || []
+    vehiculoSeleccionado.value = null
+    calcularResumen()
+    await nextTick()
+    if (!mapaInstance) inicializarMapa()
+    vehiculos.value.forEach(v => agregarMarcador(v))
+    errorCarga.value = ''
+  } catch {
+    errorCarga.value = 'No se pudieron cargar los datos de geolocalización.'
+    if (!mapaInstance) { await nextTick(); inicializarMapa() }
+  }
+}
+
+onMounted(async () => {
+  await cargarLeaflet()
+
+  // SUPERADMIN: cargar lista de empresas para el selector
+  if (esSuperadmin.value) {
+    const res = await apiFetch('/api/empresas/')
+    if (res.ok) empresas.value = await res.json()
+  }
+
+  await cargarVehiculos()
+
+  // Conectar WebSocket con la empresa correcta
+  const empId = esSuperadmin.value
+    ? empresaActiva.value?.id
+    : usuario.value.empresa_id
+  if (empId) conectarWS(empId)
+
+  await iniciarPolling()
 
   intervaloTiempo = setInterval(() => {
     if (!ultimaActualizacion.value) return
@@ -454,6 +623,7 @@ onUnmounted(() => {
   if (ws) ws.close()
   if (mapaInstance) { mapaInstance.remove(); mapaInstance = null }
   if (intervaloTiempo) clearInterval(intervaloTiempo)
+  if (intervaloPolling) clearInterval(intervaloPolling)
 })
 </script>
 

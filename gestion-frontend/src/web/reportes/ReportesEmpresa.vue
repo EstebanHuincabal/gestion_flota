@@ -555,14 +555,6 @@ const maxCostoTipo = computed(() => {
             </option>
           </select>
         </div>
-        <div class="filtro-spacer"/>
-        <button class="btn-export" @click="exportar('mantencion')" :disabled="exportando">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          {{ exportando ? 'Exportando...' : 'Exportar CSV' }}
-        </button>
       </div>
 
       <!-- Loading -->
@@ -779,14 +771,6 @@ const maxCostoTipo = computed(() => {
               <div class="kpi-label">Sin conductor asignado</div>
             </div>
           </div>
-          <div class="kpi-spacer"/>
-          <button class="btn-export" @click="exportar('flota')" :disabled="exportando">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-            </svg>
-            {{ exportando ? 'Exportando...' : 'Exportar CSV' }}
-          </button>
         </div>
 
         <!-- Tabla flota -->
@@ -867,14 +851,6 @@ const maxCostoTipo = computed(() => {
             <option v-for="m in meses" :key="m.value" :value="m.value">{{ m.label }}</option>
           </select>
         </div>
-        <div class="filtro-spacer"/>
-        <button class="btn-export" @click="exportarTco" :disabled="!datosTco">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          Exportar CSV
-        </button>
       </div>
 
       <div v-if="cargando" class="loading-wrap">
@@ -1063,14 +1039,6 @@ const maxCostoTipo = computed(() => {
               <div class="kpi-label">Sin documentos</div>
             </div>
           </div>
-          <div class="kpi-spacer"/>
-          <button class="btn-export" @click="exportarConductores" :disabled="!datosConductores">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-            </svg>
-            Exportar CSV
-          </button>
         </div>
 
         <!-- Tabla conductores -->
