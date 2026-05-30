@@ -14,8 +14,16 @@ __pycache__/
 *.sqlite3
 *.db
 
-# Migraciones de Django (se regeneran con makemigrations)
-*/migrations/0*.py
+# Claves Firebase (no subir credenciales)
+serviceAccountKey.json
+
+# Archivos generados en producción
+staticfiles/
+media/
+
+# Backups de base de datos
+*.bak_*
+*.sql
 
 # Entornos virtuales
 venv/
