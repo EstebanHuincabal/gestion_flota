@@ -102,7 +102,7 @@ class Migration(migrations.Migration):
         migrations.RunPython(migrar_datos_empresa, migrations.RunPython.noop),
         migrations.AlterField(
             model_name='empresa', name='rut_hash',
-            field=models.CharField(blank=True, db_index=True, max_length=64, null=True, unique=True),
+            field=models.CharField(blank=True, max_length=64, null=True, unique=True),
         ),
         migrations.RemoveField(model_name='empresa', name='rut'),
         migrations.RemoveField(model_name='empresa', name='activa'),
