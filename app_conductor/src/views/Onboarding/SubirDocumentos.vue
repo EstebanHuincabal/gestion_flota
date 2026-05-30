@@ -103,6 +103,11 @@ function seleccionarArchivo() { inputArchivo.value?.click() }
 const MAX_ARCHIVO_MB = 10
 function onArchivoSeleccionado(e) {
   const file = e.target.files?.[0]; if (!file) return
+  if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+    mostrarToast('Solo se permiten archivos PDF o imágenes.', 'error')
+    e.target.value = ''
+    return
+  }
   if (file.size > MAX_ARCHIVO_MB * 1024 * 1024) {
     mostrarToast(`El archivo no puede superar ${MAX_ARCHIVO_MB} MB.`, 'error')
     e.target.value = ''
@@ -146,11 +151,9 @@ async function enviarDocumento() {
     if (!r.valido) { errorForm.value = r.error; return }
   }
 
-  // Limitar notas a 500 caracteres
-  if (form.value.notas && form.value.notas.length > 500) {
-    errorForm.value = 'Las notas no pueden superar los 500 caracteres.'
-    return
-  }
+  const notas = form.value.notas || ''
+  if (notas && notas.trim() === '') { errorForm.value = 'Las notas no pueden contener solo espacios en blanco.'; return }
+  if (notas.length > 50) { errorForm.value = 'Las notas no pueden superar 50 caracteres.'; return }
 
   const fd = new FormData()
   fd.append('tipo',              form.value.tipo)
@@ -329,7 +332,7 @@ onMounted(() => store.cargarDocumentos())
          MODAL: SUBIR DOCUMENTO
     ════════════════════════════════════════════════════════════════════════════ -->
     <Transition name="sheet">
-      <div v-if="modalAbierto" class="fixed inset-0 z-50 flex flex-col justify-end">
+      <div v-if="modalAbierto" class="fixed inset-0 z-[60] flex flex-col justify-end">
         <div class="absolute inset-0 bg-black/50" @click="cerrarModal"/>
         <div class="relative bg-white rounded-t-2xl scroll-hidden"
           style="max-height: min(88vh, 88dvh); padding-bottom: env(safe-area-inset-bottom, 0px)">
@@ -370,9 +373,15 @@ onMounted(() => store.cargarDocumentos())
             </div>
 
             <div class="mb-4">
-              <label class="block text-xs font-semibold text-gray-600 mb-1">Notas <span class="text-gray-400">(opcional)</span></label>
-              <textarea v-model="form.notas" placeholder="Ej: número de folio, compañía aseguradora..." rows="2" maxlength="500"
-                class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:border-[var(--color-acento)] transition resize-none"/>
+              <label class="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+                <span>Notas <span class="text-gray-400 font-normal">(opcional)</span></span>
+                <span :class="(form.notas || '').length > 50 ? 'text-red-500' : 'text-gray-400'">
+                  {{ (form.notas || '').length }}/50
+                </span>
+              </label>
+              <textarea v-model="form.notas" placeholder="Ej: número de folio, compañía aseguradora..." rows="2" maxlength="60"
+                :class="[(form.notas || '').trim() === '' && form.notas ? 'border-red-400' : (form.notas || '').length > 50 ? 'border-red-400' : 'border-gray-200']"
+                class="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:border-[var(--color-acento)] transition resize-none"/>
             </div>
 
             <div class="mb-5">

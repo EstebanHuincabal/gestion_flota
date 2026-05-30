@@ -44,7 +44,7 @@ def usuario_perfil(request):
         return Response({'error': 'El email no puede estar vacío.'}, status=400)
 
     if email != user.email:
-        if Usuario.objects.filter(email=email).exclude(pk=user.pk).exists():
+        if Usuario.objects.filter(email_hash=Usuario.hash_email(email)).exclude(pk=user.pk).exists():
             return Response({'error': 'Ese email ya está en uso.'}, status=400)
         user.email = email
 

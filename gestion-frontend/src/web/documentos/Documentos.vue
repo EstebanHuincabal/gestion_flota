@@ -198,8 +198,14 @@ function abrirEditar(doc) {
 function onArchivoChange(e) {
   const file = e.target.files[0]
   if (!file) return
+  if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+    toast.error('Solo se permiten archivos PDF o imágenes (JPG, PNG, etc.).')
+    e.target.value = ''
+    return
+  }
   if (file.size > 10 * 1024 * 1024) {
     toast.error('El archivo no debe superar 10 MB.')
+    e.target.value = ''
     return
   }
   form.value.archivo = file
@@ -220,8 +226,17 @@ function validarForm() {
   if (form.value.fecha_emision && form.value.fecha_vencimiento && form.value.fecha_emision >= form.value.fecha_vencimiento) {
     err.fecha_vencimiento = 'La fecha de vencimiento debe ser posterior a la de emisión.'
   }
+  if (form.value.fecha_vencimiento && !form.value.fecha_emision) {
+    // Fecha de vencimiento sin emisión es válida, no error
+  }
   if (!editandoId.value && !form.value.archivo) {
     err.archivo = 'El archivo es obligatorio para nuevos documentos.'
+  }
+  const notas = form.value.notas
+  if (notas && notas.trim() === '') {
+    err.notas = 'Las notas no pueden contener solo espacios en blanco.'
+  } else if (notas.length > 50) {
+    err.notas = 'Las notas no pueden superar 50 caracteres.'
   }
   errForm.value = err
   return !Object.keys(err).length
@@ -301,9 +316,15 @@ async function eliminarDoc() {
 
 // ── Descargar
 async function descargar(docId) {
+  const doc = documentos.value.find(d => d.id === docId)
+  if (doc && !doc.tiene_archivo) {
+    toast.error('Este documento no tiene archivo adjunto.')
+    return
+  }
   try {
     const res = await apiFetch(`/api/empresa/documentos/${docId}/descargar/`)
-    if (!res.ok) return toast.error('Error al descargar.')
+    if (res.status === 404) { toast.error('El archivo no se encontró en el servidor.'); return }
+    if (!res.ok) { toast.error('No se pudo descargar el archivo.'); return }
     const blob = await res.blob()
     const cd   = res.headers.get('Content-Disposition') || ''
     const match = cd.match(/filename="?([^"]+)"?/)
@@ -314,7 +335,7 @@ async function descargar(docId) {
     a.click()
     URL.revokeObjectURL(a.href)
   } catch {
-    toast.error('Error al descargar.')
+    toast.error('Error de conexión al descargar.')
   }
 }
 
@@ -327,12 +348,26 @@ function abrirRenovar(doc) {
 
 function onArchivoRenovarChange(e) {
   const file = e.target.files[0]
-  if (file && file.size > 10 * 1024 * 1024) { toast.error('El archivo no debe superar 10 MB.'); return }
-  formRenovar.value.archivo = file || null
+  if (!file) return
+  if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+    toast.error('Solo se permiten archivos PDF o imágenes (JPG, PNG, etc.).')
+    e.target.value = ''
+    return
+  }
+  if (file.size > 10 * 1024 * 1024) { toast.error('El archivo no debe superar 10 MB.'); e.target.value = ''; return }
+  formRenovar.value.archivo = file
 }
 
 async function guardarRenovacion() {
   if (!formRenovar.value.archivo) { toast.error('El archivo es obligatorio.'); return }
+  if (formRenovar.value.fecha_emision && formRenovar.value.fecha_vencimiento &&
+      formRenovar.value.fecha_emision >= formRenovar.value.fecha_vencimiento) {
+    toast.error('La fecha de vencimiento debe ser posterior a la de emisión.')
+    return
+  }
+  const notasR = formRenovar.value.notas
+  if (notasR && notasR.trim() === '') { toast.error('Las notas no pueden contener solo espacios en blanco.'); return }
+  if (notasR.length > 50) { toast.error('Las notas no pueden superar 50 caracteres.'); return }
   guardandoRenovar.value = true
   try {
     const fd = new FormData()
@@ -739,8 +774,12 @@ onMounted(async () => {
 
             <!-- Notas -->
             <div class="field">
-              <label class="label">Notas</label>
-              <textarea v-model="form.notas" class="input textarea" rows="2" placeholder="Opcional…"/>
+              <label class="label" style="display:flex;justify-content:space-between;align-items:center">
+                <span>Notas</span>
+                <span :style="form.notas.length > 50 ? 'color:#EF4444' : 'color:#9CA3AF'" style="font-size:0.75rem;font-weight:500">{{ form.notas.length }}/50</span>
+              </label>
+              <textarea v-model="form.notas" class="input textarea" :class="errForm.notas && 'input-error'" rows="2" placeholder="Opcional…" maxlength="60"/>
+              <p v-if="errForm.notas" class="field-err">{{ errForm.notas }}</p>
             </div>
           </div>
           <div class="modal-foot">
@@ -830,8 +869,11 @@ onMounted(async () => {
               <input type="file" class="input-file" accept=".pdf,image/*" @change="onArchivoRenovarChange"/>
             </div>
             <div class="field">
-              <label class="label">Notas</label>
-              <textarea v-model="formRenovar.notas" class="input textarea" rows="2" placeholder="Opcional…"/>
+              <label class="label" style="display:flex;justify-content:space-between;align-items:center">
+                <span>Notas</span>
+                <span :style="formRenovar.notas.length > 50 ? 'color:#EF4444' : 'color:#9CA3AF'" style="font-size:0.75rem;font-weight:500">{{ formRenovar.notas.length }}/50</span>
+              </label>
+              <textarea v-model="formRenovar.notas" class="input textarea" rows="2" placeholder="Opcional…" maxlength="60"/>
             </div>
           </div>
           <div class="modal-foot">

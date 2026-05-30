@@ -6,6 +6,7 @@ from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.conf import settings
 from cryptography.fernet import Fernet
 from django.utils import timezone
+from .fields import EncryptedCharField, EncryptedTextField, EncryptedFloatField
 
 
 # ─────────────────────────────────────────
@@ -28,6 +29,11 @@ def descifrar(valor: str) -> str:
 def normalizar_rut(rut: str) -> str:
     """12.345.678-9  →  12345678-9"""
     return rut.replace(".", "").strip().lower()
+
+
+def normalizar_patente(p: str) -> str:
+    """Quita espacios/guiones y pasa a mayúsculas: 'ab-12 34' → 'AB1234'."""
+    return (p or "").replace(" ", "").replace("-", "").upper().strip()
 
 
 # ─────────────────────────────────────────
@@ -81,6 +87,10 @@ class UsuarioManager(BaseUserManager):
         user.set_password(password)
         user.save(using=self._db)
         return user
+
+    def get_by_natural_key(self, username):
+        # El email está cifrado: se busca por su hash (login del admin de Django).
+        return self.get(email_hash=self.model.hash_email(username))
 
     def create_user(self, email, rut, nombre_completo, password=None, **extra):
         if not rut:
@@ -265,7 +275,8 @@ class Usuario(AbstractUser):
     first_name = None
     last_name  = None
 
-    email          = models.EmailField()
+    email          = EncryptedCharField(max_length=254)
+    email_hash     = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     rut_cifrado    = models.TextField(null=True, blank=True)
     rut_hash       = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     nombre_cifrado = models.TextField(null=True, blank=True)   # nombre completo (compatibilidad)
@@ -362,6 +373,17 @@ class Usuario(AbstractUser):
     def set_licencia(self, valor: str):
         self.licencia_cifrada = cifrar(valor)
 
+    @staticmethod
+    def hash_email(valor: str) -> str:
+        return hashlib.sha256((valor or '').strip().lower().encode()).hexdigest()
+
+    def save(self, *args, **kwargs):
+        self.email_hash = self.hash_email(self.email) if self.email else None
+        uf = kwargs.get('update_fields')
+        if uf is not None and 'email' in uf and 'email_hash' not in uf:
+            kwargs['update_fields'] = list(uf) + ['email_hash']
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.email
 
@@ -387,9 +409,10 @@ class Vehiculo(models.Model):
     ]
 
     flota            = models.ForeignKey(Flota, on_delete=models.CASCADE, related_name="vehiculos")
-    patente          = models.CharField(max_length=10, unique=True)
-    marca            = models.CharField(max_length=100, blank=True, default='')
-    modelo           = models.CharField(max_length=100, blank=True, default='')
+    patente          = EncryptedCharField(max_length=10)
+    patente_hash     = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
+    marca            = EncryptedCharField(max_length=100, blank=True, default='')
+    modelo           = EncryptedCharField(max_length=100, blank=True, default='')
     anio             = models.IntegerField(null=True, blank=True)
     tipo_combustible = models.CharField(max_length=20, choices=COMBUSTIBLE, default='bencina')
     km_actuales      = models.IntegerField(default=0)
@@ -399,6 +422,21 @@ class Vehiculo(models.Model):
         verbose_name='En mantención',
         help_text='True mientras el vehículo está fuera de servicio por una mantención activa.',
     )
+
+    @staticmethod
+    def hash_patente(valor: str) -> str:
+        return hashlib.sha256(normalizar_patente(valor).encode()).hexdigest()
+
+    def save(self, *args, **kwargs):
+        if self.patente:
+            self.patente      = normalizar_patente(self.patente)
+            self.patente_hash = self.hash_patente(self.patente)
+        else:
+            self.patente_hash = None
+        uf = kwargs.get('update_fields')
+        if uf is not None and 'patente' in uf and 'patente_hash' not in uf:
+            kwargs['update_fields'] = list(uf) + ['patente_hash']
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.patente} — {self.marca} {self.modelo}"
@@ -444,9 +482,9 @@ class EstadoMantencion(models.TextChoices):
 
 class Mantencion(models.Model):
     vehiculo               = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name="mantenciones")
-    tipo_mantencion        = models.CharField(max_length=100)
-    descripcion            = models.TextField(blank=True, default='')
-    taller_proveedor       = models.CharField(max_length=200, blank=True, default='')
+    tipo_mantencion        = EncryptedCharField(max_length=100)
+    descripcion            = EncryptedTextField(blank=True, default='')
+    taller_proveedor       = EncryptedCharField(max_length=200, blank=True, default='')
     presupuesto            = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     fecha_programada       = models.DateField(null=True, blank=True)
@@ -539,8 +577,8 @@ class TipoNotificacion(models.TextChoices):
 class Notificacion(models.Model):
     usuario    = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='notificaciones')
     tipo       = models.CharField(max_length=30, choices=TipoNotificacion.choices)
-    titulo     = models.CharField(max_length=200)
-    mensaje    = models.TextField()
+    titulo     = EncryptedCharField(max_length=200)
+    mensaje    = EncryptedTextField()
     leida      = models.BooleanField(default=False)
     url_accion = models.CharField(max_length=300, blank=True, default='')
     extra      = models.JSONField(default=dict, blank=True)
@@ -655,7 +693,7 @@ class GastoOperativo(models.Model):
     vehiculo       = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True)
     conductor      = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='gastos_conductor')
     categoria      = models.CharField(max_length=20, choices=CATEGORIAS)
-    descripcion    = models.CharField(max_length=300)
+    descripcion    = EncryptedCharField(max_length=300)
     monto          = models.DecimalField(max_digits=10, decimal_places=0)
     fecha          = models.DateField()
     comprobante    = models.FileField(upload_to='comprobantes/', null=True, blank=True)
@@ -756,9 +794,9 @@ class Documento(models.Model):
 
 class Ubicacion(models.Model):
     vehiculo = models.ForeignKey(Vehiculo, on_delete=models.CASCADE, related_name='ubicaciones')
-    latitud = models.FloatField()
-    longitud = models.FloatField()
-    velocidad = models.FloatField(default=0.0)
+    latitud = EncryptedFloatField()
+    longitud = EncryptedFloatField()
+    velocidad = EncryptedFloatField(default=0.0)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -778,8 +816,8 @@ class Ruta(models.Model):
     ]
     empresa           = models.ForeignKey(Empresa,  on_delete=models.CASCADE, related_name='rutas')
     tipo              = models.CharField(max_length=20, choices=TIPOS, default='carga')
-    nombre            = models.CharField(max_length=200)
-    descripcion       = models.TextField(blank=True, default='')
+    nombre            = EncryptedCharField(max_length=200)
+    descripcion       = EncryptedTextField(blank=True, default='')
     estado            = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
     conductor         = models.ForeignKey(Usuario,  on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas_conductor')
     vehiculo          = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas')
@@ -792,7 +830,7 @@ class Ruta(models.Model):
     distancia_km      = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     duracion_min      = models.IntegerField(null=True, blank=True)
     polyline          = models.JSONField(default=list, blank=True)
-    notas             = models.TextField(blank=True, default='')
+    notas             = EncryptedTextField(blank=True, default='')
     extra             = models.JSONField(default=dict, blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
@@ -821,11 +859,11 @@ class Parada(models.Model):
     ruta           = models.ForeignKey(Ruta, on_delete=models.CASCADE, related_name='paradas')
     tipo           = models.CharField(max_length=20, choices=TIPOS, default='parada')
     orden          = models.PositiveSmallIntegerField(default=0)
-    nombre         = models.CharField(max_length=200)
-    direccion      = models.CharField(max_length=400, blank=True, default='')
-    latitud        = models.FloatField(null=True, blank=True)
-    longitud       = models.FloatField(null=True, blank=True)
-    notas          = models.CharField(max_length=400, blank=True, default='')
+    nombre         = EncryptedCharField(max_length=200)
+    direccion      = EncryptedCharField(max_length=400, blank=True, default='')
+    latitud        = EncryptedFloatField(null=True, blank=True)
+    longitud       = EncryptedFloatField(null=True, blank=True)
+    notas          = EncryptedCharField(max_length=400, blank=True, default='')
     hora_estimada  = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -844,7 +882,7 @@ class EventoRuta(models.Model):
     ]
     ruta       = models.ForeignKey(Ruta,    on_delete=models.CASCADE,  related_name='eventos')
     tipo       = models.CharField(max_length=20, choices=TIPO_CHOICES, default='comentario')
-    texto      = models.TextField()
+    texto      = EncryptedTextField()
     autor      = models.ForeignKey(
         'Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='eventos_ruta'
     )
@@ -895,12 +933,12 @@ class SolicitudConductor(models.Model):
         null=True, blank=True, related_name='solicitudes_vehiculo',
     )
     tipo           = models.CharField(max_length=20, choices=TIPOS)
-    titulo         = models.CharField(max_length=200)
-    descripcion    = models.TextField(blank=True, default='')
+    titulo         = EncryptedCharField(max_length=200)
+    descripcion    = EncryptedTextField(blank=True, default='')
     estado         = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
     prioridad      = models.CharField(max_length=10, choices=PRIORIDADES, default='media')
     foto           = models.FileField(upload_to='solicitudes/%Y/%m/', null=True, blank=True)
-    respuesta      = models.TextField(blank=True, default='')
+    respuesta      = EncryptedTextField(blank=True, default='')
     extra          = models.JSONField(default=dict, blank=True)
     respondido_por = models.ForeignKey(
         Usuario, on_delete=models.SET_NULL,

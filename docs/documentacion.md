@@ -331,6 +331,34 @@ Los campos cifrados son:
 
 Para búsquedas por RUT (login, deduplicación) se almacena adicionalmente el hash SHA-256 del RUT normalizado (`rut_hash`), permitiendo comparación sin descifrar.
 
+### Cifrado transparente de datos operativos
+
+Además de los campos anteriores (que usan el patrón `_cifrado` + propiedad), los **datos operativos sensibles** se cifran de forma **transparente** mediante campos personalizados definidos en `g_de_flota/fields.py`:
+
+- `EncryptedCharField` / `EncryptedTextField` — texto cifrado; a nivel de Python se trabaja siempre con el valor en claro, así que serializers, vistas y admin no requieren cambios.
+- `EncryptedFloatField` — números (coordenadas GPS) cifrados; se guardan como texto cifrado y se devuelven como `float`.
+
+El descifrado degrada con gracia: si el valor almacenado no es un token Fernet válido (dato antiguo en claro), se devuelve tal cual.
+
+| Modelo | Campos cifrados (transparentes) |
+|---|---|
+| `Vehiculo` | `patente` (+ `patente_hash`), `marca`, `modelo` |
+| `Usuario` | `email` (+ `email_hash`) |
+| `Parada` | `nombre`, `direccion`, `latitud`, `longitud`, `notas` |
+| `Ubicacion` | `latitud`, `longitud`, `velocidad` |
+| `Ruta` | `nombre`, `descripcion`, `notas` |
+| `EventoRuta` | `texto` |
+| `Mantencion` | `tipo_mantencion`, `descripcion`, `taller_proveedor` |
+| `GastoOperativo` | `descripcion` |
+| `SolicitudConductor` | `titulo`, `descripcion`, `respuesta` |
+| `Notificacion` | `titulo`, `mensaje` |
+
+**Limitación (por el IV aleatorio de Fernet):** no se puede filtrar, ordenar ni exigir `unique=True` sobre estos campos a nivel de BD. Por eso la búsqueda de solicitudes por texto se realiza en Python tras descifrar (`SolicitudListView`). Los **montos/costos financieros se dejan sin cifrar** a propósito, para no romper las sumas y reportes del dashboard.
+
+**Campos con búsqueda/unicidad (columna `_hash` SHA-256 determinista):** `Vehiculo.patente` usa `patente_hash` (normalizada sin espacios/guiones, mayúsculas) para dedup y lookups; `Usuario.email` usa `email_hash` para deduplicación, búsqueda exacta y el **login del admin de Django**. Como el email está cifrado, `UsuarioManager.get_by_natural_key()` se sobreescribe para buscar por `email_hash` (el login del frontend ya era por `rut_hash`). Las búsquedas parciales por email (lista de usuarios, logs) se resuelven en Python tras descifrar.
+
+> Migraciones de datos: `0066`+`0067` (lote inicial) · `0068`+`0069` (patentes) · `0070`+`0071` (emails). Todas idempotentes.
+
 ### Normalización del RUT
 
 Antes de cifrar o hashear, el RUT se normaliza eliminando puntos y convirtiendo a minúsculas:
@@ -552,6 +580,11 @@ Gestión de documentos legales asociados a vehículos y conductores, con control
 
 El método `Documento.estado()` devuelve `vigente`, `por_vencer` (≤ 30 días) o `vencido` según la `fecha_vencimiento`. Los documentos pueden ser renovados (nueva versión vinculada a la anterior).
 
+**Validaciones del formulario:**
+- **Archivo:** Solo se aceptan PDF o imágenes (JPG, PNG, GIF, WebP, etc.). Se rechaza cualquier otro formato con mensaje de error.
+- **Fechas:** La fecha de vencimiento debe ser posterior a la de emisión.
+- **Notas:** No pueden contener solo espacios en blanco; máximo 50 caracteres. Se muestra un contador `X/50` en tiempo real que se torna rojo al superar el límite.
+
 **Vistas:** `Documentos.vue` · `DocumentosBadge.vue`
 
 ### 9.8 Finanzas Operativas
@@ -723,6 +756,7 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | Toast en DetalleRuta quedaba detrás del notch | `top: max(1rem, env(safe-area-inset-top) + 0.5rem)` |
 | Botón "Iniciar/Finalizar ruta" quedaba debajo del BottomNav en iPhone X+ | `bottom: var(--nav-total)` en lugar de `bottom: 64px` fijo |
 | Modales con `height: 80vh` desbordaban en pantallas pequeñas | `min(80vh, 80dvh)` que respeta la altura dinámica |
+| Modal de logout (Ajustes) y bottom sheets tapados por BottomNav | Todos los modales/sheets usan `z-[60]`; BottomNav permanece en `z-50` |
 | Login con `min-height: 60vh` cortaba en iPhone SE | Card con `max-height: 72vh` y scroll interno |
 | Barra de estado fija en color púrpura aunque el tema cambie | `inicializarStatusBar()` en `App.vue` usa `@capacitor/status-bar` para fijar color en runtime desde `themeStore.temaActual.colorGrad[0]`; `watch(temaActualId)` lo actualiza al cambiar tema |
 

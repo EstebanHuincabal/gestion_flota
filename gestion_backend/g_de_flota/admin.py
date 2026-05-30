@@ -9,7 +9,7 @@ from .models import (
     PlanMantenimiento, ReglaMantenimiento, VehiculoPlan,
     MantencionProgramada, AlertaMantencion,
     GastoOperativo, PresupuestoMensual, Documento,
-    Ruta, Parada, EventoRuta,
+    Ruta, Parada, EventoRuta, Ubicacion,
     SolicitudConductor,
 )
 
@@ -26,7 +26,7 @@ class CustomUsuarioAdmin(UserAdmin):
     model = Usuario
     list_display = ('email', 'rut', 'nombre', 'rol', 'empresa', 'is_active', 'is_blocked')
     list_filter = ('rol', 'is_active', 'is_blocked', 'empresa')
-    search_fields = ('email', 'nombre_cifrado', 'rut_hash')
+    search_fields = ('email_hash', 'rut_hash')   # email cifrado → buscar por hash exacto
     ordering = ('email',)
 
     fieldsets = (
@@ -69,7 +69,7 @@ class FlotaAdmin(admin.ModelAdmin):
 class VehiculoAdmin(admin.ModelAdmin):
     list_display = ('patente', 'marca', 'modelo', 'tipo_combustible', 'flota', 'activo')
     list_filter = ('tipo_combustible', 'activo', 'flota__empresa')
-    search_fields = ('patente', 'marca', 'modelo')
+    search_fields = ('patente',)   # marca y modelo van cifrados
 
 
 @admin.register(Asignacion)
@@ -83,7 +83,7 @@ class AsignacionAdmin(admin.ModelAdmin):
 class MantencionAdmin(admin.ModelAdmin):
     list_display = ('tipo_mantencion', 'vehiculo', 'fecha_programada', 'estado', 'costo')
     list_filter = ('estado', 'vehiculo__flota__empresa')
-    search_fields = ('vehiculo__patente', 'tipo_mantencion')
+    search_fields = ('vehiculo__patente',)   # tipo_mantencion va cifrado
 
 
 
@@ -142,7 +142,7 @@ class AlertaMantencionAdmin(admin.ModelAdmin):
 class GastoOperativoAdmin(admin.ModelAdmin):
     list_display = ('empresa', 'vehiculo', 'categoria', 'monto', 'fecha')
     list_filter = ('categoria', 'empresa')
-    search_fields = ('vehiculo__patente', 'descripcion')
+    search_fields = ('vehiculo__patente',)   # descripcion va cifrada
 
 
 @admin.register(PresupuestoMensual)
@@ -182,7 +182,7 @@ class CambioPlanAdmin(admin.ModelAdmin):
 class NotificacionAdmin(admin.ModelAdmin):
     list_display  = ('usuario', 'tipo', 'titulo', 'leida', 'fecha')
     list_filter   = ('tipo', 'leida')
-    search_fields = ('usuario__email', 'titulo', 'mensaje')
+    search_fields = ('usuario__email',)   # titulo y mensaje van cifrados
     readonly_fields = ('fecha',)
 
 
@@ -194,7 +194,7 @@ class NotificacionAdmin(admin.ModelAdmin):
 class RutaAdmin(admin.ModelAdmin):
     list_display  = ('nombre', 'empresa', 'tipo', 'estado', 'conductor', 'vehiculo', 'fecha_programada', 'distancia_km')
     list_filter   = ('tipo', 'estado', 'empresa')
-    search_fields = ('nombre', 'conductor__email', 'vehiculo__patente')
+    search_fields = ('conductor__email', 'vehiculo__patente')   # nombre va cifrado
     readonly_fields = ('created_at', 'updated_at')
 
 
@@ -202,15 +202,24 @@ class RutaAdmin(admin.ModelAdmin):
 class ParadaAdmin(admin.ModelAdmin):
     list_display  = ('nombre', 'ruta', 'tipo', 'orden', 'direccion')
     list_filter   = ('tipo',)
-    search_fields = ('nombre', 'ruta__nombre', 'direccion')
+    # nombre, ruta__nombre y direccion van cifrados → sin búsqueda de texto
 
 
 @admin.register(EventoRuta)
 class EventoRutaAdmin(admin.ModelAdmin):
     list_display  = ('ruta', 'tipo', 'autor', 'texto', 'created_at')
     list_filter   = ('tipo',)
-    search_fields = ('ruta__nombre', 'texto', 'autor__email')
+    search_fields = ('autor__email',)   # ruta__nombre y texto van cifrados
     readonly_fields = ('created_at',)
+
+
+@admin.register(Ubicacion)
+class UbicacionAdmin(admin.ModelAdmin):
+    list_display  = ('vehiculo', 'latitud', 'longitud', 'velocidad', 'timestamp')
+    list_filter   = ('vehiculo__flota__empresa', 'vehiculo')
+    search_fields = ('vehiculo__patente',)
+    readonly_fields = ('timestamp',)
+    ordering = ('-timestamp',)
 
 
 # ─────────────────────────────────────────
@@ -221,7 +230,7 @@ class EventoRutaAdmin(admin.ModelAdmin):
 class SolicitudConductorAdmin(admin.ModelAdmin):
     list_display   = ('id', 'conductor', 'tipo', 'titulo', 'estado', 'prioridad', 'created_at')
     list_filter    = ('tipo', 'estado', 'prioridad')
-    search_fields  = ('titulo', 'descripcion', 'conductor__email')
+    search_fields  = ('conductor__email',)   # titulo y descripcion van cifrados
     readonly_fields = ('created_at', 'updated_at')
     list_select_related = ('conductor',)
     fieldsets = (

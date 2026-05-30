@@ -484,7 +484,7 @@ class RutasListView(APIView):
         # como alternativa a vehiculo_id/conductor_id.
         if not data.get('vehiculo_id') and data.get('vehiculo_patente'):
             v = Vehiculo.objects.filter(
-                patente=str(data['vehiculo_patente']).upper(), flota__empresa=empresa
+                patente_hash=Vehiculo.hash_patente(str(data['vehiculo_patente'])), flota__empresa=empresa
             ).first()
             if v:
                 data['vehiculo_id'] = v.id

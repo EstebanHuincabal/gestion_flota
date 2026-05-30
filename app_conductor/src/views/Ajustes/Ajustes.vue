@@ -257,7 +257,7 @@ async function handleLogout() {
     <Transition name="overlay">
       <div
         v-if="confirmandoLogout"
-        class="fixed inset-0 bg-black/50 z-40 flex items-end"
+        class="fixed inset-0 bg-black/50 z-[60] flex items-end"
         @click.self="confirmandoLogout = false"
       >
         <Transition name="sheet">

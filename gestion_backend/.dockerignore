@@ -1,0 +1,15 @@
+# Datos y artefactos locales que NO deben ir a la imagen
+db.sqlite3
+db.sqlite3.bak_*
+*.sqlite3
+media/
+staticfiles/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+serviceAccountKey.json
+.git/
+.venv/
+venv/

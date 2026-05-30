@@ -1012,7 +1012,10 @@ def usuarios_lista(request):
         q = q.strip()
         # Intentamos normalizar por si es un RUT
         rut_hash = hashlib.sha256(normalizar_rut(q).encode()).hexdigest()
-        qs = qs.filter(Q(email__icontains=q) | Q(rut_hash=rut_hash))
+        # email está cifrado → se filtra en Python por el email descifrado
+        ql = q.lower()
+        ids_email = [u.id for u in qs.only('id', 'email') if ql in (u.email or '').lower()]
+        qs = qs.filter(Q(id__in=ids_email) | Q(rut_hash=rut_hash))
 
     return Response(UsuarioListSerializer(qs.order_by('email'), many=True).data)
 
@@ -1647,7 +1650,10 @@ def logs_lista(request):
     if accion:
         qs = qs.filter(accion=accion)
     if q:
-        qs = qs.filter(Q(usuario__email__icontains=q) | Q(ip__icontains=q))
+        # email cifrado → se resuelven en Python los usuarios cuyo correo coincide
+        ql = q.lower()
+        user_ids = [u.id for u in Usuario.objects.only('id', 'email') if ql in (u.email or '').lower()]
+        qs = qs.filter(Q(usuario_id__in=user_ids) | Q(ip__icontains=q))
     if fecha_desde:
         qs = qs.filter(fecha__date__gte=fecha_desde)
     if fecha_hasta:

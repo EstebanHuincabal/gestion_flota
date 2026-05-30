@@ -6,6 +6,8 @@ python-dotenv
 cryptography
 channels
 daphne
+channels-redis
+psycopg[binary]
 openpyxl
 Pillow
 transbank-sdk>=4.0.0

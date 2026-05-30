@@ -234,7 +234,7 @@ class AutoRegistroView(APIView):
 
         # ── Validar email usuario único ───────────────────────────────────────
         email_usr = usr_d.get('email', '').strip().lower()
-        if Usuario.objects.filter(email__iexact=email_usr).exists():
+        if Usuario.objects.filter(email_hash=Usuario.hash_email(email_usr)).exists():
             return Response(
                 {'error': 'Ya existe una cuenta con ese correo electrónico.',
                  'campo': 'usuario_email'},

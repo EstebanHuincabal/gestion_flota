@@ -195,7 +195,13 @@ class SolicitudesListView(APIView):
 
         buscar = request.query_params.get('buscar', '').strip()
         if buscar:
-            qs = qs.filter(titulo__icontains=buscar)
+            # titulo/descripcion están cifrados → se filtran en Python tras descifrar.
+            termino = buscar.lower()
+            ids = [
+                s.id for s in qs.only('id', 'titulo', 'descripcion')
+                if termino in (s.titulo or '').lower() or termino in (s.descripcion or '').lower()
+            ]
+            qs = qs.filter(id__in=ids)
 
         total = qs.count()
 

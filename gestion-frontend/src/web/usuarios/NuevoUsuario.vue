@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
@@ -120,6 +120,7 @@ const guardar = async () => {
   guardando.value = true
   try {
     const payload = { ...form.value }
+    if (payload.rol === 'SUPERADMIN') payload.empresa_id = null
     const res  = await apiFetch('/api/usuarios/crear/', { method: 'POST', body: payload })
     const data = await res.json()
     if (!res.ok) {
@@ -136,6 +137,11 @@ const guardar = async () => {
     guardando.value = false
   }
 }
+
+// Al elegir SUPERADMIN se desvincula de cualquier empresa
+watch(() => form.value.rol, (rol) => {
+  if (rol === 'SUPERADMIN') form.value.empresa_id = null
+})
 
 onMounted(cargarEmpresas)
 </script>
@@ -246,7 +252,7 @@ onMounted(cargarEmpresas)
         </div>
 
         <!-- Empresa fijada (flujo desde NuevaEmpresa) -->
-        <div v-if="desdeEmpresa" class="form-group">
+        <div v-if="desdeEmpresa && form.rol !== 'SUPERADMIN'" class="form-group">
           <label class="label">Empresa</label>
           <div class="input-bloqueado">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -259,7 +265,7 @@ onMounted(cargarEmpresas)
         </div>
 
         <!-- Empresa selector (flujo normal) -->
-        <div v-else class="form-group">
+        <div v-else-if="form.rol !== 'SUPERADMIN'" class="form-group">
           <label class="label">Empresa</label>
           <select v-model="form.empresa_id" class="input select"
             :class="{ 'input-error': errores.empresa_id }" required>
@@ -274,7 +280,6 @@ onMounted(cargarEmpresas)
           <label class="label">Rol</label>
           <select v-model="form.rol" class="input select">
             <option value="USUARIO">Usuario</option>
-            <option value="CONDUCTOR">Conductor</option>
             <option value="SUPERADMIN">Super Administrador</option>
           </select>
         </div>

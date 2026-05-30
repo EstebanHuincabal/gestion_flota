@@ -76,8 +76,7 @@ const form = ref({
 const TIPOS = [
   { value: 'mantencion',  label: 'Mantención',  icono: 'ti-tool',           color: '#534AB7', colorSuave: '#EEEDFE', descripcion: 'Falla mecánica o revisión necesaria' },
   { value: 'combustible', label: 'Combustible', icono: 'ti-gas-station',    color: '#B45309', colorSuave: '#FEF3C7', descripcion: 'Solicitar recarga o reportar consumo' },
-  { value: 'incidencia',  label: 'Incidencia',  icono: 'ti-alert-triangle', color: '#A32D2D', colorSuave: '#FCEBEB', descripcion: 'Accidente, multa u otro problema' },
-  { value: 'documento',   label: 'Documento',   icono: 'ti-file-plus',      color: '#16A34A', colorSuave: '#DCFCE7', descripcion: 'Subir o renovar un documento' },
+  { value: 'incidencia',  label: 'Incidencia',  icono: 'ti-alert-triangle', color: '#A32D2D', colorSuave: '#FCEBEB', descripcion: 'Parte o multa de tránsito' },
 ]
 
 const tipoActual = computed(() => TIPOS.find(t => t.value === tipoSeleccionado.value))
@@ -100,24 +99,16 @@ function abrirNuevaSolicitud() {
 function cerrarNueva() { modalNueva.value = false }
 
 async function elegirTipo(tipo) {
-  // Ignorar si el tipo no está permitido por el plan
   if (!tipoHabilitado(tipo)) return
 
   tipoSeleccionado.value = tipo.value
 
-  // «Documento» → lanza cámara directamente y cierra el modal
-  if (tipo.value === 'documento') {
-    cerrarNueva()
-    await flujoDocumento()
-    return
-  }
-
-  // Pre-rellenos por tipo
   if (tipo.value === 'combustible') {
     form.value.titulo    = 'Solicitud de combustible'
     form.value.prioridad = 'media'
   } else if (tipo.value === 'incidencia') {
-    form.value.prioridad = 'alta'
+    form.value.prioridad           = 'alta'
+    form.value.subtipo_incidencia  = 'multa'
   } else {
     form.value.titulo    = ''
     form.value.prioridad = 'media'
@@ -153,44 +144,6 @@ function quitarFoto() {
   fotoBase64.value  = null
 }
 
-// Flujo especial para tipo "documento"
-async function flujoDocumento() {
-  try {
-    const foto = await Camera.getPhoto({
-      quality:            90,
-      allowEditing:       false,
-      resultType:         CameraResultType.DataUrl,
-      source:             CameraSource.Prompt,
-      promptLabelHeader:  'Capturar documento',
-      promptLabelPhoto:   'Elegir de la galería',
-      promptLabelPicture: 'Tomar foto del documento',
-    })
-    const b64   = foto.dataUrl.split(',')[1]
-    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-    const blob  = new Blob([bytes], { type: 'image/jpeg' })
-
-    const datos = {
-      tipo:        'documento',
-      titulo:      'Documento adjunto',
-      descripcion: 'Documento capturado desde la app',
-      prioridad:   'media',
-    }
-    const res = await store.crearSolicitud(datos, blob)
-    if (res.success) {
-      mostrarToast(
-        res.offline
-          ? 'Sin conexión. Se enviará cuando vuelva la señal.'
-          : 'Documento enviado correctamente',
-        res.offline ? 'offline' : 'ok',
-      )
-    } else {
-      mostrarToast('Error al enviar el documento', 'error')
-    }
-  } catch {
-    // Usuario canceló
-  }
-}
-
 // Enviar solicitud desde el formulario paso 2
 async function enviarSolicitud() {
   errorForm.value = ''
@@ -209,21 +162,17 @@ async function enviarSolicitud() {
     errorForm.value = 'La descripción debe tener al menos 10 caracteres.'
     return
   }
-  if (f.descripcion.length > 1000) {
-    errorForm.value = 'La descripción no puede superar los 1000 caracteres.'
+  if (f.descripcion.length > 100) {
+    errorForm.value = 'La descripción no puede superar los 100 caracteres.'
     return
   }
   if (t === 'incidencia') {
-    if (!f.subtipo_incidencia) {
-      errorForm.value = 'Debes seleccionar el tipo de incidencia.'
-      return
-    }
-    if (f.subtipo_incidencia === 'multa' && (!f.monto || f.monto <= 0)) {
+    if (!f.monto || f.monto <= 0) {
       errorForm.value = 'Debes ingresar el monto de la multa.'
       return
     }
     if (!fotoBase64.value) {
-      errorForm.value = 'Para incidencias se requiere una foto.'
+      errorForm.value = 'Para multas se requiere una foto del parte.'
       return
     }
   }
@@ -259,10 +208,8 @@ async function enviarSolicitud() {
     datos.litros = f.litros
   }
   if (t === 'incidencia') {
-    datos.subtipo = f.subtipo_incidencia
-    if (f.subtipo_incidencia === 'multa') {
-      datos.monto = f.monto
-    }
+    datos.subtipo = 'multa'
+    datos.monto   = f.monto
   }
 
   const res = await store.crearSolicitud(datos, foto)
@@ -540,7 +487,7 @@ onUnmounted(() => {
          MODAL: NUEVA SOLICITUD
     ═══════════════════════════════════════════════════════════════════════════ -->
     <Transition name="sheet">
-      <div v-if="modalNueva" class="fixed inset-0 z-50 flex flex-col justify-end">
+      <div v-if="modalNueva" class="fixed inset-0 z-[60] flex flex-col justify-end">
         <div class="absolute inset-0 bg-black/50" @click="cerrarNueva"/>
 
         <div
@@ -652,52 +599,38 @@ onUnmounted(() => {
 
             <!-- Descripción -->
             <div class="mb-4">
-              <label class="block text-xs font-semibold text-gray-600 mb-1">
-                Descripción
-                <span v-if="tipoSeleccionado !== 'combustible'" class="text-red-400">*</span>
+              <label class="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+                <span>
+                  Descripción
+                  <span v-if="tipoSeleccionado !== 'combustible'" class="text-red-400">*</span>
+                </span>
+                <span :class="form.descripcion.length > 100 ? 'text-red-500' : 'text-gray-400'">
+                  {{ form.descripcion.length }}/100
+                </span>
               </label>
               <textarea
                 v-model="form.descripcion"
                 placeholder="Más detalles sobre el problema..."
                 rows="3"
-                class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                maxlength="110"
+                :class="form.descripcion.length > 100 ? 'border-red-400' : 'border-gray-200'"
+                class="w-full rounded-xl border px-3 py-2.5 text-sm
                        focus:outline-none focus:border-[var(--color-acento)] transition resize-none"
               />
             </div>
 
-            <!-- Incidencia: Subtipo y Monto Multa -->
-            <div v-if="tipoSeleccionado === 'incidencia'" class="mb-4 space-y-4">
-              <div>
-                <label class="block text-xs font-semibold text-gray-600 mb-1">
-                  Tipo de incidencia <span class="text-red-400">*</span>
-                </label>
-                <select
-                  v-model="form.subtipo_incidencia"
-                  class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
-                         focus:outline-none focus:border-[var(--color-acento)] transition bg-white"
-                >
-                  <option value="" disabled>Selecciona una opción</option>
-                  <option value="accidente">Accidente o Siniestro</option>
-                  <option value="multa">Parte o Multa de tránsito</option>
-                  <option value="fiscalizacion">Fiscalización / Control</option>
-                  <option value="robo">Robo o Vandalismo</option>
-                  <option value="otro">Otro</option>
-                </select>
-              </div>
-
-              <!-- Monto Multa -->
-              <div v-if="form.subtipo_incidencia === 'multa'">
-                <label class="block text-xs font-semibold text-gray-600 mb-1">
-                  Monto de la Multa ($) <span class="text-red-400">*</span>
-                </label>
-                <input
-                  v-model.number="form.monto"
-                  type="number"
-                  placeholder="Ej: 50000"
-                  class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
-                         focus:outline-none focus:border-[var(--color-acento)] transition"
-                />
-              </div>
+            <!-- Incidencia: Monto de la multa -->
+            <div v-if="tipoSeleccionado === 'incidencia'" class="mb-4">
+              <label class="block text-xs font-semibold text-gray-600 mb-1">
+                Monto de la multa ($) <span class="text-red-400">*</span>
+              </label>
+              <input
+                v-model.number="form.monto"
+                type="number"
+                placeholder="Ej: 50000"
+                class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                       focus:outline-none focus:border-[var(--color-acento)] transition"
+              />
             </div>
 
             <!-- Combustible: Monto y Litros -->
@@ -812,7 +745,7 @@ onUnmounted(() => {
          MODAL: DETALLE SOLICITUD
     ═══════════════════════════════════════════════════════════════════════════ -->
     <Transition name="sheet">
-      <div v-if="modalDetalle && solicitudDetalle" class="fixed inset-0 z-50 flex flex-col justify-end">
+      <div v-if="modalDetalle && solicitudDetalle" class="fixed inset-0 z-[60] flex flex-col justify-end">
         <div class="absolute inset-0 bg-black/50" @click="modalDetalle = false"/>
 
         <div
@@ -890,6 +823,14 @@ onUnmounted(() => {
               <p class="text-xs font-semibold text-gray-600 mb-1">Respuesta del administrador:</p>
               <div v-if="solicitudDetalle.respuesta">
                 <p class="text-sm text-gray-700 italic">"{{ solicitudDetalle.respuesta }}"</p>
+              </div>
+              <div v-else-if="solicitudDetalle.estado === 'aprobado'" class="flex items-center gap-2 text-green-600">
+                <i class="ti ti-circle-check text-base"/>
+                <p class="text-xs font-semibold">Solicitud aprobada.</p>
+              </div>
+              <div v-else-if="solicitudDetalle.estado === 'rechazado'" class="flex items-center gap-2 text-red-500">
+                <i class="ti ti-circle-x text-base"/>
+                <p class="text-xs font-semibold">Solicitud rechazada.</p>
               </div>
               <div v-else class="flex items-center gap-2 text-gray-400">
                 <i class="ti ti-clock text-base"/>

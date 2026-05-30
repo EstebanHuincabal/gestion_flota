@@ -623,7 +623,7 @@ class ConductorCrearSerializer(serializers.Serializer):
             patente = data.get('vehiculo_patente', '').replace(' ', '').replace('-', '').upper().strip()
             if not patente:
                 raise serializers.ValidationError({"vehiculo_patente": "La patente es obligatoria para crear un vehículo."})
-            if Vehiculo.objects.filter(patente=patente).exists():
+            if Vehiculo.objects.filter(patente_hash=Vehiculo.hash_patente(patente)).exists():
                 raise serializers.ValidationError({"vehiculo_patente": "Ya existe un vehículo con esta patente."})
             
             # Validación de Flota
@@ -868,7 +868,7 @@ class VehiculoSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 'Formato de patente inválido. Use el formato LLLLNN (ej: ABCD12) o LLNNNN (ej: AB1234).'
             )
-        qs = Vehiculo.objects.filter(patente=valor)
+        qs = Vehiculo.objects.filter(patente_hash=Vehiculo.hash_patente(valor))
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():

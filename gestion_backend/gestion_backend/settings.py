@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR.parent / '.env')   # .env centralizado en la raíz del monorepo
+# En dev carga el .env de la raíz del monorepo; en Docker las variables llegan por env_file.
+load_dotenv(BASE_DIR.parent / '.env', override=False)
 
 SECRET_KEY = os.environ['SECRET_KEY']
 ENCRYPTION_KEY = os.environ['ENCRYPTION_KEY']
@@ -64,12 +65,26 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'gestion_backend.wsgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Si POSTGRES_DB está definido (producción/Docker) usa PostgreSQL; si no, SQLite (dev local).
+if os.getenv('POSTGRES_DB'):
+    DATABASES = {
+        'default': {
+            'ENGINE':   'django.db.backends.postgresql',
+            'NAME':     os.environ['POSTGRES_DB'],
+            'USER':     os.environ.get('POSTGRES_USER', 'postgres'),
+            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
+            'HOST':     os.environ.get('POSTGRES_HOST', 'db'),
+            'PORT':     os.environ.get('POSTGRES_PORT', '5432'),
+            'CONN_MAX_AGE': 60,
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -84,6 +99,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'   # destino de collectstatic (lo sirve Nginx en prod)
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ── Media (fotos de solicitudes, comprobantes, etc.) ──────────────────────────
@@ -117,6 +133,15 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost",
     "capacitor://localhost",
 ]
+
+# Orígenes adicionales de producción (IP/dominio del servidor), separados por coma.
+# Ej: CORS_ALLOWED_ORIGINS_EXTRA="http://157.180.85.17"
+_extra_cors = os.getenv('CORS_ALLOWED_ORIGINS_EXTRA', '')
+if _extra_cors:
+    CORS_ALLOWED_ORIGINS += [o.strip() for o in _extra_cors.split(',') if o.strip()]
+_extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
+if _extra_csrf:
+    CSRF_TRUSTED_ORIGINS += [o.strip() for o in _extra_csrf.split(',') if o.strip()]
 
 AUTH_USER_MODEL = 'g_de_flota.Usuario'
 
@@ -173,11 +198,16 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:7183')
 ONECLICK_COMMERCE_CODE = os.environ.get('ONECLICK_COMMERCE_CODE', '597055555541')
 ONECLICK_CHILD_CODE    = os.environ.get('ONECLICK_CHILD_CODE',    '597055555542')
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        # Para producción con múltiples procesos, usar Redis:
-        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        # 'CONFIG': {'hosts': [('127.0.0.1', 6379)]},
+# En producción usa Redis (si REDIS_URL está definido); en dev, capa en memoria.
+REDIS_URL = os.getenv('REDIS_URL')
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        }
     }
-}
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
+    }

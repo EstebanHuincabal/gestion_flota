@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16
+    env_file: .env.production
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  backend:
+    build: ./gestion_backend
+    env_file: .env.production
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # Instala el esquema, recolecta estáticos y levanta el servidor ASGI (HTTP + WebSockets).
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 gestion_backend.asgi:application"
+    restart: unless-stopped
+
+  frontend:
+    build: ./gestion-frontend
+    ports:
+      - "80:80"
+    volumes:
+      - static_volume:/staticfiles:ro
+      - media_volume:/media:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  static_volume:
+  media_volume:

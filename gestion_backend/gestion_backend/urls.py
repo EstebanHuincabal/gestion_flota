@@ -84,7 +84,8 @@ router.register(r'empresa/alertas-mantenimiento', AlertaMantencionViewSet, basen
 
 urlpatterns = [
     path('',                          home_view,         name='home'),
-    path('admin/',                    admin.site.urls),
+    # Admin de Django solo disponible en desarrollo (DEBUG=True)
+    *([path('admin/', admin.site.urls)] if settings.DEBUG else []),
     path('api/login/',                login_view,           name='login'),
     path('api/token/refresh/',        TokenRefreshSeguroView.as_view(), name='token-refresh'),
     

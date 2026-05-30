@@ -17,7 +17,7 @@ class Command(BaseCommand):
         email           = self._pedir("Email")
         password        = self._pedir_password()
 
-        if Usuario.objects.filter(email=email).exists():
+        if Usuario.objects.filter(email_hash=Usuario.hash_email(email)).exists():
             self.stderr.write(f"Error: el email '{email}' ya existe.")
             return
 

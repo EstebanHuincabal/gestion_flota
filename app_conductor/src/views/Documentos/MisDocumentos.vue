@@ -103,6 +103,11 @@ async function elegirDeGaleria() {
 function seleccionarArchivo() { inputArchivo.value?.click() }
 function onArchivoSeleccionado(e) {
   const file = e.target.files?.[0]; if (!file) return
+  if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+    mostrarToast('Solo se permiten archivos PDF o imágenes.', 'error')
+    e.target.value = ''
+    return
+  }
   archivoBlob.value    = file
   archivoNombre.value  = file.name
   esImagen.value       = file.type.startsWith('image/')
@@ -125,6 +130,14 @@ function quitarArchivo() {
 async function enviarDocumento() {
   errorForm.value = ''
   if (!form.value.tipo) { errorForm.value = 'Selecciona el tipo de documento.'; return }
+  if (form.value.fechaEmision && form.value.fechaVencimiento &&
+      form.value.fechaEmision >= form.value.fechaVencimiento) {
+    errorForm.value = 'La fecha de vencimiento debe ser posterior a la de emisión.'
+    return
+  }
+  const notas = form.value.notas || ''
+  if (notas && notas.trim() === '') { errorForm.value = 'Las notas no pueden contener solo espacios en blanco.'; return }
+  if (notas.length > 50) { errorForm.value = 'Las notas no pueden superar 50 caracteres.'; return }
   const usuario = auth.usuario
   if (!usuario) { errorForm.value = 'Sesión no disponible.'; return }
 
@@ -183,6 +196,11 @@ function _mimeDesdeNombre(nombre) {
 }
 
 async function verDocumento(docId, nombreArchivo = '') {
+  const doc = store.documentos.find(d => d.id === docId)
+  if (doc && !doc.tiene_archivo) {
+    mostrarToast('Este documento no tiene archivo adjunto.', 'error')
+    return
+  }
   previsualizando.value = docId
   try {
     const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -190,6 +208,7 @@ async function verDocumento(docId, nombreArchivo = '') {
     const res = await fetch(`${BASE_URL}/api/empresa/documentos/${docId}/descargar/`, {
       headers: { Authorization: `Bearer ${token}` },
     })
+    if (res.status === 404) { mostrarToast('El archivo no se encontró en el servidor.', 'error'); return }
     if (!res.ok) throw new Error()
     const blob = await res.blob()
 
@@ -485,7 +504,7 @@ onMounted(() => store.cargarDocumentos())
          MODAL: SUBIR / RENOVAR DOCUMENTO
     ════════════════════════════════════════════════════════════════════════════ -->
     <Transition name="sheet">
-      <div v-if="modalAbierto" class="fixed inset-0 z-50 flex flex-col justify-end">
+      <div v-if="modalAbierto" class="fixed inset-0 z-[60] flex flex-col justify-end">
         <div class="absolute inset-0 bg-black/50" @click="cerrarModal"/>
         <div class="relative bg-white rounded-t-2xl scroll-hidden"
           style="max-height: min(88vh, 88dvh); padding-bottom: env(safe-area-inset-bottom, 0px)">
@@ -531,11 +550,16 @@ onMounted(() => store.cargarDocumentos())
 
             <!-- Notas -->
             <div class="mb-4">
-              <label class="block text-xs font-semibold text-gray-600 mb-1">
-                Notas <span class="text-gray-400">(opcional)</span>
+              <label class="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+                <span>Notas <span class="text-gray-400 font-normal">(opcional)</span></span>
+                <span :class="(form.notas || '').length > 50 ? 'text-red-500' : 'text-gray-400'">
+                  {{ (form.notas || '').length }}/50
+                </span>
               </label>
               <textarea v-model="form.notas" placeholder="Ej: número de folio, compañía aseguradora..." rows="2"
-                class="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm
+                maxlength="60"
+                :class="[(form.notas || '').trim() === '' && form.notas ? 'border-red-400' : (form.notas || '').length > 50 ? 'border-red-400' : 'border-gray-200']"
+                class="w-full rounded-xl border px-3 py-2.5 text-sm
                        focus:outline-none focus:border-[var(--color-acento)] transition resize-none"/>
             </div>
 

@@ -17,7 +17,7 @@ import { wsService } from '@/services/websocket.js'
 import { encolarAccion, getSolicitudes, saveSolicitudes, saveSolicitudLocal } from '@/services/db.js'
 
 // Todos los tipos posibles — se usan como fallback cuando no hay respuesta del servidor
-const TODOS_LOS_TIPOS = ['mantencion', 'combustible', 'incidencia', 'documento']
+const TODOS_LOS_TIPOS = ['mantencion', 'combustible', 'incidencia']
 
 export const useSolicitudesStore = defineStore('solicitudes', () => {
   // ── Estado ─────────────────────────────────────────────────────────────────

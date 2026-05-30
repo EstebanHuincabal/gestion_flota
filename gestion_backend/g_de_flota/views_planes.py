@@ -767,7 +767,20 @@ class PagoRetornoView(View):
             pago.respuesta_tb = resp_dict
             pago.fecha_pago   = timezone.now()
 
-            resp_code = resp_dict.get('response_code', -1)
+            resp_code         = resp_dict.get('response_code', -1)
+            installments      = resp_dict.get('installments_number', 1) or 1
+
+            # Pago en cuotas no permitido: si el usuario eligió cuotas se rechaza.
+            if resp_code == 0 and installments > 1:
+                try:
+                    _get_webpay_transaction().refund(token_ws, pago.monto)
+                except Exception:
+                    pass
+                pago.estado = 'rechazado'
+                pago.save()
+                return redirect(
+                    f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=cuotas_no_permitidas"
+                )
 
             if resp_code == 0:
                 pago.estado = 'aprobado'
