@@ -42,7 +42,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='empresa', name='rut_hash',
-            field=models.CharField(blank=True, db_index=True, max_length=64, null=True),
+            field=models.CharField(blank=True, max_length=64, null=True),
         ),
         migrations.AddField(
             model_name='empresa', name='email_cifrado',
