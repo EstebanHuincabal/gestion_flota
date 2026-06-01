@@ -111,6 +111,12 @@ async function inicializarPush() {
         router.push('/solicitudes')
       } else if (tipo === 'mantencion_programada') {
         router.push('/mantencion')
+      } else if (tipo === 'recordatorio_documentos') {
+        router.push('/documentos')
+      } else if (tipo === 'recordatorio_checklist') {
+        router.push(data.ruta_id ? `/rutas/${data.ruta_id}/checklist` : '/rutas')
+      } else if (tipo === 'recordatorio_ruta' || tipo === 'recordatorio_finalizar' || tipo === 'recordatorio_vispera') {
+        router.push(data.ruta_id ? `/rutas/${data.ruta_id}` : '/rutas')
       }
     })
 
@@ -166,6 +172,9 @@ function mostrarToastPush(titulo, cuerpo, data = {}) {
     if (tipo === 'mantencion_aprobada') router.push('/solicitudes')
     else if (tipo === 'solicitud_rechazada') router.push('/solicitudes')
     else if (tipo === 'mantencion_programada') router.push('/mantencion')
+    else if (tipo === 'recordatorio_documentos') router.push('/documentos')
+    else if (tipo === 'recordatorio_checklist') router.push(data.ruta_id ? `/rutas/${data.ruta_id}/checklist` : '/rutas')
+    else if (tipo === 'recordatorio_ruta' || tipo === 'recordatorio_finalizar' || tipo === 'recordatorio_vispera') router.push(data.ruta_id ? `/rutas/${data.ruta_id}` : '/rutas')
     card.remove()
   })
 

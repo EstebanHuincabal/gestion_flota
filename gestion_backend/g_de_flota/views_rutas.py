@@ -385,6 +385,14 @@ def _validar_estado_operacional(vehiculo_id, conductor_id, empresa, fecha_str=No
     return {'errores': errores, 'advertencias': advertencias}
 
 
+def _reset_recordatorios(ruta):
+    """Limpia los flags de recordatorios reprogramables para que vuelvan a enviarse."""
+    for flag in ('recordatorio_inicio_enviado',
+                 'recordatorio_checklist_enviado',
+                 'recordatorio_vispera_enviado'):
+        ruta.extra.pop(flag, None)
+
+
 MINUTOS_ANTICIPACION = 30   # minutos antes de hora_programada en que se permite iniciar
 
 
@@ -630,9 +638,15 @@ class RutaDetailView(APIView):
             if campo in data:
                 setattr(ruta, campo, data[campo])
         if 'fecha_programada' in data:
-            ruta.fecha_programada = _a_fecha(data['fecha_programada'] or None)
+            nueva_fecha = _a_fecha(data['fecha_programada'] or None)
+            if nueva_fecha != ruta.fecha_programada:
+                _reset_recordatorios(ruta)  # reprogramada → reenviar recordatorios
+            ruta.fecha_programada = nueva_fecha
         if 'hora_programada' in data:
-            ruta.hora_programada = _a_hora(data['hora_programada'] or None)
+            nueva_hora = _a_hora(data['hora_programada'] or None)
+            if nueva_hora != ruta.hora_programada:
+                _reset_recordatorios(ruta)  # reprogramada → reenviar recordatorios
+            ruta.hora_programada = nueva_hora
 
         if 'conductor_id' in data:
             cid = data['conductor_id']

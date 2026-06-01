@@ -8,6 +8,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
+from datetime import datetime, timedelta
+
 from .models import EventoRuta, Ruta, Rol, SolicitudConductor, Asignacion, Mantencion, GastoOperativo, Documento, Usuario
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
@@ -163,6 +165,156 @@ def _serializar_ruta(ruta, detallado=False):
 
 
 # ─────────────────────────────────────────
+# ─────────────────────────────────────────
+# Recordatorios push — se evalúan al cargar rutas
+# ─────────────────────────────────────────
+
+_VENTANA_INICIO_MIN     = 30   # avisa cuando faltan ≤ 30 min para la hora de salida
+_VENTANA_CHECKLIST_MIN  = 60   # avisa cuando faltan ≤ 60 min y el checklist no está listo
+_MARGEN_FINALIZAR_MIN   = 30   # avisa cuando la ruta activa supera duracion_min + 30 min
+_DIAS_DOC_AVISO         = 7    # avisa docs que vencen en ≤ 7 días (o ya vencidos hasta -30)
+_HORA_VISPERA           = 18   # avisa ruta de mañana solo desde las 18:00 hs
+
+
+def _enviar_recordatorios_conductor(conductor, rutas_qs):
+    """
+    Evalúa las rutas del conductor recién cargadas y envía push si corresponde.
+    Idempotente: cada recordatorio se marca en Ruta.extra para no repetirse.
+    Falla silenciosamente — nunca interrumpe la respuesta al conductor.
+    """
+    try:
+        ahora = timezone.localtime()
+        hoy   = ahora.date()
+
+        for ruta in rutas_qs:
+            extra_modificado = False
+
+            # ── 1. Inicio de ruta próxima ───────────────────────────────────
+            if (ruta.estado == 'pendiente'
+                    and ruta.fecha_programada == hoy
+                    and ruta.hora_programada
+                    and not ruta.extra.get('recordatorio_inicio_enviado')):
+
+                dt_prog  = timezone.make_aware(
+                    datetime.combine(ruta.fecha_programada, ruta.hora_programada),
+                    timezone.get_current_timezone(),
+                )
+                restante = (dt_prog - ahora).total_seconds() / 60
+                if 0 < restante <= _VENTANA_INICIO_MIN:
+                    n = int(round(restante))
+                    hora_fmt = ruta.hora_programada.strftime('%H:%M')
+                    cuando   = 'en 1 minuto' if n <= 1 else f'en {n} minutos'
+                    enviar_push(
+                        conductor,
+                        titulo='Recordatorio de ruta ⏰',
+                        cuerpo=f'Debes iniciar "{ruta.nombre}" {cuando} (salida {hora_fmt}).',
+                        data={'tipo': 'recordatorio_ruta', 'ruta_id': str(ruta.id)},
+                    )
+                    ruta.extra['recordatorio_inicio_enviado'] = True
+                    extra_modificado = True
+
+            # ── 2. Checklist pre-viaje pendiente ───────────────────────────
+            if (ruta.estado == 'pendiente'
+                    and ruta.fecha_programada == hoy
+                    and ruta.hora_programada
+                    and not ruta.extra.get('checklist_completo')
+                    and not ruta.extra.get('recordatorio_checklist_enviado')):
+
+                dt_prog  = timezone.make_aware(
+                    datetime.combine(ruta.fecha_programada, ruta.hora_programada),
+                    timezone.get_current_timezone(),
+                )
+                restante = (dt_prog - ahora).total_seconds() / 60
+                if 0 < restante <= _VENTANA_CHECKLIST_MIN:
+                    n = int(round(restante))
+                    enviar_push(
+                        conductor,
+                        titulo='Checklist pendiente 📋',
+                        cuerpo=f'Completa el checklist de "{ruta.nombre}" antes de iniciar (salida en {n} min).',
+                        data={'tipo': 'recordatorio_checklist', 'ruta_id': str(ruta.id)},
+                    )
+                    ruta.extra['recordatorio_checklist_enviado'] = True
+                    extra_modificado = True
+
+            # ── 3. Ruta activa sin finalizar ───────────────────────────────
+            if (ruta.estado == 'activo'
+                    and ruta.fecha_inicio
+                    and ruta.duracion_min
+                    and not ruta.extra.get('recordatorio_finalizar_enviado')):
+
+                transcurrido = (ahora - timezone.localtime(ruta.fecha_inicio)).total_seconds() / 60
+                if transcurrido > ruta.duracion_min + _MARGEN_FINALIZAR_MIN:
+                    enviar_push(
+                        conductor,
+                        titulo='¿Olvidaste finalizar tu ruta? 🏁',
+                        cuerpo=f'"{ruta.nombre}" lleva más tiempo del estimado. Si ya llegaste, finalízala en la app.',
+                        data={'tipo': 'recordatorio_finalizar', 'ruta_id': str(ruta.id)},
+                    )
+                    ruta.extra['recordatorio_finalizar_enviado'] = True
+                    extra_modificado = True
+
+            # ── 4. Ruta para mañana (víspera) ──────────────────────────────
+            if (ruta.estado == 'pendiente'
+                    and ruta.fecha_programada == hoy + timedelta(days=1)
+                    and ahora.hour >= _HORA_VISPERA
+                    and not ruta.extra.get('recordatorio_vispera_enviado')):
+
+                hora_txt = f' a las {ruta.hora_programada.strftime("%H:%M")}' if ruta.hora_programada else ''
+                enviar_push(
+                    conductor,
+                    titulo='Ruta programada para mañana 🗓',
+                    cuerpo=f'Mañana tienes la ruta "{ruta.nombre}"{hora_txt}. Prepárate con tiempo.',
+                    data={'tipo': 'recordatorio_vispera', 'ruta_id': str(ruta.id)},
+                )
+                ruta.extra['recordatorio_vispera_enviado'] = True
+                extra_modificado = True
+
+            if extra_modificado:
+                ruta.save(update_fields=['extra'])
+
+        # ── 5. Documentos por vencer (1 aviso al día por conductor) ────────
+        prefs = conductor.notif_prefs or {}
+        if prefs.get('recordatorio_docs_ultima') != str(hoy):
+            asignacion = Asignacion.objects.filter(conductor=conductor, activo=True).first()
+            docs = list(Documento.objects.filter(entidad='conductor', conductor=conductor))
+            if asignacion and asignacion.vehiculo:
+                docs += list(Documento.objects.filter(entidad='vehiculo', vehiculo=asignacion.vehiculo))
+
+            # Quedarse con el doc más reciente por tipo
+            mejor = {}
+            for d in docs:
+                if d.fecha_vencimiento is None:
+                    continue
+                if d.tipo not in mejor or d.fecha_vencimiento > mejor[d.tipo].fecha_vencimiento:
+                    mejor[d.tipo] = d
+
+            criticos = [d for d in mejor.values()
+                        if d.dias_para_vencer() is not None and -30 <= d.dias_para_vencer() <= _DIAS_DOC_AVISO]
+            if criticos:
+                if len(criticos) == 1:
+                    d    = criticos[0]
+                    dias = d.dias_para_vencer()
+                    estado = ('está vencido/a' if dias < 0
+                              else 'vence hoy' if dias == 0
+                              else f'vence en {dias} día{"s" if dias != 1 else ""}')
+                    cuerpo = f'Tu {d.get_tipo_display()} {estado}. Renuévalo cuanto antes.'
+                else:
+                    cuerpo = f'Tienes {len(criticos)} documentos por vencer o vencidos. Revísalos en la app.'
+
+                enviar_push(
+                    conductor,
+                    titulo='Documentos por vencer 📄',
+                    cuerpo=cuerpo,
+                    data={'tipo': 'recordatorio_documentos'},
+                )
+                prefs['recordatorio_docs_ultima'] = str(hoy)
+                conductor.notif_prefs = prefs
+                conductor.save(update_fields=['notif_prefs'])
+
+    except Exception:
+        pass  # fail-silent — nunca bloquear la respuesta al conductor
+
+
 # GET /api/conductor/rutas/
 # ─────────────────────────────────────────
 
@@ -183,13 +335,15 @@ def conductor_rutas(request):
                 status=403,
             )
 
-    rutas_qs = (
+    rutas_qs = list(
         Ruta.objects
         .filter(conductor=request.user, estado__in=['pendiente', 'activo', 'finalizado'])
         .select_related('vehiculo', 'conductor')
         .prefetch_related('paradas')
         .order_by('fecha_programada', '-created_at')
     )
+
+    _enviar_recordatorios_conductor(request.user, rutas_qs)
 
     return Response({'rutas': [_serializar_ruta(r) for r in rutas_qs]})
 

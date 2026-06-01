@@ -1,7 +1,7 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 2.9 · **Última actualización:** Mayo 2026  
-> **Stack:** Django 5 · Vue 3 · Capacitor 8 · SQLite · JWT
+> **Versión:** 3.0 · **Última actualización:** Junio 2026  
+> **Stack:** Django 5 · Vue 3 · Capacitor 8 · PostgreSQL · JWT
 
 ---
 
@@ -19,8 +19,6 @@
     - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
     - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
     - 9.15 [Solicitudes de Conductores (USUARIO + SUPERADMIN)](#915-solicitudes-de-conductores-panel-web)
-    - 9.16 [Geolocalización en tiempo real](#916-geolocalización-en-tiempo-real)
-    - 9.17 [Carta Gantt](#917-carta-gantt)
 10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
 11. [Modelo de datos](#11-modelo-de-datos)
 12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
@@ -987,7 +985,26 @@ El backend usa `firebase-admin` para enviar notificaciones push a dispositivos i
 3. Cuando un admin aprueba o rechaza una solicitud, `firebase_push.enviar_push()` envía la notificación al token del conductor.
 4. Si la app está en primer plano → toast visual en pantalla. Si está en segundo plano/cerrada → notificación del sistema.
 
+Cada push lleva `data.tipo`, que `App.vue` usa para navegar al tocarla: `mantencion_aprobada` / `solicitud_aprobada` / `solicitud_rechazada` → `/solicitudes`; `mantencion_programada` → `/mantencion`; `recordatorio_documentos` → `/documentos`; `recordatorio_checklist` → `/rutas/<ruta_id>/checklist`; `recordatorio_ruta` / `recordatorio_finalizar` / `recordatorio_vispera` → `/rutas/<ruta_id>`.
+
 **Módulo:** `g_de_flota/firebase_push.py` — falla silenciosamente si Firebase no está configurado.
+
+##### Recordatorios push (disparados al cargar rutas)
+
+Además de los push reactivos (aprobación/rechazo de solicitudes), el backend envía **recordatorios** proactivos al conductor cada vez que la app llama a `GET /api/conductor/rutas/`. No requiere ningún scheduler ni configuración externa — usa el mismo `enviar_push()` que el resto del sistema.
+
+La función `_enviar_recordatorios_conductor()` en `views_conductor.py` evalúa las rutas recién cargadas y envía el push si corresponde:
+
+| Recordatorio | `data.tipo` | Condición | Navega a |
+|---|---|---|---|
+| **Inicio de ruta próxima** | `recordatorio_ruta` | Ruta `pendiente` de hoy con `hora_programada`, faltan ≤ 30 min para la salida | `/rutas/<id>` |
+| **Checklist pre-viaje pendiente** | `recordatorio_checklist` | Ruta `pendiente` de hoy, faltan ≤ 60 min y el checklist no está completo (`extra.checklist_completo` ausente) | `/rutas/<id>/checklist` |
+| **Ruta activa sin finalizar** | `recordatorio_finalizar` | Ruta `activo` cuyo tiempo transcurrido supera `duracion_min` + 30 min | `/rutas/<id>` |
+| **Ruta para mañana (víspera)** | `recordatorio_vispera` | Ruta `pendiente` de mañana, a partir de las 18:00 hs | `/rutas/<id>` |
+| **Documentos por vencer** | `recordatorio_documentos` | Licencia del conductor o docs del vehículo (SOAP/rev. técnica/permiso) con `dias_para_vencer` entre −30 y 7. **Máx. 1 aviso/día** por conductor | `/documentos` |
+
+- **Idempotencia:** los recordatorios de ruta marcan un flag en `Ruta.extra` (`recordatorio_inicio_enviado` / `recordatorio_checklist_enviado` / `recordatorio_finalizar_enviado` / `recordatorio_vispera_enviado`) para avisar una sola vez por evento. El de documentos guarda `Usuario.notif_prefs['recordatorio_docs_ultima']` (1 vez al día). Si se reprograma `fecha_programada` u `hora_programada` desde el panel, los flags se limpian vía `_reset_recordatorios()` en `views_rutas.py`.
+- **Fail-silent:** toda la función está envuelta en `try/except` — nunca bloquea ni retrasa la respuesta al conductor.
 
 ---
 
@@ -1059,94 +1076,6 @@ Migración: `0040_solicitudes_permisos.py`
 **Modelo:** `SolicitudConductor`  
 **Rutas WS:** `ws/solicitudes/<empresa_id>/`
 
----
-
-### 9.16 Geolocalización en tiempo real
-
-Mapa en vivo (Leaflet) que muestra la posición de los vehículos de la empresa con su estado: `en_ruta`, `en_movimiento`, `detenido`, `sin_señal`.
-
-#### Cadena de datos
-
-```
-App conductor (geolocalizacion.js · watchPosition)
-   ├─ WebSocket ws/conductor/ (ConductorConsumer._procesar_ubicacion)   ← vía preferida
-   └─ HTTP POST /api/conductor/ubicacion/ (RegistrarUbicacionView)       ← fallback
-                         ↓ (ambos crean Ubicacion y hacen group_send)
-        grupo geolocalizacion_{empresa_id}  →  GeolocalizacionConsumer
-                         ↓
-        Panel web: web/rutas/Geolocalizacion.vue (WS + polling 30 s de respaldo)
-```
-
-**Importante:** el `wsService` del conductor solo se conecta cuando se abre la pantalla de Solicitudes. Por eso `geolocalizacion.js` siempre usa **WS con fallback HTTP**, tanto para la ubicación normal como para la señal `gps_inactivo` (GPS apagado).
-
-#### Manejo del GPS apagado / reactivado (tiempo real)
-
-- **Apagar GPS:** al emitir error (code 2/3) y solo en la transición activo→inactivo, se avisa al banner y se envía `gps_inactivo` (WS o HTTP) → el backend marca `sin_señal` al instante usando la última ubicación conocida.
-- **Reactivar GPS:** al volver la primera posición se envía **forzando** (se salta el throttle de 3 s) → el marcador se reanima de inmediato.
-- **Heartbeat = sonda activa de GPS (4 s):** el conductor pide la posición actual con `getCurrentPosition` (timeout 3 s). Si la obtiene, la envía (mantiene "vivo" un vehículo detenido y reanima al reconectar); si falla, marca inactivo y envía `gps_inactivo`. Esto detecta el GPS apagado **aunque `watchPosition` deje de emitir en silencio** (sin disparar error), que era la causa de que el mapa quedara congelado.
-- **No se destruye el watcher** al apagar el GPS: en iOS/Android se recupera solo al reactivarlo. Un **watchdog del watcher** (30 s) lo recrea únicamente si muere de verdad.
-- **Watchdog del panel (cliente):** `Geolocalizacion.vue` revisa cada 2 s la hora local de recepción de cada vehículo; si no llegan datos en `STALE_MS = 12 s`, lo marca `sin_señal` sin esperar al backend (cubre app cerrada / red caída).
-- `geo_helpers.UMBRAL_INACTIVO_MIN = 1` minuto: respaldo para la carga inicial y el polling de 30 s.
-
-#### Campos cifrados
-
-`Ubicacion.latitud`, `longitud` y `velocidad` son `EncryptedFloatField` (Fernet). No se pueden filtrar/ordenar por ellos en BD; el orden es por `timestamp` (sin cifrar).
-
-#### Permiso de plan
-
-| Código | Categoría | Migración |
-|---|---|---|
-| `geolocalizacion.ver` | geolocalizacion | `0072_geolocalizacion_permiso.py` |
-
-Validado en tres capas: router (`meta.permiso`), `GeolocalizacionView` (HTTP 403 `MODULO_NO_INCLUIDO`) y `GeolocalizacionConsumer` (cierre 4003). SUPERADMIN siempre tiene acceso.
-
-**Vistas:** `Geolocalizacion.vue`  
-**Backend:** `views_geo.py` · `geo_helpers.py` · `consumers.GeolocalizacionConsumer` / `ConductorConsumer`  
-**Modelo:** `Ubicacion`  
-**Rutas WS:** `ws/geolocalizacion/<empresa_id>/` (panel) · `ws/conductor/` (envío del conductor)
-
----
-
-### 9.17 Carta Gantt
-
-Vista de línea de tiempo interactiva que muestra rutas y mantenciones agrupadas por vehículo en un período dado. Sin modelos nuevos — consume los modelos `Ruta`, `Mantencion` y `Vehiculo` existentes.
-
-#### Funcionalidades
-
-- **Período:** mes, semana o rango personalizado (hasta 90 días) con navegación ◀ ▶
-- **Filtros:** por tipo (rutas / mantenciones / todo), solo atrasados
-- **Barras:** doble barra (planificada + real) con colores por estado
-- **Indicadores de atraso:** patrón diagonal rojo + icono ⏱ con minutos/días
-- **KPI cards:** total rutas, a tiempo, atrasadas, canceladas, mantenciones, vencidas
-- **Línea de hoy:** línea vertical punteada con badge "Hoy"
-- **Tooltips:** información completa al hacer hover (sin librerías externas)
-- **Click en barra de ruta:** navega a `/empresa/rutas?ver=<id>`
-- **Exportar PDF:** `window.print()` con estilos CSS de impresión
-- **Scroll horizontal** con columna de etiquetas sticky
-
-#### Lógica de atraso (`calcular_estado_gantt`)
-
-| Tipo | Estado | Condición de atraso |
-|---|---|---|
-| Ruta | pendiente | `fecha_programada + hora_programada` < ahora |
-| Ruta | activo | `fecha_inicio + duracion_min + 15 min` < ahora |
-| Ruta | finalizado | `fecha_fin` > `fecha_inicio + duracion_min + 15 min` |
-| Mantención | pendiente / en_proceso | `fecha_programada` < hoy |
-
-#### Permiso de plan
-
-| Código | Categoría | Migración |
-|---|---|---|
-| `rutas.gantt` | rutas | `0073_gantt_permiso.py` |
-
-Asignado automáticamente a todos los planes existentes al migrar.
-
-**Endpoint:** `GET /api/empresa/gantt/` (parámetros: `fecha_desde`, `fecha_hasta`, `tipo`, `vehiculo_id`, `conductor_id`)  
-**Vista:** `Gantt.vue` (`src/web/rutas/Gantt.vue`)  
-**Backend:** `views_rutas.py` — clase `GanttView` + helper `calcular_estado_gantt`  
-**Permiso requerido:** `rutas.gantt`
-
----
 
 ### 9.10 Notificaciones
 
@@ -1339,7 +1268,6 @@ Authorization: Bearer <access_token>
 | `POST` | `/api/empresa/rutas/<id>/cancelar/` | Cancelar ruta con motivo (crea EventoRuta auto) |
 | `POST` | `/api/empresa/rutas/calcular/` | Calcular trayecto OSRM — devuelve solo `distancia_km`, `duracion_min`, `polyline` |
 | `GET/POST` | `/api/empresa/rutas/<id>/comentarios/` | GET lista eventos de la ruta; POST crea comentario manual del admin |
-| `GET` | `/api/empresa/gantt/` | Carta Gantt: rutas y mantenciones agrupadas por vehículo. Params: `fecha_desde`, `fecha_hasta`, `tipo`, `vehiculo_id`, `conductor_id`. Requiere permiso `rutas.gantt` |
 
 ### App conductores (endpoints exclusivos)
 
