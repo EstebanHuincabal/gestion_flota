@@ -14,8 +14,68 @@ const router = useRouter()
 const vehiculo = computed(() => auth.usuario?.vehiculo_asignado || null)
 const TODOS_TIPOS = [...TIPOS_CONDUCTOR, ...TIPOS_VEHICULO]
 
+// ── Paso de licencia obligatorio si aún no la tiene ─────────────────────────
+const requiereLicencia   = computed(() => !!auth.usuario?.requiere_licencia)
+const licenciaForm       = ref({ numero: '', error: '' })
+const guardandoLicencia  = ref(false)
+const licenciaCompletada = ref(false)
+
+async function guardarLicencia() {
+  licenciaForm.value.error = ''
+  const num = licenciaForm.value.numero.trim().toUpperCase()
+  if (num.length < 4) {
+    licenciaForm.value.error = 'Ingresa un número de licencia válido.'
+    return
+  }
+  guardandoLicencia.value = true
+  try {
+    const { apiFetch } = await import('@/services/api.js')
+    await apiFetch('/api/conductor/perfil/', {
+      method: 'PATCH',
+      body: JSON.stringify({ licencia: num }),
+    })
+    // Actualizar usuario en Preferences y store
+    const u = { ...auth.usuario, requiere_licencia: false }
+    auth.usuario = u
+    await Preferences.set({ key: 'usuario', value: JSON.stringify(u) })
+    licenciaCompletada.value = true
+  } catch (e) {
+    licenciaForm.value.error = 'No se pudo guardar. Intenta de nuevo.'
+  } finally {
+    guardandoLicencia.value = false
+  }
+}
+
 // ── Navegar al terminar el onboarding ────────────────────────────────────────
+const errorContinuar  = ref('')
+const guardandoContinuar = ref(false)
+
 async function continuar() {
+  errorContinuar.value = ''
+
+  // Verificar que se haya subido al menos la licencia del conductor
+  if (!store.docPorTipo['licencia']) {
+    errorContinuar.value = 'Debes subir tu licencia de conducir para continuar.'
+    return
+  }
+
+  guardandoContinuar.value = true
+  try {
+    const { apiFetch } = await import('@/services/api.js')
+    const res = await apiFetch('/api/conductor/perfil/', {
+      method: 'PATCH',
+      body: JSON.stringify({ completar_onboarding: true }),
+    })
+    // Actualizar primer_login en store y Preferences
+    const u = { ...auth.usuario, primer_login: false }
+    auth.usuario = u
+    await Preferences.set({ key: 'usuario', value: JSON.stringify(u) })
+  } catch {
+    // fail-silent: si falla el API igual dejamos pasar, el guard del router se actualizó localmente
+  } finally {
+    guardandoContinuar.value = false
+  }
+
   let modulos = []
   try {
     const { value } = await Preferences.get({ key: 'plan_modulos' })
@@ -189,6 +249,38 @@ onMounted(() => store.cargarDocumentos())
 <template>
   <div class="min-h-dvh bg-gray-50 flex flex-col">
 
+    <!-- ── Paso 0: N° de licencia obligatorio ────────────────────────────────── -->
+    <div v-if="requiereLicencia && !licenciaCompletada"
+      class="min-h-dvh flex flex-col items-center justify-center px-6 pb-8"
+      style="background: var(--gradient-hero)">
+      <div class="w-full max-w-sm">
+        <div class="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center mb-5 mx-auto">
+          <i class="ti ti-id text-3xl text-white"/>
+        </div>
+        <h1 class="text-white text-2xl font-bold text-center mb-2">Número de licencia</h1>
+        <p class="text-white/70 text-sm text-center mb-8">
+          Antes de continuar necesitamos tu número de licencia de conducir.
+        </p>
+        <div class="bg-white rounded-2xl p-5 shadow-xl">
+          <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">N° de licencia</label>
+          <input v-model="licenciaForm.numero" type="text" placeholder="Ej: A-123456"
+            class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono uppercase focus:outline-none focus:border-[var(--color-acento)]"
+            :class="licenciaForm.error ? 'border-red-300' : ''"
+            @keyup.enter="guardarLicencia"/>
+          <p v-if="licenciaForm.error" class="text-xs text-red-500 mt-1">{{ licenciaForm.error }}</p>
+          <button @click="guardarLicencia" :disabled="guardandoLicencia"
+            class="w-full mt-4 py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2"
+            style="background: var(--color-acento)">
+            <span v-if="guardandoLicencia" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"/>
+            <span v-else>Guardar y continuar <i class="ti ti-arrow-right"/></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Documentos (solo si la licencia ya está completa) ─────────────────── -->
+    <template v-if="!requiereLicencia || licenciaCompletada">
+
     <!-- ── Banner de onboarding ──────────────────────────────────────────────── -->
     <header class="ob-header">
       <div class="ob-header-pattern" aria-hidden="true"/>
@@ -305,11 +397,18 @@ onMounted(() => store.cargarDocumentos())
     <!-- ── Pie con botón Continuar ──────────────────────────────────────────── -->
     <div class="px-4 pb-6 pt-3 bg-white border-t border-gray-100"
          style="padding-bottom: max(1.5rem, env(safe-area-inset-bottom))">
-      <button @click="continuar" class="btn-primary">
-        Continuar <i class="ti ti-arrow-right"/>
+      <!-- Error si intenta continuar sin licencia -->
+      <p v-if="errorContinuar" class="text-xs text-red-500 text-center mb-2 font-medium">
+        <i class="ti ti-alert-circle mr-1"/>{{ errorContinuar }}
+      </p>
+
+      <button @click="continuar" :disabled="guardandoContinuar" class="btn-primary">
+        <span v-if="guardandoContinuar" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin mr-2"/>
+        <span v-else>Finalizar registro <i class="ti ti-check ml-1"/></span>
       </button>
       <p class="text-center text-xs text-gray-400 mt-3">
-        Puedes subir documentos más tarde desde la sección <strong>Documentos</strong>
+        Se requiere subir la <strong>licencia de conducir</strong> para continuar.
+        Los demás documentos puedes completarlos después.
       </p>
     </div>
 
@@ -424,6 +523,8 @@ onMounted(() => store.cargarDocumentos())
         </div>
       </div>
     </Transition>
+
+    </template><!-- fin v-if licencia completa -->
 
   </div>
 </template>

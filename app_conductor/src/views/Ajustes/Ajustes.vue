@@ -1,10 +1,12 @@
 <script setup>
 import { ref } from 'vue'
+import { Preferences } from '@capacitor/preferences'
 import { useAuthStore }  from '@/stores/auth.js'
 import { useThemeStore } from '@/stores/theme.js'
 import { usePermisos }   from '@/composables/usePermisos.js'
 import BottomNav from '@/components/BottomNav.vue'
 import { iniciales } from '@/utils/formato.js'
+import { apiFetch } from '@/services/api.js'
 
 const auth       = useAuthStore()
 const themeStore = useThemeStore()
@@ -27,6 +29,147 @@ const cerrando          = ref(false)
 async function handleLogout() {
   cerrando.value = true
   await auth.logout()
+}
+
+// ── Cambiar contraseña ────────────────────────────────────────────────────────
+const cambioPassAbierto  = ref(false)
+const cambioPassGuardando = ref(false)
+const cambioPassForm = ref({ actual: '', nuevo: '', confirmar: '' })
+const cambioPassVer  = ref({ actual: false, nuevo: false, confirmar: false })
+const cambioPassErr  = ref({})
+const cambioPassToast = ref({ visible: false, mensaje: '', error: false })
+
+function abrirCambiarPassword() {
+  cambioPassForm.value  = { actual: '', nuevo: '', confirmar: '' }
+  cambioPassVer.value   = { actual: false, nuevo: false, confirmar: false }
+  cambioPassErr.value   = {}
+  cambioPassAbierto.value = true
+}
+
+async function guardarCambioPassword() {
+  cambioPassErr.value = {}
+  const { actual, nuevo, confirmar } = cambioPassForm.value
+  const errs = {}
+  if (!actual)      errs.actual    = 'Ingresa tu contraseña actual.'
+  if (nuevo.length < 8)            errs.nuevo = 'Mínimo 8 caracteres.'
+  else if (!/[A-Z]/.test(nuevo))   errs.nuevo = 'Debe tener al menos una mayúscula.'
+  else if (!/[0-9]/.test(nuevo))   errs.nuevo = 'Debe tener al menos un número.'
+  else if (nuevo === actual)        errs.nuevo = 'Debe ser diferente a la actual.'
+  if (!errs.nuevo && nuevo !== confirmar) errs.confirmar = 'Las contraseñas no coinciden.'
+  if (Object.keys(errs).length) { cambioPassErr.value = errs; return }
+
+  cambioPassGuardando.value = true
+  try {
+    const res = await apiFetch('/api/conductor/cambiar-password/', {
+      method: 'PATCH',
+      body: JSON.stringify({ password_actual: actual, password_nuevo: nuevo, confirmar }),
+    })
+    if (res.errores) { cambioPassErr.value = res.errores; return }
+    cambioPassAbierto.value = false
+    mostrarCambioToast('Contraseña actualizada correctamente.')
+  } catch (e) {
+    mostrarCambioToast(e?.message || 'No se pudo guardar. Intenta de nuevo.', true)
+  } finally {
+    cambioPassGuardando.value = false
+  }
+}
+
+function mostrarCambioToast(mensaje, error = false) {
+  cambioPassToast.value = { visible: true, mensaje, error }
+  setTimeout(() => { cambioPassToast.value.visible = false }, 3500)
+}
+
+// ── Editar perfil ─────────────────────────────────────────────────────────────
+const editandoPerfil  = ref(false)
+const guardandoPerfil = ref(false)
+const perfilToast     = ref({ visible: false, mensaje: '', error: false })
+const perfilForm      = ref({ telefono: '', licencia: '', nombre: '' })
+const perfilErrores   = ref({})
+
+// Devuelve solo los 8 dígitos del móvil (sin el +569 prefix)
+function _digitesTelefono(tel) {
+  const limpio = (tel || '').replace(/[\s\-\(\)]/g, '')
+  if (limpio.startsWith('+569')) return limpio.slice(4)
+  if (limpio.startsWith('569'))  return limpio.slice(3)
+  if (limpio.startsWith('9') && limpio.length === 9) return limpio.slice(1)
+  return limpio
+}
+
+function abrirEditarPerfil() {
+  perfilForm.value = {
+    nombre:   auth.usuario?.nombre   || '',
+    telefono: _digitesTelefono(auth.usuario?.telefono),
+    licencia: auth.usuario?.licencia || '',
+  }
+  perfilErrores.value = {}
+  editandoPerfil.value = true
+}
+
+// Validación local de licencia chilena: 1-3 letras + opcional guion/espacio + 4-9 dígitos
+function validarLicenciaChilena(lic) {
+  return /^[A-Za-z]{1,3}[-\s]?\d{4,9}$/.test(lic.trim())
+}
+
+async function guardarPerfil() {
+  perfilErrores.value  = {}
+  guardandoPerfil.value = true
+
+  // Validación local antes de llamar al API
+  const errLocal = {}
+  const telCompleto = '+569' + perfilForm.value.telefono.replace(/\D/g, '')
+  if (perfilForm.value.telefono && !/^\d{8}$/.test(perfilForm.value.telefono.replace(/\D/g, ''))) {
+    errLocal.telefono = 'Ingresa los 8 dígitos después de +569.'
+  }
+  if (perfilForm.value.licencia && !validarLicenciaChilena(perfilForm.value.licencia)) {
+    errLocal.licencia = 'Formato inválido. Ej: A-123456 o B1234567.'
+  }
+  if (Object.keys(errLocal).length) {
+    perfilErrores.value  = errLocal
+    guardandoPerfil.value = false
+    return
+  }
+
+  try {
+    const payload = {}
+    const u = auth.usuario || {}
+    if (perfilForm.value.nombre   !== u.nombre)   payload.nombre   = perfilForm.value.nombre.trim()
+    if (telCompleto !== u.telefono)               payload.telefono = telCompleto
+    if (perfilForm.value.licencia !== u.licencia) payload.licencia = perfilForm.value.licencia.trim().toUpperCase()
+
+    if (!Object.keys(payload).length) { editandoPerfil.value = false; return }
+
+    const res = await apiFetch('/api/conductor/perfil/', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+
+    if (res.errores) {
+      perfilErrores.value = res.errores
+      return
+    }
+
+    // Actualizar store y Preferences
+    const actualizado = {
+      ...u,
+      ...('nombre'   in payload ? { nombre:   res.nombre   || payload.nombre }   : {}),
+      ...('telefono' in payload ? { telefono: payload.telefono } : {}),
+      ...('licencia' in payload ? { licencia: payload.licencia, requiere_licencia: res.requiere_licencia ?? false } : {}),
+    }
+    auth.usuario = actualizado
+    await Preferences.set({ key: 'usuario', value: JSON.stringify(actualizado) })
+
+    editandoPerfil.value = false
+    mostrarPerfilToast('Perfil actualizado correctamente.')
+  } catch (e) {
+    mostrarPerfilToast(e?.message || 'No se pudo guardar. Intenta de nuevo.', true)
+  } finally {
+    guardandoPerfil.value = false
+  }
+}
+
+function mostrarPerfilToast(mensaje, error = false) {
+  perfilToast.value = { visible: true, mensaje, error }
+  setTimeout(() => { perfilToast.value.visible = false }, 3500)
 }
 </script>
 
@@ -71,6 +214,13 @@ async function handleLogout() {
           </div>
         </div>
       </div>
+
+      <!-- Botón editar perfil -->
+      <button @click="abrirEditarPerfil"
+        class="mt-3 flex items-center gap-1.5 text-xs text-white/80 bg-white/15 rounded-full px-3 py-1.5 mx-auto">
+        <i class="ti ti-edit text-xs"/>
+        Editar perfil
+      </button>
     </header>
 
     <div class="px-4 py-5 flex flex-col gap-4">
@@ -137,9 +287,7 @@ async function handleLogout() {
         <!-- Versión -->
         <div class="aj-settings-row aj-settings-row--first">
           <div class="aj-row-icon aj-row-icon--blue">
-            <svg class="w-4 h-4" fill="white" stroke="none" viewBox="0 0 24 24">
-              <path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
+            <i class="ti ti-info-circle text-white text-sm"/>
           </div>
           <span class="aj-row-label">Versión</span>
           <span class="aj-row-value">1.0.0</span>
@@ -148,9 +296,7 @@ async function handleLogout() {
         <!-- Sistema -->
         <div class="aj-settings-row">
           <div class="aj-row-icon aj-row-icon--purple">
-            <svg class="w-4 h-4" fill="white" stroke="none" viewBox="0 0 24 24">
-              <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-            </svg>
+            <i class="ti ti-shield-check text-white text-sm"/>
           </div>
           <span class="aj-row-label">Sistema de Gestión de Flota</span>
         </div>
@@ -163,10 +309,7 @@ async function handleLogout() {
         <!-- Label descriptivo -->
         <div class="aj-settings-row aj-settings-row--first">
           <div class="aj-row-icon" :style="`background: var(--gradient-primary)`">
-            <svg class="w-4 h-4" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round"
-                d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
-            </svg>
+            <i class="ti ti-palette text-white text-sm"/>
           </div>
           <div class="flex-1">
             <span class="aj-row-label">Color de la app</span>
@@ -191,9 +334,7 @@ async function handleLogout() {
             >
               <!-- Check si está activo -->
               <span v-if="themeStore.temaActualId === tema.id" class="theme-check">
-                <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
-                </svg>
+                <i class="ti ti-check text-white text-xs font-black"/>
               </span>
 
               <!-- Mini UI de preview (BottomNav + header simulados) -->
@@ -243,11 +384,21 @@ async function handleLogout() {
         </div>
       </section>
 
+      <!-- ── Seguridad ─────────────────────────────────────────────────────── -->
+      <section class="aj-group">
+        <p class="aj-group-title">Seguridad</p>
+        <button @click="abrirCambiarPassword" class="aj-group-item">
+          <span class="aj-group-item-icon" style="background:#EDE9FE;">
+            <i class="ti ti-lock text-sm" style="color:#7C3AED;"/>
+          </span>
+          <span class="aj-group-item-label">Cambiar contraseña</span>
+          <i class="ti ti-chevron-right aj-group-item-chevron"/>
+        </button>
+      </section>
+
       <!-- ── Cerrar sesión ──────────────────────────────────────────────────── -->
       <button @click="confirmandoLogout = true" class="aj-logout-standalone">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-        </svg>
+        <i class="ti ti-logout text-lg"/>
         Cerrar sesión
       </button>
 
@@ -272,9 +423,7 @@ async function handleLogout() {
             <!-- Contenido -->
             <div class="flex flex-col items-center gap-1 mb-6">
               <div class="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mb-2">
-                <svg class="w-7 h-7 text-red-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-                </svg>
+                <i class="ti ti-logout text-red-500 text-2xl"/>
               </div>
               <h3 class="text-base font-bold text-gray-800">¿Cerrar sesión?</h3>
               <p class="text-sm text-gray-500 text-center">
@@ -306,6 +455,139 @@ async function handleLogout() {
     <!-- ── Bottom nav ─────────────────────────────────────────────────────── -->
     <BottomNav />
 
+    <!-- ── Bottom-sheet: editar perfil ──────────────────────────────────────── -->
+    <Transition name="sheet">
+      <div v-if="editandoPerfil" class="fixed inset-0 z-[60] flex flex-col justify-end">
+        <div class="absolute inset-0 bg-black/50" @click="editandoPerfil = false"/>
+        <div class="relative bg-white rounded-t-2xl"
+             style="max-height: min(85vh,85dvh); padding-bottom: env(safe-area-inset-bottom, 0px); overflow-y: auto;">
+          <!-- Asa -->
+          <div class="flex justify-center pt-3 pb-1 sticky top-0 bg-white z-10">
+            <div class="w-10 h-1 rounded-full bg-gray-300"/>
+          </div>
+          <div class="px-5 pb-6">
+            <h2 class="text-base font-bold text-gray-800 mb-4">Editar perfil</h2>
+
+            <!-- Nombre -->
+            <div class="mb-3">
+              <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nombre completo</label>
+              <input v-model="perfilForm.nombre" type="text" placeholder="Tu nombre"
+                class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-acento)]"
+                :class="perfilErrores.nombre ? 'border-red-300' : ''"/>
+              <p v-if="perfilErrores.nombre" class="text-xs text-red-500 mt-1">{{ perfilErrores.nombre }}</p>
+            </div>
+
+            <!-- Teléfono -->
+            <div class="mb-3">
+              <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Teléfono</label>
+              <div class="flex border rounded-xl overflow-hidden"
+                   :class="perfilErrores.telefono ? 'border-red-300' : 'border-gray-200'">
+                <span class="px-3 py-2.5 text-sm font-mono bg-gray-50 text-gray-500 border-r border-gray-200 select-none">+569</span>
+                <input v-model="perfilForm.telefono" type="tel" placeholder="12345678" maxlength="8"
+                  class="flex-1 px-3 py-2.5 text-sm font-mono focus:outline-none"
+                  @input="perfilForm.telefono = perfilForm.telefono.replace(/\D/g,'').slice(0,8)"/>
+              </div>
+              <p v-if="perfilErrores.telefono" class="text-xs text-red-500 mt-1">{{ perfilErrores.telefono }}</p>
+            </div>
+
+            <!-- Licencia -->
+            <div class="mb-5">
+              <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">N° de licencia</label>
+              <input v-model="perfilForm.licencia" type="text" placeholder="Ej: A-123456"
+                class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-mono uppercase focus:outline-none focus:border-[var(--color-acento)]"
+                :class="perfilErrores.licencia ? 'border-red-300' : ''"/>
+              <p v-if="perfilErrores.licencia" class="text-xs text-red-500 mt-1">{{ perfilErrores.licencia }}</p>
+            </div>
+
+            <button @click="guardarPerfil" :disabled="guardandoPerfil"
+              class="w-full py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2"
+              style="background: var(--color-acento)">
+              <span v-if="guardandoPerfil" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"/>
+              <span v-else>Guardar cambios</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Toast de perfil -->
+    <Transition name="toast">
+      <div v-if="perfilToast.visible"
+        class="fixed left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
+        :class="perfilToast.error ? 'bg-red-600' : 'bg-gray-800'"
+        style="bottom: calc(1.5rem + env(safe-area-inset-bottom))">
+        <i :class="perfilToast.error ? 'ti ti-alert-circle' : 'ti ti-circle-check'"/>
+        {{ perfilToast.mensaje }}
+      </div>
+    </Transition>
+
+    <!-- ── Bottom-sheet: cambiar contraseña ──────────────────────────────────── -->
+    <Transition name="sheet">
+      <div v-if="cambioPassAbierto" class="fixed inset-0 z-[60] flex flex-col justify-end">
+        <div class="absolute inset-0 bg-black/50" @click="cambioPassAbierto = false"/>
+        <div class="relative bg-white rounded-t-2xl"
+             style="max-height: min(90vh,90dvh); padding-bottom: env(safe-area-inset-bottom, 0px); overflow-y: auto;">
+          <div class="flex justify-center pt-3 pb-1 sticky top-0 bg-white z-10">
+            <div class="w-10 h-1 rounded-full bg-gray-300"/>
+          </div>
+          <div class="px-5 pb-6">
+            <h2 class="text-base font-bold text-gray-800 mb-1">Cambiar contraseña</h2>
+            <p class="text-xs text-gray-400 mb-5">Mínimo 8 caracteres, una mayúscula y un número.</p>
+
+            <!-- Campo genérico con toggle visibilidad -->
+            <template v-for="campo in [
+              { key: 'actual',    label: 'Contraseña actual',    placeholder: '••••••••', autoComplete: 'current-password' },
+              { key: 'nuevo',     label: 'Nueva contraseña',     placeholder: '••••••••', autoComplete: 'new-password' },
+              { key: 'confirmar', label: 'Confirmar contraseña', placeholder: '••••••••', autoComplete: 'new-password' },
+            ]" :key="campo.key">
+              <div class="mb-3">
+                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  {{ campo.label }}
+                </label>
+                <div class="relative">
+                  <input
+                    v-model="cambioPassForm[campo.key]"
+                    :type="cambioPassVer[campo.key] ? 'text' : 'password'"
+                    :placeholder="campo.placeholder"
+                    :autocomplete="campo.autoComplete"
+                    class="w-full border rounded-xl px-4 py-2.5 text-sm pr-10 focus:outline-none focus:border-[var(--color-acento)]"
+                    :class="cambioPassErr[campo.key] ? 'border-red-300' : 'border-gray-200'"
+                    @input="delete cambioPassErr[campo.key]"
+                  />
+                  <button type="button" tabindex="-1"
+                    @click="cambioPassVer[campo.key] = !cambioPassVer[campo.key]"
+                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                    <i :class="cambioPassVer[campo.key] ? 'ti ti-eye-off' : 'ti ti-eye'" class="text-sm"/>
+                  </button>
+                </div>
+                <p v-if="cambioPassErr[campo.key]" class="text-xs text-red-500 mt-1">
+                  {{ cambioPassErr[campo.key] }}
+                </p>
+              </div>
+            </template>
+
+            <button @click="guardarCambioPassword" :disabled="cambioPassGuardando"
+              class="w-full mt-2 py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2"
+              style="background: var(--color-acento)">
+              <span v-if="cambioPassGuardando" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"/>
+              <span v-else><i class="ti ti-lock-check mr-1"/>Guardar nueva contraseña</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Toast de cambio de contraseña -->
+    <Transition name="toast">
+      <div v-if="cambioPassToast.visible"
+        class="fixed left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
+        :class="cambioPassToast.error ? 'bg-red-600' : 'bg-gray-800'"
+        style="bottom: calc(1.5rem + env(safe-area-inset-bottom))">
+        <i :class="cambioPassToast.error ? 'ti ti-alert-circle' : 'ti ti-circle-check'"/>
+        {{ cambioPassToast.mensaje }}
+      </div>
+    </Transition>
+
   </div>
 </template>
 
@@ -318,6 +600,7 @@ async function handleLogout() {
 }
 .aj-pattern {
   position: absolute; inset: 0;
+  pointer-events: none;
   background-image:
     radial-gradient(circle at 90% 10%, rgba(255,255,255,0.12) 0%, transparent 45%),
     radial-gradient(circle at 10% 90%, rgba(124,58,237,0.25) 0%, transparent 50%);

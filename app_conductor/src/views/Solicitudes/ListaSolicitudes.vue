@@ -314,10 +314,10 @@ onUnmounted(() => {
         <!-- Resumen chips -->
         <div class="sol-summary-chips">
           <span v-if="store.pendientes.length" class="chip chip--accent">
-            {{ store.pendientes.length }} activa{{ store.pendientes.length !== 1 ? 's' : '' }}
+            <i class="ti ti-clock text-xs mr-1"/>{{ store.pendientes.length }} activa{{ store.pendientes.length !== 1 ? 's' : '' }}
           </span>
           <span v-if="store.resueltas.length" class="chip chip--muted">
-            {{ store.resueltas.length }} resuelta{{ store.resueltas.length !== 1 ? 's' : '' }}
+            <i class="ti ti-circle-check text-xs mr-1"/>{{ store.resueltas.length }} resuelta{{ store.resueltas.length !== 1 ? 's' : '' }}
           </span>
         </div>
       </div>
@@ -348,7 +348,7 @@ onUnmounted(() => {
         <!-- ── Solicitudes en proceso ────────────────────────────────────── -->
         <section v-if="store.pendientes.length">
           <div class="flex items-center justify-between mb-2">
-            <p class="sol-section-label">En proceso</p>
+            <p class="sol-section-label"><i class="ti ti-loader mr-1.5"/>En proceso</p>
             <span class="chip chip--accent">{{ store.pendientes.length }}</span>
           </div>
 
@@ -404,7 +404,7 @@ onUnmounted(() => {
             @click="toggleHistorial"
             class="flex items-center justify-between w-full mb-2 min-h-[44px]"
           >
-            <p class="sol-section-label" style="margin-bottom:0">Historial</p>
+            <p class="sol-section-label" style="margin-bottom:0"><i class="ti ti-history mr-1.5"/>Historial</p>
             <svg
               class="w-4 h-4 text-gray-400 transition-transform"
               :class="{ 'rotate-180': historialAbierto }"

@@ -315,9 +315,9 @@ const COMBUSTIBLE = {
            style="top:calc(56px + max(0.75rem,env(safe-area-inset-top)))">
         <button
           v-for="t in [
-            { key:'ruta',      label:'Ruta'      },
-            { key:'detalles',  label:'Detalles'  },
-            { key:'historial', label:'Historial' },
+            { key:'ruta',      label:'Ruta',      icon:'ti-map-pin'   },
+            { key:'detalles',  label:'Detalles',  icon:'ti-list'      },
+            { key:'historial', label:'Historial', icon:'ti-history'   },
           ]"
           :key="t.key"
           @click="cambiarTab(t.key)"
@@ -327,7 +327,7 @@ const COMBUSTIBLE = {
                      : 'text-gray-500 bg-gray-100 hover:bg-gray-200']"
           :style="tab === t.key ? 'background:var(--color-acento)' : ''"
         >
-          {{ t.label }}
+          <i :class="`ti ${t.icon} mr-1 text-xs`"/>{{ t.label }}
         </button>
       </div>
 
@@ -353,16 +353,16 @@ const COMBUSTIBLE = {
           <!-- Chips de información -->
           <div class="flex gap-2 px-4 py-3 flex-wrap">
             <span v-if="ruta.distancia_km"
-                  class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1">
-              🗺 {{ ruta.distancia_km }} km
+                  class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1.5">
+              <i class="ti ti-road text-gray-400 text-xs"/>{{ ruta.distancia_km }} km
             </span>
             <span v-if="ruta.duracion_min"
-                  class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1">
-              ⏱ {{ formatDuracion(ruta.duracion_min) }}
+                  class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1.5">
+              <i class="ti ti-clock text-gray-400 text-xs"/>{{ formatDuracion(ruta.duracion_min) }}
             </span>
             <span v-if="ruta.fecha_programada"
-                  class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1">
-              📅 {{ formatFechaRuta(ruta.fecha_programada) }}
+                  class="text-xs bg-white border border-gray-200 rounded-full px-3 py-1.5 text-gray-600 flex items-center gap-1.5">
+              <i class="ti ti-calendar text-gray-400 text-xs"/>{{ formatFechaRuta(ruta.fecha_programada) }}
               <span v-if="ruta.hora_programada" class="font-semibold text-indigo-600 ml-0.5">· {{ ruta.hora_programada }}</span>
             </span>
           </div>
@@ -449,7 +449,7 @@ const COMBUSTIBLE = {
             </div>
             <div v-if="ruta.hora_programada" class="flex justify-between">
               <span class="text-sm text-gray-500">Hora programada</span>
-              <span class="text-sm font-semibold text-indigo-600">🕐 {{ ruta.hora_programada }}</span>
+              <span class="text-sm font-semibold text-indigo-600 flex items-center gap-1"><i class="ti ti-clock-hour-4 text-xs"/>{{ ruta.hora_programada }}</span>
             </div>
             <div v-if="ruta.fecha_inicio" class="flex justify-between">
               <span class="text-sm text-gray-500">Inicio real</span>
@@ -492,25 +492,16 @@ const COMBUSTIBLE = {
           <div v-else class="bg-white rounded-2xl border border-gray-100 p-4">
             <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Historial</h3>
 
-            <div v-if="!eventos.length" class="text-center py-6 text-gray-400 text-sm">
-              No hay eventos aún.
+            <div v-if="!eventos.length" class="flex flex-col items-center gap-2 py-8 text-gray-400">
+              <i class="ti ti-notes text-3xl text-gray-200"/>
+              <p class="text-sm">No hay eventos aún.</p>
             </div>
 
             <div v-for="e in eventos" :key="e.id" class="flex gap-3 mb-4 last:mb-0">
               <!-- Icono -->
-              <div :class="['flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white',
+              <div :class="['flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white text-sm',
                 e.tipo === 'auto' ? 'bg-indigo-500' : 'bg-green-500']">
-                <!-- auto: engranaje -->
-                <svg v-if="e.tipo === 'auto'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
-                <!-- comentario: burbuja -->
-                <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-                </svg>
+                <i :class="e.tipo === 'auto' ? 'ti ti-settings' : 'ti ti-message-circle'"/>
               </div>
               <!-- Contenido -->
               <div class="flex-1 min-w-0">
@@ -524,7 +515,7 @@ const COMBUSTIBLE = {
 
           <!-- Input nuevo comentario -->
           <div class="bg-white rounded-2xl border border-gray-100 p-4">
-            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Agregar comentario</p>
+            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3"><i class="ti ti-message-plus mr-1"/>Agregar comentario</p>
             <div class="flex gap-2">
               <input v-model="nuevoComentario" type="text" placeholder="Escribe un comentario..."
                 class="flex-1 border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm bg-gray-50
@@ -535,7 +526,7 @@ const COMBUSTIBLE = {
                 class="px-4 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 min-h-[44px]"
                 style="background:var(--color-acento)">
                 <span v-if="enviandoComentario" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block"/>
-                <span v-else>Enviar</span>
+                <span v-else><i class="ti ti-send"/></span>
               </button>
             </div>
           </div>

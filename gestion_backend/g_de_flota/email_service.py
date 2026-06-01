@@ -502,6 +502,49 @@ def email_checklist_fallas(email, nombre_admin, empresa_nombre, conductor_nombre
     enviar_email(email, f'⚠ Fallas en checklist — {patente}', html)
 
 
+# ── Acceso inicial conductor (creado sin contraseña) ─────────────────────────
+
+def email_acceso_conductor(email, nombre, empresa_nombre, rut, clave_temporal):
+    """
+    Enviado al conductor recién creado cuando no se le asignó contraseña manual.
+    Le entrega sus credenciales de acceso a la app móvil.
+    """
+    html = _base_template(
+        f'Bienvenido/a a {empresa_nombre}',
+        f"""
+        <p style="color:#444;font-size:15px;">Hola <strong>{nombre}</strong>,</p>
+        <p style="color:#444;font-size:15px;">
+          Tu cuenta de conductor fue creada en <strong>{empresa_nombre}</strong>.
+          Estos son tus datos de acceso para la app móvil:
+        </p>
+        <div style="background:#F0F4FF;border-radius:8px;padding:20px;margin:16px 0;">
+          <table cellpadding="0" cellspacing="0" style="width:100%;">
+            <tr>
+              <td style="color:#666;font-size:13px;padding:4px 0;width:110px;">RUT:</td>
+              <td style="color:#222;font-size:14px;font-weight:600;">{rut}</td>
+            </tr>
+            <tr>
+              <td style="color:#666;font-size:13px;padding:4px 0;">Contraseña:</td>
+              <td>
+                <span style="font-family:monospace,Courier New,monospace;font-size:20px;font-weight:700;color:#534AB7;background:#E8EEFF;padding:4px 12px;border-radius:6px;display:inline-block;">{clave_temporal}</span>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:12px 0 0;color:#888;font-size:12px;">⚠ Cópiala tal como aparece, sin espacios</p>
+        </div>
+        <p style="color:#666;font-size:13px;">
+          Por seguridad, te recomendamos cambiar la contraseña desde la sección
+          <strong>Ajustes</strong> de la app una vez que ingreses.
+        </p>
+        <p style="color:#888;font-size:12px;margin-top:16px;">
+          Si no esperabas este correo, contáctate con el administrador de tu empresa.
+        </p>
+        """,
+        empresa_nombre,
+    )
+    enviar_email(email, f'Tu acceso a FlotaSystem — {empresa_nombre}', html)
+
+
 # ── Seguridad — Reset de contraseña ──────────────────────────────────────────
 
 def email_reset_password(email, nombre, empresa_nombre, clave_temporal, url_login):

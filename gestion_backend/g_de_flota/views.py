@@ -760,10 +760,11 @@ def login_view(request):
             "primer_login":      user.primer_login,
             "empresa":           user.empresa.nombre if user.empresa else None,
             "empresa_id":        user.empresa_id,
-            "vehiculo_asignado": vehiculo_asignado,
-            "plan_modulos":      plan_modulos,
-            "plan_nombre":       plan_nombre,
-            "plan_permisos":     plan_permisos,
+            "vehiculo_asignado":  vehiculo_asignado,
+            "plan_modulos":       plan_modulos,
+            "plan_nombre":        plan_nombre,
+            "plan_permisos":      plan_permisos,
+            "requiere_licencia":  bool((user.extra or {}).get('requiere_licencia')),
         },
     })
 
@@ -980,7 +981,9 @@ def empresas_detalle(request, pk):
 def usuarios_lista(request):
     if es_superadmin(request.user):
         # Para el Superadmin, listamos solo los usuarios administradores de empresas (excluimos superadmins y conductores)
-        qs = Usuario.objects.filter(rol=Rol.USUARIO).select_related('empresa')
+        qs = Usuario.objects.filter(
+            rol=Rol.USUARIO, empresa__isnull=False
+        ).select_related('empresa')
     elif tiene_permiso(request.user, 'usuarios.ver'):
         if not request.user.empresa_id:
             return Response([])

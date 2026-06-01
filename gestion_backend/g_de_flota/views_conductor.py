@@ -1011,6 +1011,187 @@ def conductor_completar_mantencion(request, mantencion_id):
 
 
 # ─────────────────────────────────────────
+# PATCH /api/conductor/perfil/
+# ─────────────────────────────────────────
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def conductor_actualizar_perfil(request):
+    """
+    El conductor actualiza sus propios datos personales desde la app móvil.
+    Campos permitidos: telefono, licencia, nombre.
+    Notifica a los admins de la empresa cuando hay cambios.
+    """
+    import re
+    user = request.user
+    if user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    data             = request.data
+    campos_cambiados = []
+    errores          = {}
+
+    if 'telefono' in data:
+        tel = re.sub(r'[\s\-\(\)]', '', str(data['telefono'] or ''))
+        if not re.match(r'^(\+56)?9\d{8}$', tel):
+            errores['telefono'] = 'Formato inválido. Use +569XXXXXXXX o 9XXXXXXXX.'
+        else:
+            user.set_telefono(tel)
+            campos_cambiados.append('teléfono')
+
+    if 'licencia' in data:
+        lic = str(data['licencia'] or '').strip().upper()
+        if not lic:
+            errores['licencia'] = 'El número de licencia no puede estar vacío.'
+        elif not re.match(r'^[A-Z]{1,3}[-\s]?\d{4,9}$', lic):
+            errores['licencia'] = 'Formato inválido. Ej: A-123456 o B1234567.'
+        else:
+            user.set_licencia(lic)
+            if (user.extra or {}).get('requiere_licencia'):
+                user.extra['requiere_licencia'] = False
+            campos_cambiados.append('N° de licencia')
+
+    if 'nombre' in data:
+        nom = str(data['nombre'] or '').strip()
+        if len(nom) < 2:
+            errores['nombre'] = 'El nombre debe tener al menos 2 caracteres.'
+        else:
+            user.nombre_cifrado = nom
+            campos_cambiados.append('nombre')
+
+    # Completar onboarding → marca primer_login=False
+    if data.get('completar_onboarding') and not errores:
+        user.primer_login = False
+        campos_cambiados.append('_onboarding')
+
+    if errores:
+        return Response({'errores': errores}, status=400)
+
+    if not campos_cambiados:
+        return Response({'ok': True, 'mensaje': 'Sin cambios.'})
+
+    user.save()
+
+    # Notificar a los admins de la empresa (excluir flag interno de onboarding)
+    campos_visibles = [c for c in campos_cambiados if c != '_onboarding']
+    if user.empresa_id and campos_visibles:
+        from .notificaciones import notificar_admins_empresa
+        from .models import TipoNotificacion
+        detalle_txt = ', '.join(campos_visibles)
+        notificar_admins_empresa(
+            empresa    = user.empresa,
+            tipo       = TipoNotificacion.ACTIVIDAD,
+            titulo     = f'Conductor actualizó su perfil',
+            mensaje    = f'{user.nombre or user.email} actualizó su información: {detalle_txt}.',
+            url_accion = f'/empresa/conductores',
+        )
+
+    return Response({
+        'ok':               True,
+        'nombre':           user.nombre or user.email,
+        'requiere_licencia': bool((user.extra or {}).get('requiere_licencia')),
+        'primer_login':     user.primer_login,
+    })
+
+
+# POST /api/conductor/recuperar-password/  (público — sin JWT)
+# ─────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([])
+def conductor_recuperar_password(request):
+    """
+    Genera una contraseña temporal y la envía por email al conductor.
+    Endpoint público — responde siempre con 200 para no filtrar si el RUT existe.
+    Body: { "rut": "12345678-9" }
+    """
+    import secrets
+    import hashlib
+    from .models import normalizar_rut
+
+    rut_raw = str(request.data.get('rut', '')).strip()
+    if not rut_raw:
+        return Response({'ok': True})  # respuesta genérica siempre
+
+    rut_norm = normalizar_rut(rut_raw)
+    rut_hash = hashlib.sha256(rut_norm.encode()).hexdigest()
+
+    conductor = Usuario.objects.filter(rut_hash=rut_hash, rol=Rol.CONDUCTOR, is_active=True).first()
+    if not conductor:
+        return Response({'ok': True})  # no filtrar existencia
+
+    clave_temp = secrets.token_urlsafe(10)
+    conductor.set_password(clave_temp)
+    conductor.intentos_fallidos = 0
+    conductor.is_blocked        = False
+    conductor.save(update_fields=['password', 'intentos_fallidos', 'is_blocked'])
+
+    try:
+        from .email_service import email_reset_password
+        email_reset_password(
+            email          = conductor.email,
+            nombre         = conductor.nombre or conductor.email,
+            empresa_nombre = conductor.empresa.nombre if conductor.empresa else 'FlotaSystem',
+            clave_temporal = clave_temp,
+            url_login      = '',
+        )
+    except Exception:
+        pass  # fail-silent
+
+    registrar_log('SEGURIDAD', 'recuperar_password_conductor', request, usuario=conductor,
+                  detalle={'rut_hash': rut_hash[:8] + '...'})
+
+    return Response({'ok': True})
+
+
+# PATCH /api/conductor/cambiar-password/
+# ─────────────────────────────────────────
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def conductor_cambiar_password(request):
+    """
+    El conductor cambia su propia contraseña.
+    Body: { "password_actual": "...", "password_nuevo": "...", "confirmar": "..." }
+    """
+    user = request.user
+    if user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    data       = request.data
+    actual     = str(data.get('password_actual', ''))
+    nuevo      = str(data.get('password_nuevo', ''))
+    confirmar  = str(data.get('confirmar', ''))
+
+    errores = {}
+
+    if not user.check_password(actual):
+        errores['password_actual'] = 'La contraseña actual es incorrecta.'
+
+    if len(nuevo) < 8:
+        errores['password_nuevo'] = 'Debe tener al menos 8 caracteres.'
+    elif not any(c.isupper() for c in nuevo):
+        errores['password_nuevo'] = 'Debe incluir al menos una letra mayúscula.'
+    elif not any(c.isdigit() for c in nuevo):
+        errores['password_nuevo'] = 'Debe incluir al menos un número.'
+    elif nuevo == actual:
+        errores['password_nuevo'] = 'La nueva contraseña debe ser diferente a la actual.'
+
+    if not errores and nuevo != confirmar:
+        errores['confirmar'] = 'Las contraseñas no coinciden.'
+
+    if errores:
+        return Response({'errores': errores}, status=400)
+
+    user.set_password(nuevo)
+    user.save(update_fields=['password'])
+
+    registrar_log('SEGURIDAD', 'password_cambiado', request,
+                  detalle={'conductor_id': user.id})
+
+    return Response({'ok': True})
+
+
 # POST /api/conductor/push-token/
 # ─────────────────────────────────────────
 

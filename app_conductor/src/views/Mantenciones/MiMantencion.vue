@@ -152,6 +152,7 @@ onMounted(() => store.cargarMantenciones())
         class="fixed top-safe-toast left-4 right-4 z-[200] flex items-center gap-3
                bg-gray-900 text-white rounded-2xl px-4 py-3 shadow-lg"
       >
+        <i class="ti ti-circle-check text-green-400 text-lg shrink-0"/>
         <p class="text-sm font-semibold">{{ toastMsg }}</p>
       </div>
     </Transition>
@@ -188,7 +189,7 @@ onMounted(() => store.cargarMantenciones())
       v-if="store.vehiculoEnMantencion"
       class="mx-4 mt-4 flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl p-4"
     >
-      <span class="text-2xl">🔴</span>
+      <i class="ti ti-engine-off text-red-500 text-2xl shrink-0"/>
       <div>
         <p class="text-sm font-bold text-red-700">Vehículo fuera de servicio</p>
         <p class="text-xs text-red-500 mt-0.5">
@@ -233,7 +234,7 @@ onMounted(() => store.cargarMantenciones())
             <!-- Tipo + badge estado -->
             <div class="flex items-start justify-between gap-2">
               <div class="flex items-center gap-2">
-                <span class="text-xl">{{ m.estado === 'en_proceso' ? '🔩' : '🔧' }}</span>
+                <i :class="['text-lg', m.estado === 'en_proceso' ? 'ti ti-settings text-amber-500' : 'ti ti-tool text-gray-500']"/>
                 <p class="text-sm font-bold text-gray-800 leading-tight">{{ m.tipo }}</p>
               </div>
               <span
@@ -272,9 +273,7 @@ onMounted(() => store.cargarMantenciones())
             <div v-if="m.urgente && m.dias_restantes !== null && m.dias_restantes >= 0"
               class="flex items-center gap-1.5 bg-orange-50 rounded-xl px-3 py-2"
             >
-              <svg class="w-4 h-4 text-orange-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-              </svg>
+              <i class="ti ti-alert-triangle text-orange-500 shrink-0"/>
               <p class="text-xs text-orange-600 font-medium">
                 Mantención próxima — coordina con tu administrador
               </p>
@@ -282,9 +281,7 @@ onMounted(() => store.cargarMantenciones())
             <div v-else-if="m.dias_restantes !== null && m.dias_restantes < 0"
               class="flex items-center gap-1.5 bg-red-50 rounded-xl px-3 py-2"
             >
-              <svg class="w-4 h-4 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
+              <i class="ti ti-circle-x text-red-500 shrink-0"/>
               <p class="text-xs text-red-600 font-medium">
                 Esta mantención está vencida — contacta a tu administrador
               </p>
@@ -295,9 +292,7 @@ onMounted(() => store.cargarMantenciones())
               <span class="text-xs font-semibold" :style="`color: ${colorAccion(m.estado)}`">
                 {{ labelAccion(m.estado) }}
               </span>
-              <svg class="w-4 h-4" :style="`color: ${colorAccion(m.estado)}`" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-              </svg>
+              <i class="ti ti-chevron-right text-sm" :style="`color: ${colorAccion(m.estado)}`"/>
             </div>
           </article>
         </div>
@@ -313,19 +308,14 @@ onMounted(() => store.cargarMantenciones())
       >
         <div class="flex items-center gap-3">
           <span class="historial-icon">
-            <svg class="w-5 h-5" style="color: var(--color-acento)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
-            </svg>
+            <i class="ti ti-clipboard-list text-xl" style="color: var(--color-acento)"/>
           </span>
           <div class="text-left">
             <p class="text-sm font-semibold text-gray-800">Historial de mantenciones</p>
             <p class="text-xs text-gray-400 mt-0.5">Ver todas las realizadas en este vehículo</p>
           </div>
         </div>
-        <svg class="w-4 h-4 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
+        <i class="ti ti-chevron-right text-gray-300 shrink-0"/>
       </button>
     </div>
 

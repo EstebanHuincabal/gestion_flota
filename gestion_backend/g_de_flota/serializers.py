@@ -569,7 +569,7 @@ class ConductorCrearSerializer(serializers.Serializer):
     apellido_materno = serializers.CharField()
     rut             = serializers.CharField()
     email           = serializers.EmailField()
-    password        = serializers.CharField(write_only=True)
+    password        = serializers.CharField(write_only=True, required=False, allow_blank=True, default='')
     telefono        = serializers.CharField()
     licencia        = serializers.CharField(required=False, allow_blank=True)
 
@@ -656,10 +656,21 @@ class ConductorCrearSerializer(serializers.Serializer):
         return data
 
     def create(self, validated_data):
+        import secrets
+        from .email_service import email_acceso_conductor
+
         empresa  = self.context['empresa']
         telefono = validated_data.pop('telefono', None)
         licencia = validated_data.pop('licencia', None)
-        password = validated_data.pop('password')
+        password_raw = validated_data.pop('password', '').strip()
+
+        # Si no se proporcionó contraseña, generar una segura y enviarla por correo
+        clave_generada = None
+        if not password_raw:
+            clave_generada = secrets.token_urlsafe(10)
+            password_raw   = clave_generada
+
+        password   = password_raw
         nombre     = validated_data['nombre']
         ap_paterno = validated_data['apellido_paterno']
         ap_materno = validated_data['apellido_materno']
@@ -688,7 +699,22 @@ class ConductorCrearSerializer(serializers.Serializer):
             user.set_telefono(telefono)
         if licencia:
             user.set_licencia(licencia)
+        else:
+            user.extra['requiere_licencia'] = True
         user.save()
+
+        # Enviar credenciales por correo si la contraseña fue generada
+        if clave_generada:
+            try:
+                email_acceso_conductor(
+                    email          = validated_data['email'],
+                    nombre         = nombre,
+                    empresa_nombre = empresa.nombre,
+                    rut            = validated_data['rut'],
+                    clave_temporal = clave_generada,
+                )
+            except Exception:
+                pass  # fail-silent — el conductor puede pedir reset luego
 
         # Lógica de asignación
         final_vehiculo_id = None

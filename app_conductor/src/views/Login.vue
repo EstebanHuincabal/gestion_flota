@@ -118,6 +118,41 @@ function onRutNext() {
   inputPassword.value?.focus()
 }
 
+// ── Recuperar contraseña ─────────────────────────────────────────────────────
+const recuperandoPassword   = ref(false)
+const recuperarRut          = ref('')
+const recuperarEstado       = ref('')   // '' | 'enviando' | 'ok' | 'error'
+const recuperarError        = ref('')
+
+function abrirRecuperar() {
+  recuperarRut.value    = ''
+  recuperarEstado.value = ''
+  recuperarError.value  = ''
+  recuperandoPassword.value = true
+}
+
+async function enviarRecuperar() {
+  recuperarError.value = ''
+  const rut = normalizarRut(recuperarRut.value)
+  if (!_validarRutCentral(recuperarRut.value).valido) {
+    recuperarError.value = 'Ingresa un RUT válido.'
+    return
+  }
+  recuperarEstado.value = 'enviando'
+  try {
+    const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    await fetch(`${BASE_URL}/api/conductor/recuperar-password/`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rut }),
+    })
+    recuperarEstado.value = 'ok'
+  } catch {
+    recuperarEstado.value = 'error'
+    recuperarError.value  = 'Sin conexión. Verifica tu red e intenta de nuevo.'
+  }
+}
+
 // ── Verificar sesión al montar ────────────────────────────────────────────────
 // El guard del router ya maneja el redirect si hay sesión activa.
 // Este bloque es un fallback de seguridad por si el guard falló silenciosamente.
@@ -326,8 +361,80 @@ onMounted(async () => {
           {{ auth.cargando ? 'Ingresando...' : 'Ingresar' }}
         </button>
 
+        <!-- Recuperar contraseña -->
+        <button type="button" @click="abrirRecuperar"
+          class="w-full text-center text-xs text-gray-400 py-1 active:text-gray-600 transition-colors">
+          ¿Olvidaste tu contraseña?
+        </button>
+
       </form>
     </div>
+
+    <!-- ── Sheet: recuperar contraseña ────────────────────────────────────── -->
+    <Transition name="sheet">
+      <div v-if="recuperandoPassword" class="fixed inset-0 z-50 flex flex-col justify-end"
+           style="padding-top: env(safe-area-inset-top)">
+        <div class="absolute inset-0 bg-black/50" @click="recuperandoPassword = false"/>
+        <div class="relative bg-white rounded-t-3xl px-6 pt-6 pb-10"
+             style="padding-bottom: calc(2.5rem + env(safe-area-inset-bottom))">
+
+          <!-- Asa -->
+          <div class="flex justify-center mb-5">
+            <div class="w-10 h-1 rounded-full bg-gray-300"/>
+          </div>
+
+          <!-- Estado: enviado OK -->
+          <div v-if="recuperarEstado === 'ok'" class="flex flex-col items-center gap-4 py-4 text-center">
+            <div class="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center">
+              <i class="ti ti-mail-check text-2xl text-green-600"/>
+            </div>
+            <div>
+              <p class="font-bold text-gray-800 mb-1">Correo enviado</p>
+              <p class="text-sm text-gray-500">
+                Si el RUT está registrado, recibirás una contraseña temporal en tu correo electrónico.
+              </p>
+            </div>
+            <button @click="recuperandoPassword = false"
+              class="w-full py-3.5 rounded-xl text-white font-semibold text-sm"
+              style="background: var(--color-acento)">
+              Volver al inicio
+            </button>
+          </div>
+
+          <!-- Estado: formulario -->
+          <div v-else>
+            <h2 class="text-lg font-bold text-gray-800 mb-1">Recuperar contraseña</h2>
+            <p class="text-sm text-gray-500 mb-5">
+              Ingresa tu RUT y te enviaremos una contraseña temporal al correo registrado.
+            </p>
+
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5">RUT</label>
+            <input
+              :value="recuperarRut"
+              @input="e => { recuperarRut = formatearRut(e.target.value); e.target.value = recuperarRut; recuperarError = '' }"
+              type="text" inputmode="numeric" placeholder="12.345.678-9"
+              autocomplete="off"
+              :class="[
+                'w-full px-4 py-3.5 rounded-xl text-sm border-2 transition mb-1',
+                recuperarError ? 'border-red-400 bg-red-50' : 'border-gray-100 bg-gray-50 focus:border-[--color-acento] focus:bg-white'
+              ]"
+              @keyup.enter="enviarRecuperar"
+            />
+            <p v-if="recuperarError" class="text-xs text-red-500 mb-3">{{ recuperarError }}</p>
+
+            <button @click="enviarRecuperar" :disabled="recuperarEstado === 'enviando'"
+              class="w-full py-3.5 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 mt-3 disabled:opacity-60"
+              style="background: var(--color-acento)">
+              <span v-if="recuperarEstado === 'enviando'"
+                class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+              <span v-else><i class="ti ti-send mr-1"/>Enviar contraseña temporal</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </Transition>
+
   </div>
 </template>
 
@@ -340,5 +447,21 @@ onMounted(async () => {
 .error-slide-leave-to {
   opacity: 0;
   transform: translateY(-6px);
+}
+.sheet-enter-active,
+.sheet-leave-active {
+  transition: opacity 0.25s ease;
+}
+.sheet-enter-active > div:last-child,
+.sheet-leave-active > div:last-child {
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sheet-enter-from,
+.sheet-leave-to {
+  opacity: 0;
+}
+.sheet-enter-from > div:last-child,
+.sheet-leave-to > div:last-child {
+  transform: translateY(100%);
 }
 </style>

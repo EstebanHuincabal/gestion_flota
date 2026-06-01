@@ -119,6 +119,11 @@ router.beforeEach(async (to) => {
   // Sin sesión → redirigir al login
   if (to.meta.requiereAuth && !auth.estaAutenticado) return { name: 'login' }
 
+  // Conductor con primer_login → forzar onboarding; no puede ir a ninguna otra ruta
+  if (auth.estaAutenticado && auth.usuario?.primer_login && to.name !== 'onboarding') {
+    return { name: 'onboarding' }
+  }
+
   // Leer módulos una sola vez si la ruta es pública con sesión o requiere módulo
   const necesitaModulos = (to.meta.publica && auth.estaAutenticado) || !!to.meta.modulo
   if (necesitaModulos) {

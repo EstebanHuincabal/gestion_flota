@@ -69,6 +69,9 @@ from g_de_flota.views_conductor import (
     conductor_checklist,
     conductor_mi_plan,
     conductor_eventos_ruta, conductor_agregar_comentario,
+    conductor_actualizar_perfil,
+    conductor_recuperar_password,
+    conductor_cambiar_password,
 )
 from g_de_flota.views_solicitudes import (
     SolicitudesListView, SolicitudesConteoView,
@@ -191,6 +194,9 @@ urlpatterns = [
     path('api/conductor/push-token/',                                 conductor_push_token,            name='conductor-push-token'),
     path('api/conductor/checklist/<int:ruta_id>/',                    conductor_checklist,              name='conductor-checklist'),
     path('api/conductor/mi-plan/',                                    conductor_mi_plan,               name='conductor-mi-plan'),
+    path('api/conductor/perfil/',                                     conductor_actualizar_perfil,      name='conductor-perfil'),
+    path('api/conductor/recuperar-password/',                         conductor_recuperar_password,      name='conductor-recuperar-password'),
+    path('api/conductor/cambiar-password/',                           conductor_cambiar_password,        name='conductor-cambiar-password'),
 
     # Panel web — gestión de solicitudes de conductores (USUARIO/ADMIN)
     path('api/empresa/solicitudes/',                              SolicitudesListView.as_view(),    name='solicitudes-lista'),

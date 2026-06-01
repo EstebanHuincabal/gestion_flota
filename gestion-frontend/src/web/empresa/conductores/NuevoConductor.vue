@@ -62,8 +62,10 @@ onMounted(async () => {
   }
 })
 
+const generarPassword  = ref(true)   // true = dejar vacío y mandar por correo
+
 const nivelPassword = computed(() => {
-  if (!form.value.password) return null
+  if (generarPassword.value || !form.value.password) return null
   const r = validarPassword(form.value.password)
   return r.nivel || null
 })
@@ -117,11 +119,15 @@ const guardar = async () => {
   const apMatR = validarNombre(form.value.apellido_materno, 2, 30)
   if (!apMatR.valido) { errores.value = { apellido_materno: [apMatR.error] }; return }
 
-  // Validar contraseña
-  const pwdResult = validarPassword(form.value.password)
-  if (!pwdResult.valido) {
-    errores.value = { password: [pwdResult.error] }
-    return
+  // Validar contraseña solo si el admin la ingresó manualmente
+  if (!generarPassword.value) {
+    const pwdResult = validarPassword(form.value.password)
+    if (!pwdResult.valido) {
+      errores.value = { password: [pwdResult.error] }
+      return
+    }
+  } else {
+    form.value.password = ''   // vacío → backend genera y envía por correo
   }
 
   // Validar teléfono (obligatorio)
@@ -248,11 +254,26 @@ const guardar = async () => {
             </div>
             <div class="form-group">
               <label class="label">Contraseña</label>
-              <input v-model="form.password" type="password" class="input"
-                :class="{ 'input-error': errores.password }"
-                placeholder="Mín. 8 chars, 1 mayúscula, 1 número" required autocomplete="new-password"/>
-              <p v-if="errores.password" class="field-error">{{ errores.password[0] }}</p>
-              <div v-if="form.password && nivelPassword" class="pwd-strength">
+
+              <!-- Toggle: generar automáticamente vs ingresar manualmente -->
+              <label class="flex items-center gap-2 mb-2 cursor-pointer select-none">
+                <input type="checkbox" v-model="generarPassword" class="rounded"/>
+                <span class="text-sm text-gray-600">
+                  Generar y enviar por correo al conductor
+                </span>
+              </label>
+
+              <div v-if="!generarPassword">
+                <input v-model="form.password" type="password" class="input"
+                  :class="{ 'input-error': errores.password }"
+                  placeholder="Mín. 8 chars, 1 mayúscula, 1 número" autocomplete="new-password"/>
+                <p v-if="errores.password" class="field-error">{{ errores.password[0] }}</p>
+              </div>
+              <p v-else class="text-xs text-indigo-600 bg-indigo-50 rounded-lg px-3 py-2">
+                Se generará una contraseña segura y se enviará al email del conductor al crear la cuenta.
+              </p>
+
+              <div v-if="!generarPassword && form.password && nivelPassword" class="pwd-strength">
                 <div class="pwd-strength-bar">
                   <div class="pwd-strength-fill" :class="`pwd-strength-${nivelPassword}`"/>
                 </div>

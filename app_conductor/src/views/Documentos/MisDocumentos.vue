@@ -171,12 +171,59 @@ async function enviarDocumento() {
 }
 
 // ── Ver documento (preview in-app) ──────────────────────────────────────────
-const esNativo        = Capacitor.isNativePlatform()
-const previsualizando = ref(null)
-const previewAbierto  = ref(false)
-const previewUrl      = ref(null)
-const previewMime     = ref('')
-const previewEsPdf    = ref(false)
+const esNativo         = Capacitor.isNativePlatform()
+const previsualizando  = ref(null)
+const previewAbierto   = ref(false)
+const previewUrl       = ref(null)
+const previewMime      = ref('')
+const previewEsPdf     = ref(false)
+const previewUriNativo = ref(null)
+
+// ── PDF.js ───────────────────────────────────────────────────────────────────
+const pdfCargando  = ref(false)
+const pdfImagenes  = ref([])   // data URLs de cada página renderizada
+const pdfError     = ref(false)
+
+async function _cargarPdfJs() {
+  if (window._pdfjsLib) return window._pdfjsLib
+  return new Promise((resolve, reject) => {
+    const script    = document.createElement('script')
+    script.src      = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+    script.onload   = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+      window._pdfjsLib = window.pdfjsLib
+      resolve(window._pdfjsLib)
+    }
+    script.onerror  = reject
+    document.head.appendChild(script)
+  })
+}
+
+async function renderizarPdf(url) {
+  pdfCargando.value = true
+  pdfImagenes.value = []
+  pdfError.value    = false
+  try {
+    const pdfjs = await _cargarPdfJs()
+    const pdf   = await pdfjs.getDocument(url).promise
+    const imgs  = []
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page     = await pdf.getPage(i)
+      const viewport = page.getViewport({ scale: 2 })   // 2× para pantallas retina
+      const canvas   = document.createElement('canvas')
+      canvas.width   = viewport.width
+      canvas.height  = viewport.height
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+      imgs.push(canvas.toDataURL('image/jpeg', 0.92))
+    }
+    pdfImagenes.value = imgs
+  } catch {
+    pdfError.value = true
+  } finally {
+    pdfCargando.value = false
+  }
+}
 
 const EXT_IMAGEN = new Set(['jpg','jpeg','png','gif','webp','bmp'])
 
@@ -224,11 +271,14 @@ async function verDocumento(docId, nombreArchivo = '') {
       const path = `doc_preview_${docId}.${ext}`
       await Filesystem.writeFile({ path, data: await _blobToBase64(blob), directory: Directory.Cache })
       const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache })
+      previewUriNativo.value = uri           // guarda el URI nativo para "Abrir con"
       previewUrl.value = Capacitor.convertFileSrc(uri)
     } else {
+      previewUriNativo.value = null
       previewUrl.value = URL.createObjectURL(blob)
     }
     previewAbierto.value = true
+    if (previewEsPdf.value) renderizarPdf(previewUrl.value)
   } catch {
     mostrarToast('No se pudo abrir el documento', 'error')
   } finally {
@@ -237,11 +287,20 @@ async function verDocumento(docId, nombreArchivo = '') {
 }
 
 function cerrarPreview() {
-  previewAbierto.value = false
-  previewEsPdf.value   = false
+  previewAbierto.value   = false
+  previewEsPdf.value     = false
+  previewUriNativo.value = null
+  pdfImagenes.value      = []
+  pdfError.value         = false
   if (previewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value  = null
   previewMime.value = ''
+}
+
+function abrirConAppExterna() {
+  if (previewUriNativo.value) {
+    window.open(previewUriNativo.value, '_system')
+  }
 }
 
 onMounted(() => store.cargarDocumentos())
@@ -467,13 +526,27 @@ onMounted(() => store.cargarDocumentos())
         </div>
       </section>
 
+      <!-- Sin conexión — mostrando caché -->
+      <div v-if="store.desdeCache"
+        class="bg-amber-50 rounded-2xl border border-amber-100 p-3 flex items-center gap-3">
+        <i class="ti ti-wifi-off text-amber-400 text-lg shrink-0"/>
+        <div class="flex-1">
+          <p class="text-xs font-semibold text-amber-700">Sin conexión — datos guardados</p>
+          <p class="text-xs text-amber-500">Conéctate para ver el estado actual.</p>
+        </div>
+        <button @click="store.cargarDocumentos()"
+          class="text-xs text-amber-700 font-semibold underline min-h-[44px] px-2 shrink-0">
+          Reintentar
+        </button>
+      </div>
+
       <!-- Error de carga -->
       <div v-if="store.error && !store.documentos.length"
         class="bg-red-50 rounded-2xl border border-red-100 p-4 flex items-center gap-3">
         <i class="ti ti-alert-circle text-red-400 text-xl shrink-0"/>
         <div class="flex-1">
-          <p class="text-sm font-semibold text-red-700">Error al cargar</p>
-          <p class="text-xs text-red-500">{{ store.error }}</p>
+          <p class="text-sm font-semibold text-red-700">Sin conexión</p>
+          <p class="text-xs text-red-500">No se pudo conectar al servidor. Verifica que el teléfono está en la misma red Wi-Fi.</p>
         </div>
         <button @click="store.cargarDocumentos()"
           class="text-xs text-red-600 font-semibold underline min-h-[44px] px-2 shrink-0">
@@ -633,30 +706,60 @@ onMounted(() => store.cargarDocumentos())
           <span class="flex-1 text-white text-sm font-semibold">Vista previa</span>
         </div>
         <!-- Contenido -->
-        <div class="flex-1 overflow-hidden bg-gray-950 flex items-center justify-center">
+        <div class="flex-1 overflow-auto bg-gray-950"
+             :class="previewMime.startsWith('image/') ? 'flex items-center justify-center' : ''">
+
           <!-- Imagen -->
           <img v-if="previewMime.startsWith('image/')"
                :src="previewUrl"
                class="max-w-full max-h-full object-contain"
                alt="Documento"/>
-          <!-- PDF en Android: WebView no tiene visor nativo de PDFs -->
-          <div v-else-if="previewEsPdf && esNativo"
-               class="flex flex-col items-center justify-center gap-4 px-8 py-12 text-center">
-            <div class="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center">
-              <i class="ti ti-file-text text-3xl text-white/60"/>
+
+          <!-- PDF — renderizado con PDF.js (funciona en Android y web) -->
+          <div v-else-if="previewEsPdf">
+
+            <!-- Cargando -->
+            <div v-if="pdfCargando"
+                 class="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <span class="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"/>
+              <p class="text-white/50 text-xs">Cargando PDF…</p>
             </div>
-            <div>
-              <p class="text-white text-sm font-semibold mb-1">No se puede previsualizar el PDF</p>
-              <p class="text-white/50 text-xs leading-relaxed">
-                Android no incluye un visor de PDF integrado.<br>
-                Descarga el archivo con otra aplicación para abrirlo.
-              </p>
+
+            <!-- Páginas renderizadas -->
+            <div v-else-if="pdfImagenes.length"
+                 class="flex flex-col gap-1 p-2">
+              <img v-for="(img, i) in pdfImagenes"
+                   :key="i"
+                   :src="img"
+                   class="w-full rounded shadow-md"
+                   :alt="`Página ${i + 1}`"/>
             </div>
+
+            <!-- Error de renderizado → fallback "Abrir con" -->
+            <div v-else
+                 class="flex flex-col items-center justify-center gap-4 px-8 py-16 text-center">
+              <div class="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center">
+                <i class="ti ti-file-text text-3xl text-white/60"/>
+              </div>
+              <div>
+                <p class="text-white text-sm font-semibold mb-1">No se pudo renderizar el PDF</p>
+                <p class="text-white/50 text-xs">Verifica tu conexión e intenta de nuevo.</p>
+              </div>
+              <button v-if="previewUriNativo"
+                @click="abrirConAppExterna"
+                class="px-5 py-2.5 rounded-xl bg-white/15 text-white text-sm font-semibold flex items-center gap-2">
+                <i class="ti ti-external-link"/>
+                Abrir con otra app
+              </button>
+              <button @click="renderizarPdf(previewUrl)"
+                class="px-5 py-2.5 rounded-xl bg-white/10 text-white/70 text-sm flex items-center gap-2">
+                <i class="ti ti-refresh"/>
+                Reintentar
+              </button>
+            </div>
+
           </div>
-          <!-- PDF en web / iframe -->
-          <iframe v-else
-                  :src="previewUrl"
-                  class="w-full h-full border-0"/>
+
         </div>
       </div>
     </Transition>

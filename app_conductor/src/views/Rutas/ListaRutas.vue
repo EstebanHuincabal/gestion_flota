@@ -70,14 +70,12 @@ onMounted(async () => {
       class="alert-banner alert-banner--red mx-4 mt-3"
       @click="router.push('/mantencion')"
     >
-      <span class="alert-icon">🔴</span>
+      <i class="ti ti-engine-off text-red-500 text-xl shrink-0"/>
       <div class="flex-1 min-w-0">
         <p class="alert-title">Vehículo fuera de servicio</p>
         <p class="alert-body">Tu vehículo está detenido por una mantención activa</p>
       </div>
-      <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-      </svg>
+      <i class="ti ti-chevron-right text-sm opacity-50 shrink-0"/>
     </div>
 
     <!-- ── Banner: mantención próxima (≤ 3 días) sin bloqueo ────────────────── -->
@@ -86,14 +84,12 @@ onMounted(async () => {
       class="alert-banner alert-banner--amber mx-4 mt-3"
       @click="router.push('/mantencion')"
     >
-      <span class="alert-icon">⚠️</span>
+      <i class="ti ti-alert-triangle text-amber-500 text-xl shrink-0"/>
       <div class="flex-1 min-w-0">
         <p class="alert-title">Mantención próxima</p>
         <p class="alert-body">Tienes una mantención programada en los próximos días</p>
       </div>
-      <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-      </svg>
+      <i class="ti ti-chevron-right text-sm opacity-50 shrink-0"/>
     </div>
 
     <!-- ── Header con gradiente ──────────────────────────────────────────── -->
@@ -187,7 +183,7 @@ onMounted(async () => {
 
         <!-- ── Ruta activa ───────────────────────────────────────────────── -->
         <section v-if="rutasStore.rutaActiva">
-          <p class="section-title">En curso</p>
+          <p class="section-title"><i class="ti ti-route mr-1.5"/>En curso</p>
           <RutaCard
             :ruta="rutasStore.rutaActiva"
             variante="activa"
@@ -198,7 +194,7 @@ onMounted(async () => {
         <!-- ── Próximas rutas ────────────────────────────────────────────── -->
         <section>
           <div class="flex items-center justify-between mb-2">
-            <p class="section-title" style="margin-bottom:0">Próximas rutas</p>
+            <p class="section-title" style="margin-bottom:0"><i class="ti ti-calendar-event mr-1.5"/>Próximas rutas</p>
             <span v-if="rutasStore.rutasPendientes.length"
               class="text-[11px] font-bold text-[var(--color-acento)] bg-[var(--color-acento-suave)] rounded-full px-2.5 py-0.5"
             >{{ rutasStore.rutasPendientes.length }}</span>
@@ -235,7 +231,7 @@ onMounted(async () => {
             @click="historialAbierto = !historialAbierto"
             class="flex items-center justify-between w-full mb-2 min-h-[44px]"
           >
-            <p class="section-title" style="margin-bottom:0">Historial</p>
+            <p class="section-title" style="margin-bottom:0"><i class="ti ti-history mr-1.5"/>Historial</p>
             <svg
               class="w-4 h-4 text-gray-400 transition-transform duration-200"
               :class="{ 'rotate-180': historialAbierto }"

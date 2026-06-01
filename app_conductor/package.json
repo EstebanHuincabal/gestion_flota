@@ -26,6 +26,7 @@
     "@capacitor/push-notifications": "^8.1.1",
     "@capacitor/splash-screen": "^8.0.1",
     "@capacitor/status-bar": "^8.0.2",
+    "@tabler/icons-webfont": "^3.44.0",
     "@tailwindcss/vite": "^4.3.0",
     "axios": "^1.16.1",
     "leaflet": "^1.9.4",
