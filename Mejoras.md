@@ -1,700 +1,461 @@
-Vas a implementar el módulo de geolocalización en tiempo real para el panel web. Muestra la ubicación de todos los vehículos de la empresa en un mapa Leaflet con estado en tiempo real via WebSocket obteniendo la ubicacion del gps del telefono, agrega los permisos.
+Vas a implementar el módulo de Carta Gantt para el sistema de gestión de flota. Es una vista nueva en el panel web que visualiza rutas y mantenciones en una línea de tiempo interactiva, con indicadores de atraso y estado. Sin modelos nuevos — usa Ruta, Mantencion, Vehiculo, Conductor (Usuario) existentes.
 
 ---
 
 ## CONTEXTO DEL SISTEMA
 
-- El modelo Ubicacion ya existe: vehiculo FK, latitud, longitud, velocidad, combustible, timestamp
-- El modelo Ruta ya existe con polyline JSONField y estados (pendiente/activo/finalizado)
-- El modelo Vehiculo ya existe con patente, marca, modelo, activo
-- El modelo Asignacion ya existe: conductor FK, vehiculo FK, activo
-- Django Channels ya está configurado (WebSockets funcionando para notificaciones)
-- Leaflet ya se usa en MapaRuta.vue — mismo patrón de carga dinámica
-- apiFetch en src/utils/api.js — usar siempre
-- WebSocket de notificaciones en consumers.py ya existe — agregar nuevo consumer
+Modelos relevantes ya existentes:
+- Ruta: id, nombre, tipo, estado, conductor FK, vehiculo FK, fecha_programada, hora_programada, fecha_inicio, fecha_fin, distancia_km, duracion_min
+- Parada: ruta FK, tipo (origen/parada/destino), orden, nombre, latitud, longitud
+- EventoRuta: ruta FK, tipo (auto/comentario), texto, autor FK, created_at
+- Mantencion: vehiculo FK, tipo_mantencion, estado, fecha_programada, fecha_realizada, costo, descripcion, taller_proveedor
+- Vehiculo: patente, marca, modelo, activo, flota FK
+- Usuario (conductor): nombre_cifrado, rol='CONDUCTOR'
+
+Estados de Ruta: borrador | pendiente | activo | finalizado | cancelado
+Estados de Mantencion: pendiente | en_proceso | realizada | cancelada
 
 ---
 
-## PARTE 1 — BACKEND
+## ENDPOINT NUEVO (agregar en views_rutas.py)
 
-### Lógica de estado del vehículo
+### GET /api/empresa/gantt/
 
-Crear gestion_backend/g_de_flota/geo_helpers.py:
+Parámetros:
+- fecha_desde: YYYY-MM-DD (default: primer día del mes actual)
+- fecha_hasta: YYYY-MM-DD (default: último día del mes actual)
+- tipo: 'rutas' | 'mantenciones' | 'todo' (default: 'todo')
+- vehiculo_id: filtrar por vehículo (opcional)
+- conductor_id: filtrar por conductor (opcional)
+
+Retorna:
+```json
+{
+  "periodo": {
+    "desde": "2025-05-01",
+    "hasta": "2025-05-31"
+  },
+  "filas": [
+    {
+      "id": "vehiculo_3",
+      "tipo_fila": "vehiculo",
+      "etiqueta": "PPU-4421",
+      "subtitulo": "Mercedes Actros · Flota Norte",
+      "items": [
+        {
+          "id": 84,
+          "tipo_item": "ruta",
+          "nombre": "STG → VAL #084",
+          "estado": "finalizado",
+          "fecha_inicio_plan": "2025-05-20",
+          "hora_inicio_plan": "08:30",
+          "fecha_fin_plan": "2025-05-20",
+          "hora_fin_plan": "11:15",
+          "fecha_inicio_real": "2025-05-20",
+          "hora_inicio_real": "08:45",
+          "fecha_fin_real": "2025-05-20",
+          "hora_fin_real": "11:50",
+          "atrasado": true,
+          "minutos_atraso": 35,
+          "conductor": "Juan Muñoz",
+          "origen": "Bodega Central",
+          "destino": "Puerto Valparaíso",
+          "distancia_km": 142.5
+        },
+        {
+          "id": 12,
+          "tipo_item": "mantencion",
+          "nombre": "Cambio de aceite",
+          "estado": "pendiente",
+          "fecha_inicio_plan": "2025-05-25",
+          "hora_inicio_plan": null,
+          "fecha_fin_plan": "2025-05-25",
+          "hora_fin_plan": null,
+          "fecha_inicio_real": null,
+          "hora_inicio_real": null,
+          "fecha_fin_real": null,
+          "hora_fin_real": null,
+          "atrasado": true,
+          "minutos_atraso": null,
+          "taller": "Taller Mecánico Pérez",
+          "tipo_mantencion": "Mantención preventiva"
+        }
+      ]
+    }
+  ],
+  "resumen": {
+    "total_rutas": 18,
+    "rutas_a_tiempo": 12,
+    "rutas_atrasadas": 4,
+    "rutas_canceladas": 2,
+    "total_mantenciones": 8,
+    "mantenciones_pendientes": 3,
+    "mantenciones_vencidas": 1
+  }
+}
+```
+
+### Lógica de cálculo de atraso:
+
+**Para rutas:**
+- Una ruta está ATRASADA si:
+  - Estado `activo` y han pasado más de `duracion_min` minutos desde `fecha_inicio`
+  - Estado `finalizado` y `fecha_fin` fue más de 15 minutos después de la hora estimada (`fecha_inicio + duracion_min`)
+  - Estado `pendiente` y la `fecha_programada` + `hora_programada` ya pasó
+- `minutos_atraso`: diferencia en minutos entre lo real y lo planificado (solo si hay datos reales)
+
+**Para mantenciones:**
+- Una mantención está ATRASADA si:
+  - Estado `pendiente` o `en_proceso` y `fecha_programada` < hoy
+  - `minutos_atraso` no aplica — solo días de atraso
 
 ```python
+# En views_rutas.py, función helper:
 from django.utils import timezone
-from datetime import timedelta
+from datetime import datetime, timedelta, date
 
-UMBRAL_INACTIVO_MIN  = 5   # minutos sin señal → desconocido
-UMBRAL_DETENIDO_KMH  = 3   # km/h por debajo = detenido
-UMBRAL_MOVIMIENTO_KMH = 3  # km/h por encima = en movimiento
-
-def calcular_estado_vehiculo(ultima_ubicacion, ruta_activa=None):
+def calcular_estado_gantt(item_tipo, item):
     """
-    Retorna: 'en_ruta' | 'en_movimiento' | 'detenido' | 'sin_señal'
-    Jerarquía: si tiene ruta activa Y está en movimiento → 'en_ruta'
+    Calcula si un item está atrasado y cuánto.
+    Retorna: { atrasado: bool, minutos_atraso: int|None, dias_atraso: int|None }
     """
-    if not ultima_ubicacion:
-        return 'sin_señal'
+    hoy = timezone.now()
 
-    ahora    = timezone.now()
-    antiguedad = (ahora - ultima_ubicacion.timestamp).total_seconds() / 60
-
-    if antiguedad > UMBRAL_INACTIVO_MIN:
-        return 'sin_señal'
-
-    velocidad = ultima_ubicacion.velocidad or 0
-
-    if ruta_activa and velocidad > UMBRAL_MOVIMIENTO_KMH:
-        return 'en_ruta'
-    if velocidad > UMBRAL_MOVIMIENTO_KMH:
-        return 'en_movimiento'
-    return 'detenido'
-
-
-def get_resumen_flota(empresa):
-    """Resumen de estados para los KPI cards."""
-    from .models import Vehiculo, Ubicacion, Ruta
-
-    vehiculos = Vehiculo.objects.filter(
-        flota__empresa=empresa, activo=True
-    ).prefetch_related('asignaciones', 'ubicaciones')
-
-    resumen = {
-        'en_ruta':       0,
-        'en_movimiento': 0,
-        'detenido':      0,
-        'sin_señal':     0,
-        'total':         0,
-    }
-
-    for v in vehiculos:
-        ultima = v.ubicaciones.order_by('-timestamp').first()
-        ruta   = Ruta.objects.filter(
-            vehiculo=v, estado='activo'
-        ).first()
-        estado = calcular_estado_vehiculo(ultima, ruta)
-        resumen[estado] += 1
-        resumen['total'] += 1
-
-    return resumen
-```
-
-### Endpoint REST inicial
-
-GET /api/empresa/geolocalizacion/
-Carga inicial del mapa — retorna todos los vehículos con su última ubicación conocida.
-Solo rol USUARIO con empresa activa o SUPERADMIN con empresa_id param.
-
-```python
-class GeolocalizacionView(View):
-    def get(self, request):
-        from .models import Vehiculo, Ubicacion, Ruta, Asignacion
-        from .geo_helpers import calcular_estado_vehiculo, get_resumen_flota
-        from .models import descifrar
-
-        empresa = request.user.empresa
-        if not empresa:
-            return JsonResponse({'error': 'Sin empresa.'}, status=400)
-
-        vehiculos = Vehiculo.objects.filter(
-            flota__empresa=empresa, activo=True
-        ).select_related('flota')
-
-        data = []
-        for v in vehiculos:
-            ultima = Ubicacion.objects.filter(
-                vehiculo=v
-            ).order_by('-timestamp').first()
-
-            ruta_activa = Ruta.objects.filter(
-                vehiculo=v, estado='activo'
-            ).prefetch_related('paradas').first()
-
-            asignacion = Asignacion.objects.filter(
-                vehiculo=v, activo=True
-            ).select_related('conductor').first()
-
-            conductor_nombre = None
-            if asignacion and asignacion.conductor:
-                try:
-                    conductor_nombre = descifrar(asignacion.conductor.nombre_cifrado)
-                except Exception:
-                    conductor_nombre = asignacion.conductor.email
-
-            estado = calcular_estado_vehiculo(ultima, ruta_activa)
-
-            data.append({
-                'id':              v.id,
-                'patente':         v.patente,
-                'marca':           v.marca,
-                'modelo':          v.modelo,
-                'tipo_combustible': v.tipo_combustible,
-                'flota':           v.flota.nombre,
-                'estado':          estado,
-                'conductor':       conductor_nombre,
-                'ultima_ubicacion': {
-                    'latitud':    ultima.latitud    if ultima else None,
-                    'longitud':   ultima.longitud   if ultima else None,
-                    'velocidad':  ultima.velocidad  if ultima else None,
-                    'combustible': ultima.combustible if ultima else None,
-                    'timestamp':  ultima.timestamp.isoformat() if ultima else None,
-                } if ultima else None,
-                'ruta_activa': {
-                    'id':       ruta_activa.id,
-                    'nombre':   ruta_activa.nombre,
-                    'polyline': ruta_activa.polyline,
-                    'paradas':  [
-                        {
-                            'tipo':     p.tipo,
-                            'nombre':   p.nombre,
-                            'latitud':  p.latitud,
-                            'longitud': p.longitud,
-                        }
-                        for p in ruta_activa.paradas.order_by('orden')
-                    ],
-                } if ruta_activa else None,
-            })
-
-        return JsonResponse({
-            'vehiculos': data,
-            'resumen':   get_resumen_flota(empresa),
-        })
-```
-
-### Endpoint para registrar ubicación desde la app del conductor
-
-POST /api/conductor/ubicacion/
-Recibe la posición actual del conductor y la guarda en Ubicacion.
-También notifica via WebSocket a los admins de la empresa.
-
-```python
-class RegistrarUbicacionView(View):
-    def post(self, request):
-        if request.user.rol != 'CONDUCTOR':
-            return JsonResponse({'error': 'Solo conductores.'}, status=403)
-
-        body = json.loads(request.body)
-        lat  = body.get('latitud')
-        lng  = body.get('longitud')
-        vel  = body.get('velocidad', 0)
-        comb = body.get('combustible', 0)
-
-        if lat is None or lng is None:
-            return JsonResponse({'error': 'Coordenadas requeridas.'}, status=400)
-
-        # Obtener vehículo asignado al conductor
-        from .models import Asignacion
-        asignacion = Asignacion.objects.filter(
-            conductor=request.user, activo=True
-        ).select_related('vehiculo__flota__empresa').first()
-
-        if not asignacion:
-            return JsonResponse({'error': 'Sin vehículo asignado.'}, status=400)
-
-        vehiculo = asignacion.vehiculo
-        empresa  = vehiculo.flota.empresa
-
-        # Guardar ubicación
-        ubicacion = Ubicacion.objects.create(
-            vehiculo=vehiculo,
-            latitud=lat,
-            longitud=lng,
-            velocidad=vel,
-            combustible=comb,
-        )
-
-        # Calcular estado
-        from .geo_helpers import calcular_estado_vehiculo
-        ruta_activa = Ruta.objects.filter(vehiculo=vehiculo, estado='activo').first()
-        estado      = calcular_estado_vehiculo(ubicacion, ruta_activa)
-
-        # Notificar via WebSocket a admins de la empresa
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'geolocalizacion_{empresa.id}',
-            {
-                'type': 'ubicacion_update',
-                'data': {
-                    'vehiculo_id': vehiculo.id,
-                    'patente':     vehiculo.patente,
-                    'latitud':     lat,
-                    'longitud':    lng,
-                    'velocidad':   vel,
-                    'combustible': comb,
-                    'estado':      estado,
-                    'timestamp':   ubicacion.timestamp.isoformat(),
-                    'ruta_id':     ruta_activa.id if ruta_activa else None,
+    if item_tipo == 'ruta':
+        if item.estado == 'pendiente' and item.fecha_programada:
+            hora = item.hora_programada or time(8, 0)
+            dt_programado = datetime.combine(item.fecha_programada, hora)
+            dt_programado = timezone.make_aware(dt_programado)
+            if hoy > dt_programado:
+                diff = hoy - dt_programado
+                return {
+                    'atrasado':       True,
+                    'minutos_atraso': int(diff.total_seconds() / 60),
+                    'dias_atraso':    diff.days,
                 }
-            }
-        )
 
-        return JsonResponse({'ok': True, 'estado': estado})
-```
+        elif item.estado == 'activo' and item.fecha_inicio and item.duracion_min:
+            fin_estimado = item.fecha_inicio + timedelta(minutes=item.duracion_min)
+            if hoy > fin_estimado + timedelta(minutes=15):
+                diff = hoy - fin_estimado
+                return {
+                    'atrasado':       True,
+                    'minutos_atraso': int(diff.total_seconds() / 60),
+                    'dias_atraso':    None,
+                }
 
-### Management command: purgar_ubicaciones
-Crear g_de_flota/management/commands/purgar_ubicaciones.py
-Elimina ubicaciones de más de 30 días excepto las marcadas como es_punto_clave=True.
-Cron diario: 0 3 * * * python manage.py purgar_ubicaciones
+        elif item.estado == 'finalizado' and item.fecha_fin and item.fecha_inicio and item.duracion_min:
+            fin_estimado = item.fecha_inicio + timedelta(minutes=item.duracion_min)
+            if item.fecha_fin > fin_estimado + timedelta(minutes=15):
+                diff = item.fecha_fin - fin_estimado
+                return {
+                    'atrasado':       True,
+                    'minutos_atraso': int(diff.total_seconds() / 60),
+                    'dias_atraso':    None,
+                }
 
-```python
-def handle(self, *args, **kwargs):
-    from django.utils import timezone
-    from datetime import timedelta
-    limite = timezone.now() - timedelta(days=30)
-    eliminadas, _ = Ubicacion.objects.filter(
-        timestamp__lt=limite
-    ).delete()
-    self.stdout.write(self.style.SUCCESS(f'{eliminadas} ubicaciones eliminadas.'))
-```
+    elif item_tipo == 'mantencion':
+        if item.estado in ('pendiente', 'en_proceso') and item.fecha_programada:
+            if item.fecha_programada < date.today():
+                diff = date.today() - item.fecha_programada
+                return {
+                    'atrasado':    True,
+                    'minutos_atraso': None,
+                    'dias_atraso': diff.days,
+                }
 
-### WebSocket Consumer: GeolocalizacionConsumer
-
-Agregar en consumers.py:
-
-```python
-class GeolocalizacionConsumer(AsyncWebSocketConsumer):
-    async def connect(self):
-        # Verificar autenticación y rol
-        user = self.scope.get('user')
-        if not user or not user.is_authenticated:
-            await self.close()
-            return
-        if user.rol not in ('USUARIO', 'SUPERADMIN'):
-            await self.close()
-            return
-
-        empresa_id = (
-            user.empresa.id
-            if user.rol == 'USUARIO' and user.empresa
-            else self.scope['url_route']['kwargs'].get('empresa_id')
-        )
-        if not empresa_id:
-            await self.close()
-            return
-
-        self.group_name = f'geolocalizacion_{empresa_id}'
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
-        await self.accept()
-
-    async def disconnect(self, code):
-        if hasattr(self, 'group_name'):
-            await self.channel_layer.group_discard(self.group_name, self.channel_name)
-
-    async def ubicacion_update(self, event):
-        await self.send(text_data=json.dumps({
-            'tipo': 'ubicacion_update',
-            'data': event['data'],
-        }))
-```
-
-Agregar en routing.py:
-```python
-re_path(r'ws/geolocalizacion/(?P<empresa_id>\d+)/$', GeolocalizacionConsumer.as_asgi()),
-```
-
-### URLs a agregar en urls.py
-
-```python
-path('api/empresa/geolocalizacion/',  GeolocalizacionView.as_view()),
-path('api/conductor/ubicacion/',      RegistrarUbicacionView.as_view()),
+    return {'atrasado': False, 'minutos_atraso': None, 'dias_atraso': None}
 ```
 
 ---
 
-## PARTE 2 — FRONTEND WEB
+## URL
 
-### Crear src/web/rutas/Geolocalizacion.vue
-
-Vista completa del módulo de geolocalización en tiempo real.
-
-#### Layout
-Header: "Geolocalización en tiempo real"  [● En vivo]  [última actualiz: hace 30s]
-KPI cards (4):
-[En ruta N]  [En movimiento N]  [Detenidos N]  [Sin señal N]
-Filtros: [Todos] [En ruta] [En movimiento] [Detenidos] [Sin señal]  🔍 Buscar patente
-Panel de dos columnas:
-┌──────────────────────────────┬────────────────────────────────┐
-│  Lista de vehículos (scroll) │  Mapa Leaflet (flex: 1)        │
-│                              │                                │
-│  [PPU-4421] ● En ruta        │   [mapa con marcadores]        │
-│  J. Muñoz · 62 km/h          │                                │
-│  Ruta STG→VAL · 45 min       │                                │
-│                              │                                │
-│  [BBTF-12] ● En movimiento   │                                │
-│  Sin conductor asignado      │                                │
-│  65 km/h                     │                                │
-│                              │                                │
-│  [PPQ-9901] ● Detenido       │                                │
-│  C. Rojas · 0 km/h           │                                │
-│  Hace 4 min                  │                                │
-│                              │                                │
-│  [FGKL-44] ○ Sin señal       │                                │
-│  A. Silva                    │                                │
-│  Última señal: hace 12 min   │                                │
-└──────────────────────────────┴────────────────────────────────┘
-
-#### Lista de vehículos (columna izquierda)
-
-Cada card:
-[dot color estado]  PPU-4421 — Mercedes Actros
-J. Muñoz  ·  62 km/h  ·  ⛽ 45%
-● En ruta: STG → VAL
-Última actualización: hace 30s
-
-Colores del dot según estado:
-- en_ruta: verde (#1D9E75) con animación pulse
-- en_movimiento: azul (#378ADD) con animación pulse
-- detenido: naranja (#EF9F27) estático
-- sin_señal: gris (#9CA3AF) estático
-
-Al hacer click en una card:
-- Centrar el mapa en ese vehículo (flyTo con zoom 15)
-- Abrir panel lateral de detalle del vehículo
-- Resaltar su marcador en el mapa
-
-Filtrar lista según tab activo y búsqueda.
-
-#### Mapa Leaflet (columna derecha)
-
-Cargar Leaflet dinámicamente si window.L no existe — mismo patrón que MapaRuta.vue.
-Tile: OpenStreetMap.
-Altura: 100% del viewport menos header (usar calc(100vh - 180px)).
-
-**Marcadores por vehículo:**
-SVG inline según estado:
-```javascript
-const COLORES_ESTADO = {
-  en_ruta:       '#1D9E75',
-  en_movimiento: '#378ADD',
-  detenido:      '#EF9F27',
-  sin_señal:     '#9CA3AF',
-}
-
-function crearIconoVehiculo(vehiculo, estado) {
-  const color = COLORES_ESTADO[estado]
-  const svg = `
-    <svg width="36" height="44" viewBox="0 0 36 44" xmlns="http://www.w3.org/2000/svg">
-      <path d="M18 0C8.1 0 0 8.1 0 18c0 13.5 18 26 18 26S36 31.5 36 18C36 8.1 27.9 0 18 0z"
-        fill="${color}" stroke="white" stroke-width="2"/>
-      <text x="18" y="22" text-anchor="middle" fill="white"
-        font-size="10" font-weight="bold" font-family="Arial">
-        ${vehiculo.patente.slice(-4)}
-      </text>
-    </svg>`
-  return L.divIcon({
-    html:       svg,
-    className:  '',
-    iconSize:   [36, 44],
-    iconAnchor: [18, 44],
-    popupAnchor:[0, -44],
-  })
-}
+```python
+path('api/empresa/gantt/', GanttView.as_view()),
 ```
 
-**Popup del marcador al hacer click:**
-PPU-4421 — Mercedes Actros
-Estado: ● En ruta
-Conductor: Juan Muñoz
-Velocidad: 62 km/h
-Combustible: 45%
-Última señal: hace 30s
-[Ver detalle →]
+---
 
-**Ruta dibujada si vehiculo.ruta_activa:**
-- Polyline azul (weight 3, opacity 0.7, dashArray '8 4')
-- Marcadores de origen (verde) y destino (rojo) en los extremos de la ruta
-- La polyline se actualiza si el vehículo actualiza su ruta
+## FRONTEND: src/web/rutas/Gantt.vue
 
-**Trail de movimiento (últimas posiciones):**
-Al recibir actualizaciones via WebSocket, dibujar una línea de trail (últimas 5 posiciones) en color más claro que el marcador, opacity 0.4.
+Vista completa del módulo. Sin librerías externas de Gantt — construida con divs CSS y cálculos propios de posición y ancho. Solo usa lo que ya tiene el proyecto.
+
+### Layout general
+Header: "Carta Gantt"  [Exportar PDF]
+Controles: [◀ Mes anterior] [Mayo 2025 ▶]  [Hoy]
+Filtros:   [Todo ▼] [Todos los vehículos ▼] [Todos los conductores ▼]
+Tabs:      [Rutas y Mantenciones] [Solo Rutas] [Solo Mantenciones]
+Leyenda:   [■ Pendiente] [■ Activo] [■ Finalizado] [■ Atrasado] [■ Cancelado] [■ Mantención]
+┌──────────────────────────────────────────────────────────────────────┐
+│ Vehículo/Conductor │ L1 M2 M3 J4 V5 S6 D7 ... V31                    │
+│────────────────────┼──────────────────────────────────────────────────│
+│ PPU-4421           │ [══ruta══]      [═══ruta atrasada═══]             │
+│ Mercedes Actros    │          [■man]                                   │
+│────────────────────┼──────────────────────────────────────────────────│
+│ BBTF-12            │        [══ruta══]        [══ruta══]               │
+│ Conductor: C.Rojas │                   [══════mantención══════]        │
+└──────────────────────────────────────────────────────────────────────┘
+
+### Cabecera de días (eje X)
+
+Generar todos los días del período visible.
+Cada día tiene un ancho fijo: `--dia-ancho: 36px`
+Hoy destacado con fondo morado suave y línea vertical punteada que cruza todas las filas.
+Los días muestran: nombre del día abreviado arriba (L M M J V S D), número del día abajo.
+Fines de semana (S y D) con fondo ligeramente diferente.
 
 ```javascript
-// Por vehículo, mantener cola de últimas 5 posiciones:
-const trails = ref({})  // { vehiculo_id: [[lat,lng], ...] }
+// Calcular posición y ancho de un item en el Gantt:
+function calcularBarra(item, fechaDesde, anchoDia) {
+  const inicio = new Date(item.fecha_inicio_plan || item.fecha_inicio_real)
+  const fin    = new Date(item.fecha_fin_plan   || item.fecha_fin_real   || item.fecha_inicio_plan)
 
-function agregarPosicionTrail(vehiculoId, lat, lng) {
-  if (!trails.value[vehiculoId]) trails.value[vehiculoId] = []
-  trails.value[vehiculoId].push([lat, lng])
-  if (trails.value[vehiculoId].length > 5) {
-    trails.value[vehiculoId].shift()
+  const diasDesdeInicio = Math.floor(
+    (inicio - new Date(fechaDesde)) / (1000 * 60 * 60 * 24)
+  )
+  const duracionDias = Math.max(
+    (fin - inicio) / (1000 * 60 * 60 * 24),
+    0.15  // mínimo 15% de un día para que sea visible
+  )
+
+  return {
+    left:  `${diasDesdeInicio * anchoDia}px`,
+    width: `${duracionDias * anchoDia}px`,
   }
 }
 ```
 
-**Animación de movimiento del marcador:**
-Al recibir nueva posición via WebSocket, mover el marcador suavemente con interpolación:
-```javascript
-function animarMarcador(marker, nuevaLat, nuevaLng, duracionMs = 1000) {
-  const posInicial = marker.getLatLng()
-  const inicio     = Date.now()
+### Barras del Gantt
 
-  function step() {
-    const t = Math.min((Date.now() - inicio) / duracionMs, 1)
-    const lat = posInicial.lat + (nuevaLat - posInicial.lat) * t
-    const lng = posInicial.lng + (nuevaLng - posInicial.lng) * t
-    marker.setLatLng([lat, lng])
-    if (t < 1) requestAnimationFrame(step)
-  }
-  requestAnimationFrame(step)
+Cada item es un div absolutamente posicionado dentro de su fila.
+
+**Colores por estado:**
+```javascript
+const COLORES = {
+  // Rutas
+  ruta_pendiente:  { bg: '#E6F1FB', border: '#378ADD', text: '#0C447C' },
+  ruta_activo:     { bg: '#E1F5EE', border: '#1D9E75', text: '#085041', pulsar: true },
+  ruta_finalizado: { bg: '#F0F0F0', border: '#9CA3AF', text: '#4B5563' },
+  ruta_cancelado:  { bg: '#FEF3C7', border: '#D97706', text: '#92400E', rayado: true },
+  ruta_atrasado:   { bg: '#FCEBEB', border: '#E24B4A', text: '#791F1F' },
+  // Mantenciones
+  mant_pendiente:  { bg: '#EEEDFE', border: '#534AB7', text: '#3C3489' },
+  mant_en_proceso: { bg: '#DCFCE7', border: '#16A34A', text: '#14532D' },
+  mant_realizada:  { bg: '#F0F0F0', border: '#9CA3AF', text: '#4B5563' },
+  mant_cancelada:  { bg: '#FEF3C7', border: '#D97706', text: '#92400E', rayado: true },
+  mant_atrasado:   { bg: '#FCEBEB', border: '#E24B4A', text: '#791F1F' },
 }
 ```
 
-#### Panel lateral de detalle (al seleccionar vehículo)
+**Contenido de cada barra:**
+- Si el ancho da espacio (> 60px): mostrar nombre truncado dentro de la barra
+- Si el ancho es pequeño (< 60px): solo mostrar ícono (ti-truck para rutas, ti-tool para mantenciones)
+- Tooltip al hacer hover con todos los datos completos
+- Punto pulsante verde si estado='activo'
+- Banda diagonal roja si está atrasado (::after con pattern CSS)
+- Ícono de reloj ⏱ si atrasado, con badge del tiempo de atraso
 
-Slide desde la derecha, 320px de ancho sobre el mapa:
-[←]  PPU-4421
-Mercedes Actros · Diésel
-[● En ruta]
-Conductor:    Juan Muñoz
-Velocidad:    62 km/h
-Combustible:  ████████░░ 45%
-Señal:        hace 30s
-Coordenadas:  -33.4489, -70.6693
-─── Ruta activa ───────────────
-STG → VAL #084
-Origen:   Bodega Central
-Destino:  Puerto Valparaíso
-[Ver detalle de ruta →]
-─── Historial reciente ────────
-Hoy 08:30  Inicio de ruta
-Hoy 09:15  En tránsito (62 km/h)
-Hoy 09:47  Ahora
-[Cerrar]
+**Doble barra para items con datos reales:**
+Si un item tiene tanto fecha planificada como fecha real, mostrar:
+- Barra superior (60% de alto): tiempo planificado — color normal
+- Barra inferior (40% de alto): tiempo real — color más intenso si hay atraso, igual si fue puntual
+[═══ Planificado ════════]        ← barra superior, color normal
+[════ Real ═══════════════]     ← barra inferior, desplazada si arrancó tarde
 
-#### WebSocket en Geolocalizacion.vue
+### Fila del Gantt
 
-Conectar al cargar la vista, desconectar al desmontar:
+Cada fila representa un vehículo. Dentro puede tener rutas Y mantenciones en sublíneas separadas:
+┌────────────────────────────────────────────────────┐
+│ PPU-4421                                            │
+│ Mercedes Actros · Flota Norte                       │  ← header de fila (40px)
+├───── Rutas ─────────────────────────────────────────│  ← sublínea rutas (44px)
+│         [══ruta══]      [══ruta══]                  │
+├───── Mantenciones ──────────────────────────────────│  ← sublínea mantenciones (si tiene)
+│                   [■man]                            │
+└────────────────────────────────────────────────────┘
+
+Si un vehículo no tiene mantenciones en el período, no mostrar la sublínea de mantenciones.
+
+### Tooltip al hacer hover
+
+Al pasar el mouse sobre una barra, mostrar un tooltip flotante con:
+
+**Para rutas:**
+┌─────────────────────────────────┐
+│ STG → VAL #084          [Estado]│
+│ ─────────────────────────────── │
+│ Conductor:  Juan Muñoz          │
+│ Origen:     Bodega Central      │
+│ Destino:    Puerto Valparaíso   │
+│ Distancia:  142 km              │
+│ Planificado: 20/05 08:30 → 11:15│
+│ Real:        20/05 08:45 → 11:50│
+│ Atraso:      ⚠ 35 min           │
+└─────────────────────────────────┘
+
+**Para mantenciones:**
+┌─────────────────────────────────┐
+│ Cambio de aceite        [Estado]│
+│ ─────────────────────────────── │
+│ Tipo:    Mantención preventiva  │
+│ Taller:  Taller Mecánico Pérez  │
+│ Fecha:   25/05/2025             │
+│ Atraso:  ⚠ 5 días vencida       │
+└─────────────────────────────────┘
+
+El tooltip aparece a la derecha de la barra si hay espacio, si no a la izquierda.
+Desaparece al mover el mouse fuera. No usar librerías externas — div posicionado con JS.
+
+### Click en una barra
+
+Al hacer click en una ruta → abrir el panel lateral de detalle existente de Rutas.vue (misma lógica, emit evento 'ver-ruta' con el id).
+Al hacer click en una mantención → abrir modal de detalle de la mantención.
+
+### Indicador de hoy
+
+Línea vertical punteada que cruza todo el Gantt en la posición del día actual.
+Badge flotante encima: "Hoy" con fondo morado.
+Si el período no incluye hoy → no mostrar la línea.
 
 ```javascript
-import { onMounted, onUnmounted, ref } from 'vue'
-
-let ws = null
-const conectado = ref(false)
-const ultimaActualizacion = ref(null)
-
-function conectarWebSocket(empresaId) {
-  const protocolo = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${protocolo}://localhost:8000/ws/geolocalizacion/${empresaId}/`)
-
-  ws.onopen = () => {
-    conectado.value = true
-  }
-
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data)
-    if (msg.tipo === 'ubicacion_update') {
-      actualizarVehiculo(msg.data)
-      ultimaActualizacion.value = new Date()
-    }
-  }
-
-  ws.onclose = () => {
-    conectado.value = false
-    // Reconectar en 5 segundos
-    setTimeout(() => conectarWebSocket(empresaId), 5000)
-  }
-
-  ws.onerror = () => {
-    ws.close()
-  }
+function posicionHoy(fechaDesde, anchoDia) {
+  const hoy  = new Date()
+  const desde = new Date(fechaDesde)
+  const dias  = Math.floor((hoy - desde) / (1000 * 60 * 60 * 24))
+  if (dias < 0) return null
+  return `${dias * anchoDia + anchoDia / 2}px`
 }
+```
 
-function actualizarVehiculo(data) {
-  // Actualizar en la lista de vehículos
-  const idx = vehiculos.value.findIndex(v => v.id === data.vehiculo_id)
-  if (idx !== -1) {
-    vehiculos.value[idx].ultima_ubicacion = {
-      latitud:   data.latitud,
-      longitud:  data.longitud,
-      velocidad: data.velocidad,
-      combustible: data.combustible,
-      timestamp: data.timestamp,
-    }
-    vehiculos.value[idx].estado = data.estado
+### Navegación de período
 
-    // Actualizar marcador en el mapa
-    actualizarMarcadorMapa(data)
-    agregarPosicionTrail(data.vehiculo_id, data.latitud, data.longitud)
+Selector de período con tres modos:
+- **Mes:** ver el mes completo (30-31 días). Botones ◀ ▶ para mes anterior/siguiente.
+- **Semana:** ver 7 días. Botones ◀ ▶ para semana anterior/siguiente.
+- **Personalizado:** date pickers de fecha desde/hasta (máximo 90 días).
+
+Al cambiar el período → llamar al endpoint con los nuevos parámetros.
+
+```javascript
+const modo       = ref('mes')   // 'mes' | 'semana' | 'personalizado'
+const fechaBase  = ref(new Date())
+
+const fechaDesde = computed(() => {
+  if (modo.value === 'mes')
+    return new Date(fechaBase.value.getFullYear(), fechaBase.value.getMonth(), 1)
+  if (modo.value === 'semana') {
+    const d = new Date(fechaBase.value)
+    d.setDate(d.getDate() - d.getDay() + 1)  // lunes
+    return d
   }
-}
-
-onMounted(async () => {
-  const data = await apiFetch('/api/empresa/geolocalizacion/')
-  vehiculos.value = data.vehiculos
-  resumen.value   = data.resumen
-
-  inicializarMapa()
-  vehiculos.value.forEach(v => {
-    if (v.ultima_ubicacion) {
-      agregarMarcadorMapa(v)
-    }
-    if (v.ruta_activa?.polyline?.length) {
-      dibujarRuta(v)
-    }
-  })
-
-  const usuario = JSON.parse(sessionStorage.getItem('usuario') || '{}')
-  if (usuario.empresa_id) conectarWebSocket(usuario.empresa_id)
+  return fechaPersonalizadaDesde.value
 })
 
-onUnmounted(() => {
-  if (ws) ws.close()
-  if (mapaInstance) { mapaInstance.remove(); mapaInstance = null }
+const fechaHasta = computed(() => {
+  if (modo.value === 'mes')
+    return new Date(fechaBase.value.getFullYear(), fechaBase.value.getMonth() + 1, 0)
+  if (modo.value === 'semana') {
+    const d = new Date(fechaDesde.value)
+    d.setDate(d.getDate() + 6)
+    return d
+  }
+  return fechaPersonalizadaHasta.value
 })
 ```
 
-#### Indicador de conexión en tiempo real
+### KPI cards sobre el Gantt
+[18 rutas]  [12 a tiempo ✓]  [4 atrasadas ⚠]  [2 canceladas ✗]  [8 mantenciones]  [1 vencida 🔴]
+Cargados desde `resumen` del endpoint.
+Click en "4 atrasadas" → filtrar el Gantt para mostrar solo items atrasados.
 
-Badge en el header:
-- WebSocket conectado: `[● En vivo]` verde con pulse
-- WebSocket desconectado: `[○ Reconectando...]` naranja
-- Texto "Última actualización: hace Xs" que se actualiza cada segundo
+### Skeleton loader
 
-```javascript
-const tiempoDesdeActualizacion = ref('—')
-let intervaloTiempo = null
+Mientras carga el endpoint, mostrar:
+- 4 filas con barras grises animadas de ancho aleatorio
+- Cabecera de días normal (se puede calcular sin datos)
 
-onMounted(() => {
-  intervaloTiempo = setInterval(() => {
-    if (!ultimaActualizacion.value) return
-    const seg = Math.floor((Date.now() - ultimaActualizacion.value) / 1000)
-    tiempoDesdeActualizacion.value = seg < 60
-      ? `hace ${seg}s`
-      : `hace ${Math.floor(seg/60)}min`
-  }, 1000)
-})
+### Estado vacío
 
-onUnmounted(() => clearInterval(intervaloTiempo))
-```
+Si no hay datos para el período:
+[ícono ti-calendar-off, gris, grande]
+Sin rutas ni mantenciones en este período
+Ajusta el rango de fechas o crea rutas desde el módulo de Rutas
+[Ir a Rutas →]
 
-#### Alertas automáticas por estado
+### Scroll horizontal
 
-Al recibir una actualización via WebSocket que cambie el estado de un vehículo, mostrar toast:
+El Gantt debe ser horizontalmente scrolleable si los días no caben en pantalla.
+La columna de etiquetas (vehículo/conductor) queda fija a la izquierda:
 
-```javascript
-function verificarCambioEstado(vehiculoId, estadoNuevo) {
-  const anterior = estadosAnteriores.value[vehiculoId]
-  if (!anterior || anterior === estadoNuevo) {
-    estadosAnteriores.value[vehiculoId] = estadoNuevo
-    return
-  }
+```css
+.gantt-container {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  overflow: hidden;
+}
 
-  const v = vehiculos.value.find(v => v.id === vehiculoId)
-  const patente = v?.patente || `Vehículo ${vehiculoId}`
+.gantt-etiquetas {
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  background: var(--color-background-primary);
+  border-right: 1px solid var(--color-border-tertiary);
+}
 
-  if (anterior === 'en_ruta' && estadoNuevo === 'detenido') {
-    showToast(`${patente} se detuvo durante la ruta`, 'advertencia')
-  }
-  if (anterior !== 'sin_señal' && estadoNuevo === 'sin_señal') {
-    showToast(`${patente} perdió señal GPS`, 'error')
-  }
-  if (anterior === 'sin_señal' && estadoNuevo !== 'sin_señal') {
-    showToast(`${patente} recuperó señal GPS`, 'exito')
-  }
-
-  estadosAnteriores.value[vehiculoId] = estadoNuevo
+.gantt-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 ```
 
 ---
 
-## PARTE 3 — APP MÓVIL: ENVÍO DE UBICACIÓN
+## EXPORTAR A PDF
 
-### Crear src/services/geolocalizacion.js en app_conductor/
-
-Servicio que envía la posición del conductor al backend cada N segundos mientras hay una ruta activa.
+Botón "Exportar PDF" en el header.
+Usar `window.print()` con estilos CSS de impresión:
 
 ```javascript
-import { Geolocation } from '@capacitor/geolocation'
-import { Network }     from '@capacitor/network'
-import { apiFetch }    from './api.js'
-
-let intervalo     = null
-const INTERVALO_S = 30  // enviar cada 30 segundos
-
-export async function iniciarEnvioUbicacion() {
-  // Pedir permisos
-  const permiso = await Geolocation.requestPermissions()
-  if (permiso.location !== 'granted') return false
-
-  intervalo = setInterval(async () => {
-    const { connected } = await Network.getStatus()
-    if (!connected) return  // no enviar si sin conexión
-
-    try {
-      const pos = await Geolocation.getCurrentPosition({
-        enableHighAccuracy: true,
-        timeout: 10000,
-      })
-
-      await apiFetch('/api/conductor/ubicacion/', {
-        method: 'POST',
-        body: JSON.stringify({
-          latitud:    pos.coords.latitude,
-          longitud:   pos.coords.longitude,
-          velocidad:  (pos.coords.speed || 0) * 3.6,  // m/s → km/h
-          combustible: 0,  // si no hay sensor, enviar 0
-        }),
-      })
-    } catch { /* fail silent — no interrumpir la app */ }
-
-  }, INTERVALO_S * 1000)
-
-  return true
-}
-
-export function detenerEnvioUbicacion() {
-  if (intervalo) {
-    clearInterval(intervalo)
-    intervalo = null
-  }
+function exportarPDF() {
+  window.print()
 }
 ```
 
-### Integrar en DetalleRuta.vue (app_conductor)
+Agregar en el CSS del componente:
+```css
+@media print {
+  /* Ocultar todo excepto el Gantt */
+  .sidebar, .navbar, .filters-bar, .kpi-cards { display: none !important; }
 
-Al iniciar una ruta → llamar iniciarEnvioUbicacion()
-Al finalizar o cancelar una ruta → llamar detenerEnvioUbicacion()
+  /* El Gantt ocupa toda la página */
+  .gantt-wrapper { width: 100%; overflow: visible; }
 
-```javascript
-import { iniciarEnvioUbicacion, detenerEnvioUbicacion } from '@/services/geolocalizacion.js'
+  /* Expandir todo el contenido sin scroll */
+  .gantt-scroll { overflow: visible; width: max-content; }
 
-async function confirmarIniciarRuta() {
-  await rutasStore.iniciarRuta(ruta.value.id, { km_inicio: kmInicio.value })
-  await iniciarEnvioUbicacion()
-  // ...resto del flujo
+  /* Forzar colores de impresión */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Título de impresión */
+  .gantt-print-header { display: block; }
 }
-
-async function confirmarFinalizarRuta() {
-  detenerEnvioUbicacion()
-  await rutasStore.finalizarRuta(ruta.value.id, datosFinalizacion.value)
-  // ...resto del flujo
-}
-
-onUnmounted(() => {
-  // Seguridad: detener envío si el componente se desmonta
-  detenerEnvioUbicacion()
-})
 ```
 
 ---
 
-## PARTE 4 — NAVEGACIÓN
+## NAVEGACIÓN
 
-Agregar en el sidebar del USUARIO (buscar en contexto.md el archivo de navegación):
-Ítem: Geolocalización
-Ícono: ti-map-pin
-Ruta: /empresa/geolocalizacion
-Badge: conteo de vehículos en ruta (número verde)
+Agregar en el sidebar del USUARIO (buscar en el proyecto):
+Ítem: Carta Gantt
+Ícono: ti-chart-gantt
+Ruta: /empresa/gantt
 
 Agregar en router/index.js:
 ```javascript
 {
-  path: '/empresa/geolocalizacion',
-  component: () => import('@/web/rutas/Geolocalizacion.vue'),
+  path: '/empresa/gantt',
+  component: () => import('@/web/rutas/Gantt.vue'),
   meta: { requiresAuth: true, roles: ['USUARIO'] }
 }
 ```
@@ -705,35 +466,27 @@ Agregar en router/index.js:
 
 - Composition API <script setup> siempre
 - apiFetch siempre, nunca fetch directo
-- Leaflet cargado dinámicamente si window.L no existe
-- onUnmounted: destruir mapa y cerrar WebSocket — sin memory leaks
-- WebSocket reconecta automáticamente cada 5s si se desconecta
-- showToast con window.dispatchEvent CustomEvent 'app-toast' (patrón del sistema)
-- Montos y velocidades con formato apropiado: km/h sin decimales, % sin decimales
-- Fail-silent en el envío de ubicación desde la app — nunca interrumpir al conductor
-- El intervalo de geolocalización solo corre cuando hay ruta activa
+- useAsync para la llamada al endpoint
+- Sin librerías externas de Gantt — todo construido con divs y CSS
+- Colores consistentes con el design system del proyecto (variables CSS existentes)
+- Tooltip sin librerías externas — div posicionado con JS
+- Scroll horizontal con columna de etiquetas sticky
+- formatFechaRuta de utils/formato.js existente para fechas
+- formatCLP de utils/formato.js para costos
 - Textos en español es-CL
-- Sin modelos nuevos — usar Ubicacion, Ruta, Vehiculo, Asignacion existentes
+- Sin modelos nuevos
 
 ---
 
 ## ARCHIVOS A ENTREGAR
 
 Backend:
-1. geo_helpers.py — completo
-2. views_geo_patch.py — GeolocalizacionView y RegistrarUbicacionView con indicación de dónde van en views.py
-3. consumers_geo_patch.py — GeolocalizacionConsumer con indicación de dónde va en consumers.py
-4. routing_patch.py — la URL de WebSocket nueva
-5. urls_patch.py — las 2 rutas REST nuevas
-6. management/commands/purgar_ubicaciones.py — completo
+1. views_gantt_patch.py — GanttView completa + helper calcular_estado_gantt, con indicación de dónde van en views_rutas.py
+2. urls_patch.py — la ruta nueva
 
-Frontend web:
-7. src/web/rutas/Geolocalizacion.vue — completo
-8. router_patch.js — la ruta nueva
-9. nav_patch.md — ítem a agregar en el sidebar
-
-App móvil:
-10. app_conductor/src/services/geolocalizacion.js — completo
-11. detalleruta_geo_patch.vue — solo los fragmentos de iniciar/detener a agregar en DetalleRuta.vue
+Frontend:
+3. src/web/rutas/Gantt.vue — completo
+4. router_patch.js — la ruta nueva
+5. nav_patch.md — ítem a agregar en el sidebar
 
 Sin "# resto igual".

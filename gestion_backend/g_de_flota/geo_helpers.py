@@ -1,7 +1,7 @@
 from django.utils import timezone
 from datetime import timedelta
 
-UMBRAL_INACTIVO_MIN  = 5   # minutos sin señal → desconocido
+UMBRAL_INACTIVO_MIN  = 1   # minutos sin señal → desconocido
 UMBRAL_DETENIDO_KMH  = 3   # km/h por debajo = detenido
 UMBRAL_MOVIMIENTO_KMH = 3  # km/h por encima = en movimiento
 

@@ -669,4 +669,63 @@ onMounted(async () => {
 .badge-inactivo { background: #F3F4F6; color: #9CA3AF; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-header { flex-direction: column; align-items: stretch; }
+  .page-title { font-size: 1.25rem; }
+  .header-actions { flex-direction: column; align-items: stretch; }
+  .selector-btn { max-width: 100%; width: 100%; }
+  .btn-primary { justify-content: center; }
+
+  /* Sin scroll: el contenedor ya no fuerza overflow */
+  .tabla-wrap { overflow: visible; }
+
+  /* Tabla flotas: ocultar Admin (col 4 cuando superadmin, col 3 cuando no).
+     Para superadmin: Empresa(3) y Admin(4). Para usuario: nada extra que ocultar. */
+  .tabla-flotas { min-width: unset; width: 100%; }
+  .td-admin, .tabla-flotas th:nth-child(4) { display: none; }  /* Admin */
+
+  /* Acción "Agregar": solo ícono */
+  .btn-agregar span { display: none; }
+  .btn-agregar { padding: 0.35rem 0.5rem; }
+
+  /* Sub-tabla vehículos: ocultar Año(3), Combustible(4), KM(5) */
+  .tabla-vehiculos { min-width: unset; width: 100%; }
+  .tabla-vehiculos th:nth-child(3), .tabla-vehiculos td:nth-child(3) { display: none; }
+  .tabla-vehiculos th:nth-child(4), .tabla-vehiculos td:nth-child(4) { display: none; }
+  .tabla-vehiculos th:nth-child(5), .tabla-vehiculos td:nth-child(5) { display: none; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>

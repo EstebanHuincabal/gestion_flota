@@ -19,6 +19,8 @@
     - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
     - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
     - 9.15 [Solicitudes de Conductores (USUARIO + SUPERADMIN)](#915-solicitudes-de-conductores-panel-web)
+    - 9.16 [Geolocalización en tiempo real](#916-geolocalización-en-tiempo-real)
+    - 9.17 [Carta Gantt](#917-carta-gantt)
 10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
 11. [Modelo de datos](#11-modelo-de-datos)
 12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
@@ -1059,6 +1061,93 @@ Migración: `0040_solicitudes_permisos.py`
 
 ---
 
+### 9.16 Geolocalización en tiempo real
+
+Mapa en vivo (Leaflet) que muestra la posición de los vehículos de la empresa con su estado: `en_ruta`, `en_movimiento`, `detenido`, `sin_señal`.
+
+#### Cadena de datos
+
+```
+App conductor (geolocalizacion.js · watchPosition)
+   ├─ WebSocket ws/conductor/ (ConductorConsumer._procesar_ubicacion)   ← vía preferida
+   └─ HTTP POST /api/conductor/ubicacion/ (RegistrarUbicacionView)       ← fallback
+                         ↓ (ambos crean Ubicacion y hacen group_send)
+        grupo geolocalizacion_{empresa_id}  →  GeolocalizacionConsumer
+                         ↓
+        Panel web: web/rutas/Geolocalizacion.vue (WS + polling 30 s de respaldo)
+```
+
+**Importante:** el `wsService` del conductor solo se conecta cuando se abre la pantalla de Solicitudes. Por eso `geolocalizacion.js` siempre usa **WS con fallback HTTP**, tanto para la ubicación normal como para la señal `gps_inactivo` (GPS apagado).
+
+#### Manejo del GPS apagado / reactivado (tiempo real)
+
+- **Apagar GPS:** al emitir error (code 2/3) y solo en la transición activo→inactivo, se avisa al banner y se envía `gps_inactivo` (WS o HTTP) → el backend marca `sin_señal` al instante usando la última ubicación conocida.
+- **Reactivar GPS:** al volver la primera posición se envía **forzando** (se salta el throttle de 3 s) → el marcador se reanima de inmediato.
+- **Heartbeat = sonda activa de GPS (4 s):** el conductor pide la posición actual con `getCurrentPosition` (timeout 3 s). Si la obtiene, la envía (mantiene "vivo" un vehículo detenido y reanima al reconectar); si falla, marca inactivo y envía `gps_inactivo`. Esto detecta el GPS apagado **aunque `watchPosition` deje de emitir en silencio** (sin disparar error), que era la causa de que el mapa quedara congelado.
+- **No se destruye el watcher** al apagar el GPS: en iOS/Android se recupera solo al reactivarlo. Un **watchdog del watcher** (30 s) lo recrea únicamente si muere de verdad.
+- **Watchdog del panel (cliente):** `Geolocalizacion.vue` revisa cada 2 s la hora local de recepción de cada vehículo; si no llegan datos en `STALE_MS = 12 s`, lo marca `sin_señal` sin esperar al backend (cubre app cerrada / red caída).
+- `geo_helpers.UMBRAL_INACTIVO_MIN = 1` minuto: respaldo para la carga inicial y el polling de 30 s.
+
+#### Campos cifrados
+
+`Ubicacion.latitud`, `longitud` y `velocidad` son `EncryptedFloatField` (Fernet). No se pueden filtrar/ordenar por ellos en BD; el orden es por `timestamp` (sin cifrar).
+
+#### Permiso de plan
+
+| Código | Categoría | Migración |
+|---|---|---|
+| `geolocalizacion.ver` | geolocalizacion | `0072_geolocalizacion_permiso.py` |
+
+Validado en tres capas: router (`meta.permiso`), `GeolocalizacionView` (HTTP 403 `MODULO_NO_INCLUIDO`) y `GeolocalizacionConsumer` (cierre 4003). SUPERADMIN siempre tiene acceso.
+
+**Vistas:** `Geolocalizacion.vue`  
+**Backend:** `views_geo.py` · `geo_helpers.py` · `consumers.GeolocalizacionConsumer` / `ConductorConsumer`  
+**Modelo:** `Ubicacion`  
+**Rutas WS:** `ws/geolocalizacion/<empresa_id>/` (panel) · `ws/conductor/` (envío del conductor)
+
+---
+
+### 9.17 Carta Gantt
+
+Vista de línea de tiempo interactiva que muestra rutas y mantenciones agrupadas por vehículo en un período dado. Sin modelos nuevos — consume los modelos `Ruta`, `Mantencion` y `Vehiculo` existentes.
+
+#### Funcionalidades
+
+- **Período:** mes, semana o rango personalizado (hasta 90 días) con navegación ◀ ▶
+- **Filtros:** por tipo (rutas / mantenciones / todo), solo atrasados
+- **Barras:** doble barra (planificada + real) con colores por estado
+- **Indicadores de atraso:** patrón diagonal rojo + icono ⏱ con minutos/días
+- **KPI cards:** total rutas, a tiempo, atrasadas, canceladas, mantenciones, vencidas
+- **Línea de hoy:** línea vertical punteada con badge "Hoy"
+- **Tooltips:** información completa al hacer hover (sin librerías externas)
+- **Click en barra de ruta:** navega a `/empresa/rutas?ver=<id>`
+- **Exportar PDF:** `window.print()` con estilos CSS de impresión
+- **Scroll horizontal** con columna de etiquetas sticky
+
+#### Lógica de atraso (`calcular_estado_gantt`)
+
+| Tipo | Estado | Condición de atraso |
+|---|---|---|
+| Ruta | pendiente | `fecha_programada + hora_programada` < ahora |
+| Ruta | activo | `fecha_inicio + duracion_min + 15 min` < ahora |
+| Ruta | finalizado | `fecha_fin` > `fecha_inicio + duracion_min + 15 min` |
+| Mantención | pendiente / en_proceso | `fecha_programada` < hoy |
+
+#### Permiso de plan
+
+| Código | Categoría | Migración |
+|---|---|---|
+| `rutas.gantt` | rutas | `0073_gantt_permiso.py` |
+
+Asignado automáticamente a todos los planes existentes al migrar.
+
+**Endpoint:** `GET /api/empresa/gantt/` (parámetros: `fecha_desde`, `fecha_hasta`, `tipo`, `vehiculo_id`, `conductor_id`)  
+**Vista:** `Gantt.vue` (`src/web/rutas/Gantt.vue`)  
+**Backend:** `views_rutas.py` — clase `GanttView` + helper `calcular_estado_gantt`  
+**Permiso requerido:** `rutas.gantt`
+
+---
+
 ### 9.10 Notificaciones
 
 Sistema de notificaciones in-app con soporte de WebSocket (Django Channels). Tipos: `mantencion_por_vencer`, `mantencion_vencida`, `documento_por_vencer`, `documento_vencido`, `seguridad`, `actividad`, `limite_plan`.
@@ -1250,6 +1339,7 @@ Authorization: Bearer <access_token>
 | `POST` | `/api/empresa/rutas/<id>/cancelar/` | Cancelar ruta con motivo (crea EventoRuta auto) |
 | `POST` | `/api/empresa/rutas/calcular/` | Calcular trayecto OSRM — devuelve solo `distancia_km`, `duracion_min`, `polyline` |
 | `GET/POST` | `/api/empresa/rutas/<id>/comentarios/` | GET lista eventos de la ruta; POST crea comentario manual del admin |
+| `GET` | `/api/empresa/gantt/` | Carta Gantt: rutas y mantenciones agrupadas por vehículo. Params: `fecha_desde`, `fecha_hasta`, `tipo`, `vehiculo_id`, `conductor_id`. Requiere permiso `rutas.gantt` |
 
 ### App conductores (endpoints exclusivos)
 

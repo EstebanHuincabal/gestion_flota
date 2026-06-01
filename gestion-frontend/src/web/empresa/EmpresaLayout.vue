@@ -163,12 +163,6 @@ const navItems = [
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>`,
   },
   {
-    label: 'Geolocalización',
-    path: '/empresa/geolocalizacion',
-    permiso: 'geolocalizacion.ver',
-    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 10a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 21A15 15 0 0020.24 9.76a8.25 8.25 0 00-16.48 0A15 15 0 0012 21z"/>`,
-  },
-  {
     label: 'Solicitudes',
     path: '/empresa/solicitudes',
     permiso: null,

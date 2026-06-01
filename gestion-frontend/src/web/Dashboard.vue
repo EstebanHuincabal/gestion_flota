@@ -887,5 +887,56 @@ onUnmounted(() => {
 .top-veh-monto { font-size: 0.8125rem; font-weight: 700; color: #374151; white-space: nowrap; }
 .doc-stat-row { display: flex; align-items: center; gap: 0.75rem; }
 .doc-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-header { flex-direction: column; gap: 0.625rem; }
+  .page-header > div { min-width: 0; }
+  .page-title { font-size: 1.25rem; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap: 0.625rem; }
+  .kpi-card { padding: 0.875rem 1rem; gap: 0.625rem; }
+  .kpi-value { font-size: 1.375rem; }
+  .kpi-icon { width: 38px; height: 38px; }
+  .kpi-icon svg { width: 18px; height: 18px; }
+  .charts-row, .charts-global, .bottom-row, .widgets-row { grid-template-columns: 1fr !important; }
+  .chart-wrap { height: 200px !important; padding: 0.75rem 1rem; }
+  .card-header { padding: 1rem; flex-wrap: wrap; }
+  .periodo-btns { width: 100%; justify-content: flex-start; }
+  .accesos-2x2 { grid-template-columns: repeat(2, 1fr); }
+  .accesos-top { gap: 0.4rem; }
+  .acceso-top-btn { padding: 0.45rem 0.75rem 0.45rem 0.5rem; font-size: 0.8rem; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 .doc-label { font-size: 0.875rem; color: #374151; }
 </style>

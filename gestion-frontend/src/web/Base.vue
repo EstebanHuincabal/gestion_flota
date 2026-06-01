@@ -10,6 +10,7 @@ const router = useRouter()
 const route  = useRoute()
 const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
 const navCollapsed = ref(false)
+const mobileOpen   = ref(false)
 
 const ROL_LABELS  = { SUPERADMIN: 'Super Administrador', USUARIO: 'Usuario', CONDUCTOR: 'Conductor' }
 const rolLabel    = computed(() => ROL_LABELS[usuario.value.rol] || usuario.value.rol || '')
@@ -64,11 +65,6 @@ const navOperaciones = [
     label: 'Rutas',
     path: '/rutas',
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>`
-  },
-  {
-    label: 'Geolocalización',
-    path: '/geolocalizacion',
-    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 10a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 21A15 15 0 0020.24 9.76a8.25 8.25 0 00-16.48 0A15 15 0 0012 21z"/>`,
   },
   {
     label: 'Flota',
@@ -207,7 +203,10 @@ onUnmounted(() => {
   <div class="layout">
 
     <!-- ── Sidebar ── -->
-    <aside :class="['sidebar', { collapsed: navCollapsed }]">
+    <!-- Overlay drawer mobile -->
+    <div v-if="mobileOpen" class="sidebar-overlay" @click="mobileOpen = false"/>
+
+    <aside :class="['sidebar', { collapsed: navCollapsed, 'mobile-open': mobileOpen }]">
 
       <!-- Logo / Branding -->
       <div class="sidebar-brand">
@@ -335,6 +334,13 @@ onUnmounted(() => {
     <!-- ── Contenido principal ── -->
     <main class="main-content">
       <header class="top-bar">
+        <!-- Hamburguesa — visible solo en mobile -->
+        <button class="hamburger" @click="mobileOpen = !mobileOpen" aria-label="Menú">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              :d="mobileOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'"/>
+          </svg>
+        </button>
         <div class="top-bar-spacer"/>
         <div class="top-bar-right">
           <NotificacionesBell />
@@ -388,7 +394,7 @@ onUnmounted(() => {
   background: linear-gradient(160deg, var(--sidebar-from, #4F46E5) 0%, var(--sidebar-to, #7C3AED) 100%);
   display: flex;
   flex-direction: column;
-  transition: width 0.25s ease;
+  transition: width 0.25s ease, transform 0.25s ease;
   z-index: 100;
   overflow: hidden;
 }
@@ -556,9 +562,57 @@ onUnmounted(() => {
 }
 .logout-btn-top:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
 .logout-btn-top svg { width: 16px; height: 16px; }
-.page-content { flex: 1; overflow-y: auto; }
+.page-content { flex: 1; overflow-y: auto; overflow-x: hidden; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Hamburguesa (oculta en desktop) ── */
+.hamburger {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 38px; height: 38px;
+  border: 1px solid #E5E7EB; border-radius: 8px;
+  background: #fff; cursor: pointer; color: #374151;
+  flex-shrink: 0; transition: background 0.15s;
+}
+.hamburger:hover { background: #F3F4F6; }
+.hamburger svg  { width: 20px; height: 20px; }
+
+/* ── Overlay del drawer ── */
+.sidebar-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 99;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Tablet y mobile (≤ 1024 px): sidebar pasa a drawer ── */
+@media (max-width: 1024px) {
+  .hamburger { display: flex; }
+  .collapse-btn { display: none; }
+
+  .sidebar {
+    width: 240px !important;
+    transform: translateX(-100%);
+    z-index: 200;
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .main-content { margin-left: 0 !important; }
+  /* Evitar que tablas que desbordan hagan scrollear toda la página */
+  .page-content { overflow-x: hidden; }
+
+  .top-bar { padding: 0 1rem; }
+}
+
+/* ── Pantallas pequeñas (≤ 480 px): compactar top bar ── */
+@media (max-width: 480px) {
+  .session-details { display: none; }
+  .logout-btn-top span { display: none; }
+  .logout-btn-top { padding: 0.45rem 0.625rem; }
+  .session-info { padding: 0.3rem 0.5rem; }
+}
 
 /* ── Badge de solicitudes en sidebar ── */
 .base-badge-dot {

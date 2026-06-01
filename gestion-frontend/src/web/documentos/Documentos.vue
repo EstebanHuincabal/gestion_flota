@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva } from '../../utils/empresaActiva.js'
@@ -1060,4 +1060,43 @@ onMounted(async () => {
 /* Banner info */
 .banner-info { display: flex; align-items: flex-start; gap: 0.6rem; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 0.75rem 1rem; font-size: 0.8125rem; color: #1E40AF; }
 .banner-info svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .header { flex-direction: column; align-items: stretch; gap: 0.625rem; }
+  .titulo { font-size: 1.25rem; }
+  .btn-nuevo { justify-content: center; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>

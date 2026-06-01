@@ -4,9 +4,18 @@ import { ref, onMounted, onUnmounted } from 'vue'
 const toasts = ref([])
 let nextId = 0
 
+// Normaliza los tipos (admite español e inglés) a las clases CSS disponibles.
+const ALIAS_TIPO = {
+  exito: 'success', éxito: 'success', success: 'success',
+  error: 'error',
+  advertencia: 'warning', warning: 'warning',
+  info: 'info',
+}
+
 const agregar = (mensaje, tipo = 'info', duracion = 4000) => {
   const id = ++nextId
-  toasts.value.push({ id, mensaje, tipo })
+  const tipoNorm = ALIAS_TIPO[tipo] || 'info'
+  toasts.value.push({ id, mensaje, tipo: tipoNorm })
   setTimeout(() => eliminar(id), duracion)
 }
 
@@ -14,7 +23,7 @@ const eliminar = (id) => {
   toasts.value = toasts.value.filter(t => t.id !== id)
 }
 
-const onGlobalToast = (e) => agregar(e.detail.msg, e.detail.tipo)
+const onGlobalToast = (e) => agregar(e.detail.msg ?? e.detail.mensaje, e.detail.tipo)
 
 onMounted(()   => window.addEventListener('app-toast', onGlobalToast))
 onUnmounted(() => window.removeEventListener('app-toast', onGlobalToast))
@@ -40,6 +49,10 @@ defineExpose({ agregar })
             <svg v-else-if="t.tipo === 'success'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <svg v-else-if="t.tipo === 'warning'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-2.99l-6.93-12a2 2 0 00-3.48 0l-6.93 12A2 2 0 005.07 19z"/>
             </svg>
             <svg v-else fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -89,6 +102,7 @@ defineExpose({ agregar })
 
 .toast-error   { background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; }
 .toast-success { background: #ECFDF5; border: 1px solid #A7F3D0; color: #065F46; }
+.toast-warning { background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; }
 .toast-info    { background: #EEF2FF; border: 1px solid #C7D2FE; color: #3730A3; }
 
 .toast-icon { flex-shrink: 0; }

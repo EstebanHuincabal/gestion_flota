@@ -735,11 +735,43 @@ onMounted(cargar)
 @keyframes fadeIn  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ── Responsive ──────────────────────────────────────── */
-@media (max-width: 640px) {
+@media (max-width: 1024px) {
   .page            { padding: 1.25rem 1rem; }
   .page-header     { flex-direction: column; }
   .header-acciones { width: 100%; }
   .btn-accion      { flex: 1; justify-content: center; }
   .info-grid       { grid-template-columns: 1fr; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
 }
 </style>
