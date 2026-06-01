@@ -1,9 +1,10 @@
 import json
 from urllib.parse import parse_qs
 from channels.generic.websocket import AsyncWebsocketConsumer
-from rest_framework_simplejwt.tokens import UntypedToken
-from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from channels.db import database_sync_to_async
+
+# Los imports de simplejwt se hacen de forma lazy (dentro de las funciones)
+# para evitar AppRegistryNotReady al cargar el módulo antes de django.setup().
 
 
 # ── Helpers de verificación compartidos ──────────────────────────────────────
@@ -43,9 +44,11 @@ class NotificacionesConsumer(AsyncWebsocketConsumer):
             return
 
         try:
+            from rest_framework_simplejwt.tokens import UntypedToken
+            from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
             validated = UntypedToken(token_str)
             user_id = validated['user_id']
-        except (InvalidToken, TokenError):
+        except Exception:
             await self.close(code=4001)
             return
 
@@ -81,9 +84,11 @@ class SolicitudesConsumer(AsyncWebsocketConsumer):
             return
 
         try:
+            from rest_framework_simplejwt.tokens import UntypedToken
+            from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
             validated  = UntypedToken(token_str)
             user_id    = validated['user_id']
-        except (InvalidToken, TokenError):
+        except Exception:
             await self.close(code=4001)
             return
 
@@ -128,9 +133,11 @@ class ConductorConsumer(AsyncWebsocketConsumer):
             return
 
         try:
+            from rest_framework_simplejwt.tokens import UntypedToken
+            from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
             validated = UntypedToken(token_str)
             user_id   = validated['user_id']
-        except (InvalidToken, TokenError):
+        except Exception:
             await self.close(code=4001)
             return
 
