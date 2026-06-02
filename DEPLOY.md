@@ -44,7 +44,7 @@ rsync -avz --exclude='node_modules' --exclude='.git' \
 
 ```bash
 ssh usuario@157.180.85.17
-cd /opt/gestion_flota
+cd var/www/gestion_flota
 
 # Crear .env.production a partir de la plantilla
 cp .env.production.example .env.production
