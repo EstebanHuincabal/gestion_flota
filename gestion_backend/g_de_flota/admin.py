@@ -11,6 +11,7 @@ from .models import (
     GastoOperativo, PresupuestoMensual, Documento,
     Ruta, Parada, EventoRuta, Ubicacion,
     SolicitudConductor,
+    DispositivoGPS, ConfiguracionGPS,
 )
 
 # ─────────────────────────────────────────
@@ -245,3 +246,24 @@ class SolicitudConductorAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
+
+
+# ─────────────────────────────────────────
+# Geolocalización GPS
+# ─────────────────────────────────────────
+
+@admin.register(DispositivoGPS)
+class DispositivoGPSAdmin(admin.ModelAdmin):
+    list_display   = ('imei', 'modelo', 'empresa', 'vehiculo', 'activo', 'creado_at')
+    list_filter    = ('modelo', 'activo', 'empresa')
+    search_fields  = ('imei',)
+    readonly_fields = ('creado_at',)
+    list_select_related = ('empresa', 'vehiculo')
+
+
+@admin.register(ConfiguracionGPS)
+class ConfiguracionGPSAdmin(admin.ModelAdmin):
+    list_display   = ('empresa', 'servidor_ip', 'servidor_puerto', 'protocolo', 'activo', 'actualizado_at')
+    list_filter    = ('protocolo', 'activo')
+    search_fields  = ('empresa__nombre', 'servidor_ip')
+    readonly_fields = ('actualizado_at',)

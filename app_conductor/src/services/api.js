@@ -37,7 +37,7 @@ export async function apiFetch(url, options = {}) {
       err.isNetworkError = true
       throw err
     }
-    const err = new Error('Sin conexión. Verifica tu red.')
+    const err = new Error(`Sin conexión. Verifica tu red. [${fetchErr.name}: ${fetchErr.message}]`)
     err.isNetworkError = true
     throw err
   }

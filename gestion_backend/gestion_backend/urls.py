@@ -78,6 +78,7 @@ from g_de_flota.views_solicitudes import (
     SolicitudDetailView, SolicitudAprobarView, SolicitudRechazarView,
 )
 from g_de_flota.views_calendario import calendario_eventos
+from g_de_flota import views_gps
 from g_de_flota.views_publico import PlanesPublicosView, AutoRegistroView, VerificarRutView
 
 router = DefaultRouter()
@@ -207,6 +208,16 @@ urlpatterns = [
 
     # Calendario global
     path('api/empresa/calendario/', calendario_eventos, name='calendario-eventos'),
+
+    # ── Geolocalización GPS ─────────────────────────────────────────────────────
+    path('api/empresa/gps/dispositivos/',                    views_gps.DispositivosListView.as_view(),    name='gps-dispositivos'),
+    path('api/empresa/gps/dispositivos/<int:id>/',           views_gps.DispositivoDetailView.as_view(),   name='gps-dispositivo-detalle'),
+    path('api/empresa/gps/dispositivos/<int:id>/asignar/',   views_gps.AsignarVehiculoView.as_view(),     name='gps-asignar'),
+    path('api/empresa/gps/dispositivos/<int:id>/desasignar/', views_gps.DesasignarVehiculoView.as_view(), name='gps-desasignar'),
+    path('api/empresa/gps/dispositivos/<int:id>/regenerar-clave/', views_gps.RegenerarClaveView.as_view(), name='gps-regenerar-clave'),
+    path('api/empresa/gps/posicion/',                        views_gps.PosicionView.as_view(),            name='gps-posicion'),
+    path('api/empresa/gps/vehiculos/posicion/',              views_gps.UltimasPosicionesView.as_view(),   name='gps-ultimas-posiciones'),
+    path('api/empresa/gps/configuracion/',                   views_gps.ConfiguracionGPSView.as_view(),    name='gps-configuracion'),
 
     # ── Transbank Webpay Plus ───────────────────────────────────────────────────
     path('api/pago/iniciar/',                          PagoIniciarView.as_view(),         name='pago-iniciar'),

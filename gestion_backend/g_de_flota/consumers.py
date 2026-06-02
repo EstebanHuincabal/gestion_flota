@@ -166,3 +166,62 @@ class ConductorConsumer(AsyncWebsocketConsumer):
         }))
 
 
+class GPSConsumer(AsyncWebsocketConsumer):
+    """
+    Canal WebSocket para el mapa de flota en tiempo real (panel web).
+
+    El panel se suscribe al grupo `gps_{empresa_id}` y recibe un evento
+    `position_update` cada vez que un dispositivo GPS de la empresa reporta
+    una nueva posición al endpoint de ingesta.
+
+    Autenticación: JWT en query param ?token=<access_token>. Además se valida
+    que el usuario pertenezca a la empresa del canal (SUPERADMIN pasa siempre).
+    """
+
+    async def connect(self):
+        qs        = parse_qs(self.scope['query_string'].decode())
+        token_str = qs.get('token', [None])[0]
+
+        if not token_str:
+            await self.close(code=4001)
+            return
+
+        try:
+            from rest_framework_simplejwt.tokens import UntypedToken
+            validated = UntypedToken(token_str)
+            user_id   = validated['user_id']
+        except Exception:
+            await self.close(code=4001)
+            return
+
+        empresa_id = self.scope['url_route']['kwargs'].get('empresa_id')
+        ok         = await _verificar_empresa_db(user_id, empresa_id)
+        if not ok:
+            await self.close(code=4003)
+            return
+
+        self.group_name = f'gps_{empresa_id}'
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def position_update(self, event):
+        """Reenvía la posición de un vehículo al cliente del mapa."""
+        await self.send(text_data=json.dumps({
+            'type':        'position_update',
+            'vehiculo_id': event['vehiculo_id'],
+            'patente':     event['patente'],
+            'latitud':     event['latitud'],
+            'longitud':    event['longitud'],
+            'velocidad':   event['velocidad'],
+            'timestamp':   event['timestamp'],
+        }))
+
+    async def rutas_cambiadas(self, event):
+        """Avisa al mapa que las rutas activas cambiaron (recargar trazados)."""
+        await self.send(text_data=json.dumps({'type': 'rutas_cambiadas'}))
+
+

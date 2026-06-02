@@ -14,6 +14,7 @@ from .models import (
     Rol, Ruta, TipoNotificacion, Usuario, Vehiculo,
 )
 from .ruta_calculator import calcular_ruta_osrm, calcular_ruta_fallback
+from .views_gps import notificar_rutas_cambiadas
 
 
 # ─────────────────────────────────────────
@@ -732,6 +733,8 @@ class RutaIniciarView(APIView):
                         titulo='Ruta iniciada 🚛',
                         cuerpo=f"La ruta '{ruta.nombre}' ha comenzado.",
                         data={'tipo': 'ruta_iniciada', 'ruta_id': str(ruta.id)})
+        # Avisar al mapa de flota para que dibuje el trazado en tiempo real
+        notificar_rutas_cambiadas(ruta.empresa_id)
         return Response(_ruta_dict(ruta, detalle=True))
 
 
@@ -786,6 +789,8 @@ class RutaFinalizarView(APIView):
                         titulo='Ruta finalizada ✓',
                         cuerpo=f"'{ruta.nombre}' completada{_km_msg}.",
                         data={'tipo': 'ruta_finalizada', 'ruta_id': str(ruta.id)})
+        # Avisar al mapa de flota para que quite el trazado en tiempo real
+        notificar_rutas_cambiadas(ruta.empresa_id)
         return Response(_ruta_dict(ruta, detalle=True))
 
 
@@ -825,6 +830,8 @@ class RutaCancelarView(APIView):
                         titulo='Ruta cancelada',
                         cuerpo=f"'{ruta.nombre}' fue cancelada.{_motivo_txt}",
                         data={'tipo': 'ruta_cancelada', 'ruta_id': str(ruta.id)})
+        # Avisar al mapa de flota para que quite el trazado en tiempo real
+        notificar_rutas_cambiadas(ruta.empresa_id)
         return Response(_ruta_dict(ruta))
 
 

@@ -16,6 +16,7 @@ from .notificaciones import notificar_admins_empresa
 from .firebase_push import enviar_push
 from .checklist_items import get_items, ITEMS_MAP, MAP_DOC_ITEM
 from .views_rutas import _validar_anticipacion_inicio
+from .views_gps import notificar_rutas_cambiadas
 
 
 # ─────────────────────────────────────────
@@ -421,6 +422,8 @@ def conductor_iniciar_ruta(request, ruta_id):
                                  f"{_nombre_c} inició la ruta '{ruta.nombre}'.",
                                  url_accion='/empresa/rutas')
 
+    # Avisar al mapa de flota para que dibuje el trazado en tiempo real
+    notificar_rutas_cambiadas(ruta.empresa_id)
     return Response({'ok': True, 'ruta': _serializar_ruta(ruta)})
 
 
@@ -475,6 +478,8 @@ def conductor_finalizar_ruta(request, ruta_id):
                                  f"{_nombre_cf} finalizó la ruta '{ruta.nombre}'{_km_txt}.",
                                  url_accion='/empresa/rutas')
 
+    # Avisar al mapa de flota para que quite el trazado en tiempo real
+    notificar_rutas_cambiadas(ruta.empresa_id)
     return Response({'ok': True, 'ruta': _serializar_ruta(ruta)})
 
 
