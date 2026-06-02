@@ -175,8 +175,12 @@ const guardarPlan = async () => {
   }
   guardandoPlan.value = true
   try {
+    // Derivar módulos desde los prefijos de los permisos seleccionados
+    const modulos = [...new Set(permisosPlan.value.map(p => p.split('.')[0]))]
+
     const body = {
       ...formPlan.value,
+      modulos,
       precio_mensual: formPlan.value.precio_mensual === '' ? null : Number(formPlan.value.precio_mensual),
     }
     const url    = editandoPlan.value ? `/api/configuracion/planes/${editandoPlan.value.id}/` : '/api/configuracion/planes/'
