@@ -12,9 +12,6 @@ echo.
 :: Posicionarse en la raiz del monorepo (donde esta este .bat)
 cd /d "%~dp0"
 
-:: URL del backend de produccion
-set VITE_API_URL=http://157.180.85.17
-
 :: ─────────────────────────────────────────
 echo [1/4] Instalando dependencias npm...
 :: ─────────────────────────────────────────
@@ -26,13 +23,25 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+cd ..
 
 :: ─────────────────────────────────────────
 echo.
-echo [2/4] Compilando con Vite ^(modo produccion^)...
+echo [2/4] Compilando con Vite (modo produccion)...
 :: ─────────────────────────────────────────
+
+:: Reemplazar VITE_API_URL en .env con la URL de produccion y hacer backup
+powershell -Command "Copy-Item .env .env.bak -Force; (Get-Content .env -Raw) -replace 'VITE_API_URL=[^\r\n]*', 'VITE_API_URL=http://157.180.85.17' | Set-Content .env -NoNewline"
+
+cd app_conductor
 call npm run build
-if errorlevel 1 (
+set BUILD_ERR=%errorlevel%
+cd ..
+
+:: Restaurar .env original siempre, haya fallado o no
+powershell -Command "if (Test-Path .env.bak) { Copy-Item .env.bak .env -Force; Remove-Item .env.bak -Force }"
+
+if %BUILD_ERR% neq 0 (
     echo.
     echo  ERROR: fallo vite build
     pause
@@ -43,6 +52,7 @@ if errorlevel 1 (
 echo.
 echo [3/4] Sincronizando assets con Capacitor...
 :: ─────────────────────────────────────────
+cd app_conductor
 call npx cap sync android
 if errorlevel 1 (
     echo.
