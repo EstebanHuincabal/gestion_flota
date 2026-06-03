@@ -63,8 +63,13 @@ Los campos a rellenar:
 | `SECRET_KEY` | Cadena aleatoria larga — genera con: `python3 -c "import secrets;print(secrets.token_urlsafe(64))"` |
 | `ENCRYPTION_KEY` | Clave estable del cifrado de datos — **guárdala a buen recaudo, no la cambies** |
 | `FERNET_KEY` | Genera con: `python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` |
+| `TRACCAR_USER` | Email del admin de Traccar (ej: `admin@tudominio.cl`). Se **crea solo** en el primer arranque. |
+| `TRACCAR_PASSWORD` | Contraseña de ese admin. Con ella entras a la web de Traccar (`:8082`). |
+| `GPS_WEBHOOK_KEY` | Opcional. Clave para proteger el webhook Traccar→backend (déjala vacía si no la usas). |
 
-Los demás valores ya están configurados (PostgreSQL, Redis, IP del servidor).
+> ⚠️ Evita el carácter `|` en `POSTGRES_PASSWORD`: el `traccar.xml` se genera con `sed` y ese carácter es el delimitador.
+
+Los demás valores ya están configurados (PostgreSQL, Redis, IP del servidor, `TRACCAR_URL`).
 
 ---
 
@@ -78,12 +83,16 @@ docker compose --env-file .env.production up --build -d
 ```
 
 Al ejecutarse, automáticamente:
-1. Arranca PostgreSQL y espera a que esté listo (healthcheck).
+1. Arranca PostgreSQL, crea la base de Django y la base `traccar`, y espera a que esté listo (healthcheck).
 2. Arranca Redis.
 3. El backend instala las dependencias Python, ejecuta `migrate` y `collectstatic`, y levanta Daphne (HTTP + WebSockets).
-4. El frontend construye el SPA con Vite y Nginx lo sirve en el puerto 80.
+4. **Traccar** (gateway GPS) genera su `traccar.xml` desde la plantilla, arranca y queda escuchando los protocolos GPS y su web/API en `:8082`.
+5. **`traccar-init`** espera a Traccar, crea el usuario administrador (`TRACCAR_USER` / `TRACCAR_PASSWORD`) de forma idempotente y termina.
+6. El frontend construye el SPA con Vite y Nginx lo sirve en el puerto 80.
 
 El sistema queda disponible en: **http://157.180.85.17**
+
+> El servicio `traccar-init` aparecerá como `Exited (0)` en `docker compose ps` cuando termina: es lo esperado, hizo su trabajo una sola vez.
 
 ---
 
@@ -137,9 +146,10 @@ Los datos no se pierden al reconstruir las imágenes porque están en volúmenes
 
 | Volumen | Contenido |
 |---|---|
-| `pgdata` | Base de datos PostgreSQL |
+| `pgdata` | Base de datos PostgreSQL (Django **y** Traccar) |
 | `media_volume` | Archivos subidos (documentos, fotos, comprobantes) |
 | `static_volume` | Estáticos del admin de Django |
+| `traccar_data` | Datos internos de Traccar (logs, archivos del gateway) |
 
 Para hacer un backup de la base de datos:
 
@@ -161,3 +171,49 @@ cat backup_YYYYMMDD.sql | docker compose exec -T db psql -U gsdm_user -d Gestion
 - Si cambias `ENCRYPTION_KEY`, los datos cifrados (RUT, email, patente, GPS, etc.) dejan de ser legibles. **No la cambies una vez en producción.**
 - WebSockets (`/ws/`) funcionan sobre el mismo puerto 80 gracias al proxy de Nginx.
 - El frontend en producción llama a `/api/` con rutas relativas → mismo origen, sin CORS.
+
+---
+
+## 9. Traccar (gateway GPS)
+
+Traccar recibe a los dispositivos GPS físicos (~200 protocolos) y reenvía cada
+posición al backend. **No requiere configuración manual**: el `traccar.xml` se
+genera al arrancar desde `traccar.xml.template` con las credenciales de la base, y
+el servicio `traccar-init` crea el administrador solo.
+
+- **Web/API de Traccar:** `http://157.180.85.17:8082` — entra con `TRACCAR_USER` / `TRACCAR_PASSWORD`.
+- **Alta automática de dispositivos:** al registrar un GPS en el panel (Flota → GPS),
+  el backend lo crea también en Traccar vía su API REST (`traccar_client.py`).
+- **Puertos GPS:** el rango `5000-5150` (TCP/UDP) y `5055/udp` (OsmAnd) quedan
+  expuestos para que los dispositivos físicos se conecten. En cada GPS hay que
+  configurar la IP pública del servidor y el puerto del protocolo que corresponda.
+
+### Crear el admin a mano (si hiciera falta)
+
+El `traccar-init` lo hace solo, pero si necesitas recrearlo (ej: olvidaste la
+contraseña), el procedimiento manual es:
+
+```bash
+# 1. Habilitar el registro en la base de Traccar
+docker compose exec db psql -U <POSTGRES_USER> -d traccar \
+  -c "UPDATE tc_servers SET registration = TRUE;"
+
+# 2. Crear el usuario (el primero se vuelve administrador)
+curl -X POST http://localhost:8082/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Administrador","email":"admin@tudominio.cl","password":"TU_PASSWORD"}'
+
+# 3. Volver a cerrar el registro
+docker compose exec db psql -U <POSTGRES_USER> -d traccar \
+  -c "UPDATE tc_servers SET registration = FALSE;"
+```
+
+### Base de datos de Traccar
+
+Traccar usa la base `traccar` dentro del mismo PostgreSQL. Se crea sola en el
+primer arranque (`docker/db-init/01-create-traccar-db.sql`). En un despliegue ya
+existente (volumen `pgdata` no vacío) hay que crearla una vez a mano:
+
+```bash
+docker compose exec db psql -U <POSTGRES_USER> -c "CREATE DATABASE traccar;"
+```

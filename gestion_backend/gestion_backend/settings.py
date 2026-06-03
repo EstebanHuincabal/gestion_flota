@@ -198,6 +198,17 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:7183')
 ONECLICK_COMMERCE_CODE = os.environ.get('ONECLICK_COMMERCE_CODE', '597055555541')
 ONECLICK_CHILD_CODE    = os.environ.get('ONECLICK_CHILD_CODE',    '597055555542')
 
+# Clave del webhook de Traccar (gateway GPS). Si está vacía, el endpoint no
+# exige autenticación (útil en desarrollo). En producción definir un valor y
+# configurar Traccar para enviarlo en el header X-Webhook-Key.
+GPS_WEBHOOK_KEY = os.getenv('GPS_WEBHOOK_KEY', '')
+
+# Sincronización con Traccar (alta/baja automática de dispositivos).
+# Si TRACCAR_URL está vacío, la sincronización queda desactivada (dev sin Traccar).
+TRACCAR_URL      = os.getenv('TRACCAR_URL', '')          # ej: http://traccar:8082
+TRACCAR_USER     = os.getenv('TRACCAR_USER', 'admin')
+TRACCAR_PASSWORD = os.getenv('TRACCAR_PASSWORD', '')
+
 # En producción usa Redis (si REDIS_URL está definido); en dev, capa en memoria.
 REDIS_URL = os.getenv('REDIS_URL')
 if REDIS_URL:

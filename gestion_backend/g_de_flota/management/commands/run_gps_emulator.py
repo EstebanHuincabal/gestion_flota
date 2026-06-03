@@ -35,6 +35,9 @@ class Command(BaseCommand):
                             help='URL base del backend (default: http://localhost:8000).')
         parser.add_argument('--intervalo', type=int, default=5,
                             help='Segundos entre reportes de posición (default: 5).')
+        parser.add_argument('--traccar', type=str, default='',
+                            help='URL del protocolo OsmAnd de Traccar (ej: http://localhost:5055). '
+                                 'Si se indica, el emulador envía a Traccar en vez de al endpoint directo.')
 
     def handle(self, *args, **opts):
         qs = DispositivoGPS.objects.filter(activo=True, vehiculo__isnull=False)
@@ -69,6 +72,7 @@ class Command(BaseCommand):
                 intervalo_seg=opts['intervalo'],
                 ruta_puntos=ruta_puntos,
                 api_key=d.api_key,   # autenticar la ingesta si el dispositivo tiene clave
+                traccar_url=opts['traccar'],   # si se indica, envía por Traccar (OsmAnd)
             )
             emu.connect()
             emuladores.append(emu)
@@ -84,8 +88,12 @@ class Command(BaseCommand):
                     f'(vehículo {d.vehiculo.patente} — sin ruta activa)'
                 ))
 
+        destino = f"Traccar OsmAnd ({opts['traccar']})" if opts['traccar'] else f"endpoint directo ({opts['api_url']})"
         self.stdout.write(self.style.NOTICE(
-            f'\n{len(emuladores)} emulador(es) activos. Ctrl+C para detener.\n'
+            f'\nEnviando a: {destino}'
+        ))
+        self.stdout.write(self.style.NOTICE(
+            f'{len(emuladores)} emulador(es) activos. Ctrl+C para detener.\n'
         ))
 
         try:

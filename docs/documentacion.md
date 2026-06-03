@@ -1139,6 +1139,55 @@ Panel de configuración personal con cuatro secciones:
 
 ---
 
+### 9.16 Geolocalización GPS (Traccar)
+
+Permite seguir la flota en tiempo real en un mapa. El sistema es **agnóstico al
+hardware**: usa [Traccar](https://www.traccar.org/) como *gateway* que recibe a los
+dispositivos GPS físicos (~200 protocolos) y reenvía cada posición al backend.
+
+**Flujo de datos:**
+
+```
+GPS físico ──(protocolo del fabricante)──▶ Traccar ──(forward JSON)──▶ backend
+                                                                          │
+                       emulador ──(OsmAnd / endpoint directo)────────────┤
+                                                                          ▼
+                                              Ubicacion + WebSocket ▶ Mapa de flota
+```
+
+- **Alta automática en Traccar:** al registrar un GPS en el panel (Flota → GPS), el
+  backend lo crea también en Traccar por su API REST (`traccar_client.py`,
+  *fail-silent*: si Traccar no responde, no bloquea la operación). El dispositivo se
+  identifica por `uniqueId = IMEI`; el nombre en Traccar es la patente del vehículo.
+- **Ingesta de posiciones:** `TraccarWebhookView` (`/api/empresa/gps/traccar/`) recibe
+  el *position forwarding* de Traccar (convierte la velocidad de nudos a km/h). Existe
+  además `PosicionView` (`/api/empresa/gps/posicion/`) para dispositivos que hablan HTTP
+  directo, autenticados por `api_key`.
+- **Tiempo real:** cada posición crea una `Ubicacion` y se emite por WebSocket al grupo
+  `gps_{empresa_id}` para que `MapaFlota.vue` mueva los marcadores sin recargar.
+- **Emulador de pruebas:** `python manage.py run_gps_emulator` recorre rutas reales de
+  Santiago. Con `--traccar http://localhost:5055` entra por Traccar (protocolo OsmAnd);
+  sin ese flag envía al endpoint directo. Requiere un dispositivo modelo `emulador`
+  activo y con vehículo asignado.
+
+**Configuración (settings / variables de entorno):**
+
+| Variable | Uso |
+|---|---|
+| `TRACCAR_URL` | Base de la API de Traccar. Vacía = sincronización desactivada (dev sin Traccar). |
+| `TRACCAR_USER` / `TRACCAR_PASSWORD` | Credenciales del admin de Traccar para la sincronización. |
+| `GPS_WEBHOOK_KEY` | Clave opcional que protege el webhook Traccar→backend (header `X-Webhook-Key`). |
+
+**Producción (docker-compose):** Traccar corre como servicio sobre PostgreSQL (base
+`traccar`), genera su `traccar.xml` desde `traccar.xml.template` y el servicio
+`traccar-init` crea el administrador automáticamente en el primer arranque. Detalles en
+[`DEPLOY.md`](../DEPLOY.md) §9.
+
+**Backend:** `views_gps.py` · `traccar_client.py` · `gps_providers/` (adaptadores) ·
+**Frontend:** `GestionGPS.vue` · `MapaFlota.vue`
+
+---
+
 ## 10. Referencia de la API REST
 
 Todos los endpoints (excepto `/api/login/` y `/api/token/refresh/`) requieren el header:

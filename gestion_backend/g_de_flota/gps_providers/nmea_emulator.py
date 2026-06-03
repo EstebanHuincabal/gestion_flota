@@ -17,6 +17,7 @@ Uso típico (desde un script o shell de Django):
 import json
 import random
 import threading
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
@@ -93,11 +94,15 @@ class NMEAEmulatorAdapter(IGPSProvider):
     """Adaptador que emula un rastreador GPS recorriendo una ruta de Santiago."""
 
     def __init__(self, imei: str, api_url: str, intervalo_seg: int = 5,
-                 ruta_puntos: Optional[list] = None, api_key: str = ''):
+                 ruta_puntos: Optional[list] = None, api_key: str = '',
+                 traccar_url: str = ''):
         self.imei          = imei
         self.api_url       = api_url.rstrip('/')
         self.intervalo_seg = intervalo_seg
         self.api_key       = api_key
+        # Si se define, el emulador envía al protocolo OsmAnd de Traccar (HTTP GET)
+        # en vez de a nuestro endpoint directo. Simula un GPS real entrando por Traccar.
+        self.traccar_url   = traccar_url.rstrip('/') if traccar_url else ''
 
         if ruta_puntos and len(ruta_puntos) >= 2:
             # Recorrer la ruta REAL asignada (polyline OSRM `[[lat, lng], ...]`).
@@ -246,6 +251,13 @@ class NMEAEmulatorAdapter(IGPSProvider):
         self._enviar_posicion(posicion)
 
     def _enviar_posicion(self, posicion: Dict) -> None:
+        """Envía la posición: a Traccar (OsmAnd) si hay traccar_url, si no a nuestro endpoint."""
+        if self.traccar_url:
+            self._enviar_a_traccar(posicion)
+        else:
+            self._enviar_a_endpoint(posicion)
+
+    def _enviar_a_endpoint(self, posicion: Dict) -> None:
         """POST {api_url}/api/empresa/gps/posicion/ con el IMEI y la posición."""
         cuerpo = {
             'imei':      self.imei,
@@ -267,4 +279,23 @@ class NMEAEmulatorAdapter(IGPSProvider):
             urllib.request.urlopen(req, timeout=10)
         except Exception:
             # El emulador no debe caerse si el backend no responde un tick.
+            pass
+
+    def _enviar_a_traccar(self, posicion: Dict) -> None:
+        """GET {traccar_url}/?id=IMEI&lat=..&lon=..&speed=<nudos> — protocolo OsmAnd.
+
+        Simula un GPS real que entra por Traccar. Traccar lo recibe, lo procesa
+        y lo reenvía (forward) a nuestro endpoint /api/empresa/gps/traccar/.
+        OsmAnd interpreta la velocidad en nudos, así que convertimos km/h → nudos.
+        """
+        params = urllib.parse.urlencode({
+            'id':        self.imei,
+            'lat':       posicion['latitud'],
+            'lon':       posicion['longitud'],
+            'speed':     round((posicion['velocidad'] or 0) / 1.852, 2),  # km/h → nudos
+            'timestamp': posicion['timestamp'],
+        })
+        try:
+            urllib.request.urlopen(f"{self.traccar_url}/?{params}", timeout=10)
+        except Exception:
             pass

@@ -29,6 +29,14 @@ from .models import (
 )
 from .error_helpers import error_response
 from .audit import registrar_log
+from . import traccar_client
+
+
+def _nombre_traccar(dispositivo):
+    """Nombre visible en Traccar: patente del vehículo si lo tiene, si no el IMEI."""
+    if dispositivo.vehiculo_id and dispositivo.vehiculo:
+        return dispositivo.vehiculo.patente
+    return dispositivo.imei
 
 
 # ── Helpers locales (evitan import circular con views.py) ─────────────────────
@@ -163,6 +171,9 @@ class DispositivosListView(APIView):
             activo=bool(activo),
             api_key=secrets.token_urlsafe(32),   # secreto de ingesta, generado por el sistema
         )
+        # Alta automática en Traccar (si está configurado)
+        traccar_client.sincronizar_dispositivo(dispositivo.imei, _nombre_traccar(dispositivo))
+
         registrar_log('ACTIVIDAD', 'gps_dispositivo_creado', request, detalle={
             'imei': dispositivo.imei,
             'modelo': dispositivo.modelo,
@@ -210,6 +221,7 @@ class DispositivoDetailView(APIView):
             return error_response('Dispositivo no encontrado.', 'NO_ENCONTRADO', 404)
 
         cambios = []
+        imei_anterior = dispositivo.imei
 
         if 'imei' in request.data:
             nuevo_imei = (request.data.get('imei') or '').strip()
@@ -237,6 +249,11 @@ class DispositivoDetailView(APIView):
                 dispositivo.activo = nuevo_activo
 
         dispositivo.save()
+
+        # Reflejar el cambio de IMEI en Traccar (si cambió)
+        if 'imei' in cambios:
+            traccar_client.cambiar_imei(imei_anterior, dispositivo.imei, _nombre_traccar(dispositivo))
+
         registrar_log('ACTIVIDAD', 'gps_dispositivo_editado', request, detalle={
             'imei': dispositivo.imei,
             'cambios': cambios,
@@ -259,6 +276,9 @@ class DispositivoDetailView(APIView):
             dispositivo.vehiculo = None
             dispositivo.save(update_fields=['vehiculo'])
         dispositivo.delete()
+
+        # Baja automática en Traccar
+        traccar_client.eliminar_dispositivo(imei)
 
         registrar_log('ACTIVIDAD', 'gps_dispositivo_eliminado', request, detalle={
             'imei': imei,
@@ -298,6 +318,9 @@ class AsignarVehiculoView(APIView):
         dispositivo.vehiculo = vehiculo
         dispositivo.save(update_fields=['vehiculo'])
 
+        # Renombrar en Traccar con la patente para identificarlo fácil
+        traccar_client.renombrar_dispositivo(dispositivo.imei, vehiculo.patente)
+
         registrar_log('ACTIVIDAD', 'gps_asignado', request, detalle={
             'imei': dispositivo.imei,
             'vehiculo_id': vehiculo.id,
@@ -323,6 +346,9 @@ class DesasignarVehiculoView(APIView):
         patente = dispositivo.vehiculo.patente if dispositivo.vehiculo_id else None
         dispositivo.vehiculo = None
         dispositivo.save(update_fields=['vehiculo'])
+
+        # Al quedar sin vehículo, el nombre en Traccar vuelve a ser el IMEI
+        traccar_client.renombrar_dispositivo(dispositivo.imei, dispositivo.imei)
 
         registrar_log('ACTIVIDAD', 'gps_desasignado', request, detalle={
             'imei': dispositivo.imei,
@@ -359,10 +385,33 @@ class RegenerarClaveView(APIView):
         return Response({'api_key': dispositivo.api_key})
 
 
-# ── Ingesta de posición (sin JWT — autenticación por IMEI + clave) ────────────
+# ── Ingesta de posición (sin JWT) ─────────────────────────────────────────────
+
+def _registrar_posicion(dispositivo, lat, lng, vel):
+    """Crea la Ubicacion del vehículo y emite la posición por WebSocket.
+
+    Reutilizado por la ingesta directa (PosicionView) y por el webhook de
+    Traccar (TraccarWebhookView).
+    """
+    ubicacion = Ubicacion.objects.create(
+        vehiculo=dispositivo.vehiculo,
+        latitud=lat,
+        longitud=lng,
+        velocidad=vel,
+    )
+    _broadcast_posicion(dispositivo.empresa_id, {
+        'vehiculo_id': dispositivo.vehiculo_id,
+        'patente':     dispositivo.vehiculo.patente,
+        'latitud':     lat,
+        'longitud':    lng,
+        'velocidad':   vel,
+        'timestamp':   ubicacion.timestamp.isoformat(),
+    })
+    return ubicacion
+
 
 class PosicionView(APIView):
-    """Endpoint que llaman los dispositivos GPS (emulador o físico).
+    """Endpoint que llaman los dispositivos GPS que hablan HTTP (o el emulador).
 
     No requiere JWT: el dispositivo se identifica por su IMEI. Crea una
     `Ubicacion` para el vehículo asignado y emite la posición por WebSocket.
@@ -400,22 +449,65 @@ class PosicionView(APIView):
         except (TypeError, ValueError):
             return error_response('Coordenadas inválidas.', 'VALIDACION', 400)
 
-        ubicacion = Ubicacion.objects.create(
-            vehiculo=dispositivo.vehiculo,
-            latitud=lat,
-            longitud=lng,
-            velocidad=vel,
+        _registrar_posicion(dispositivo, lat, lng, vel)
+        return Response({'ok': True})
+
+
+# ── Webhook de Traccar (gateway "cualquier GPS") ──────────────────────────────
+
+class TraccarWebhookView(APIView):
+    """Recibe el *position forwarding* de Traccar y registra la posición.
+
+    Traccar (auto-hospedado) recibe a los GPS físicos en sus ~200 protocolos y
+    reenvía cada posición a este endpoint como JSON:
+
+        { "device": {"uniqueId": "<IMEI>"},
+          "position": {"latitude": .., "longitude": .., "speed": <nudos>} }
+
+    El dispositivo se identifica por IMEI (`device.uniqueId`). La velocidad de
+    Traccar viene en NUDOS y se convierte a km/h. El canal Traccar→servidor se
+    protege con una clave de webhook global opcional (settings.GPS_WEBHOOK_KEY),
+    enviada por Traccar en el header `X-Webhook-Key` o el query param `?key=`.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        from django.conf import settings
+
+        clave_cfg = getattr(settings, 'GPS_WEBHOOK_KEY', '') or ''
+        if clave_cfg:
+            provista = request.headers.get('X-Webhook-Key') or request.query_params.get('key', '')
+            if provista != clave_cfg:
+                return error_response('Webhook no autorizado.', 'SIN_AUTENTICACION', 401)
+
+        device   = request.data.get('device') or {}
+        position = request.data.get('position') or {}
+        imei = (device.get('uniqueId') or '').strip()
+        if not imei:
+            return error_response('Falta device.uniqueId (IMEI).', 'VALIDACION', 400)
+
+        dispositivo = (
+            DispositivoGPS.objects
+            .select_related('vehiculo', 'empresa')
+            .filter(imei=imei)
+            .first()
         )
+        if not dispositivo:
+            # 200 para que Traccar no reintente indefinidamente un IMEI no registrado.
+            return Response({'ok': False, 'motivo': 'IMEI no registrado en el sistema.'})
+        if not dispositivo.activo or not dispositivo.vehiculo_id:
+            return Response({'ok': False, 'motivo': 'Dispositivo inactivo o sin vehículo.'})
 
-        _broadcast_posicion(dispositivo.empresa_id, {
-            'vehiculo_id': dispositivo.vehiculo_id,
-            'patente':     dispositivo.vehiculo.patente,
-            'latitud':     lat,
-            'longitud':    lng,
-            'velocidad':   vel,
-            'timestamp':   ubicacion.timestamp.isoformat(),
-        })
+        try:
+            lat = float(position.get('latitude'))
+            lng = float(position.get('longitude'))
+            vel_nudos = float(position.get('speed', 0) or 0)
+        except (TypeError, ValueError):
+            return error_response('Posición inválida.', 'VALIDACION', 400)
 
+        vel_kmh = round(vel_nudos * 1.852, 1)  # Traccar entrega la velocidad en nudos
+        _registrar_posicion(dispositivo, lat, lng, vel_kmh)
         return Response({'ok': True})
 
 

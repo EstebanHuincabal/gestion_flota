@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM 'http://java.sun.com/dtd/properties.dtd'>
+<properties>
+
+    <!-- PLANTILLA de configuración de Traccar para PRODUCCIÓN (docker-compose).
+         El servicio 'traccar' reemplaza __DB_USER__ y __DB_PASS__ con las
+         credenciales de PostgreSQL (env) al arrancar y escribe el traccar.xml
+         final. Así no se versionan secretos en git. -->
+
+    <!-- Base de datos: PostgreSQL compartido (servicio 'db'), base 'traccar'. -->
+    <entry key='database.driver'>org.postgresql.Driver</entry>
+    <entry key='database.url'>jdbc:postgresql://db:5432/traccar</entry>
+    <entry key='database.user'>__DB_USER__</entry>
+    <entry key='database.password'>__DB_PASS__</entry>
+
+    <!-- Reenvío de cada posición al backend (mismo nombre de servicio en la red
+         interna de docker-compose). -->
+    <entry key='forward.enable'>true</entry>
+    <entry key='forward.url'>http://backend:8000/api/empresa/gps/traccar/</entry>
+    <entry key='forward.type'>json</entry>
+
+</properties>

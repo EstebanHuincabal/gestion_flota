@@ -4,6 +4,8 @@ services:
     env_file: .env.production
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Crea la base 'traccar' en el primer arranque (junto a la de Django).
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -14,6 +16,47 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+
+  # Gateway GPS: recibe los dispositivos físicos en ~200 protocolos y reenvía
+  # cada posición al backend. Los datos quedan dentro del servidor.
+  # La config se genera al arrancar desde traccar.xml.template inyectando las
+  # credenciales de PostgreSQL (sin secretos versionados en git).
+  traccar:
+    image: traccar/traccar:latest
+    env_file: .env.production
+    volumes:
+      - ./traccar.xml.template:/opt/traccar/conf/traccar.xml.template:ro
+      - traccar_data:/opt/traccar/data
+    ports:
+      - "5000-5150:5000-5150"     # rango de protocolos GPS (TCP/UDP)
+      - "5055:5055/udp"           # OsmAnd (UDP)
+      - "8082:8082"               # interfaz web/API de Traccar
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        sed -e "s|__DB_USER__|$$POSTGRES_USER|g"
+            -e "s|__DB_PASS__|$$POSTGRES_PASSWORD|g"
+            /opt/traccar/conf/traccar.xml.template > /opt/traccar/conf/traccar.xml &&
+        cd /opt/traccar &&
+        exec ./jre/bin/java -jar tracker-server.jar conf/traccar.xml
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # Servicio efímero: crea el administrador de Traccar la primera vez y termina.
+  traccar-init:
+    image: alpine:3.20
+    env_file: .env.production
+    volumes:
+      - ./docker/traccar-init.sh:/init.sh:ro
+    command: ["/bin/sh", "/init.sh"]
+    depends_on:
+      traccar:
+        condition: service_started
+    restart: "no"
 
   backend:
     build: ./gestion_backend
@@ -48,3 +91,4 @@ volumes:
   pgdata:
   static_volume:
   media_volume:
+  traccar_data:

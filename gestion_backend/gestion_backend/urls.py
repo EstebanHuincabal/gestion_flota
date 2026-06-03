@@ -48,6 +48,7 @@ from g_de_flota.views_reportes import (
     reporte_mantencion, reporte_flota, reporte_exportar, reporte_admin_empresas,
     reporte_tco, reporte_conductores,
     reporte_presupuesto, reporte_documentos, reporte_combustible,
+    reporte_rutas, reporte_solicitudes,
 )
 from g_de_flota.views_documentos import (
     DocumentosListView, DocumentoDetailView,
@@ -177,6 +178,8 @@ urlpatterns = [
     path('api/empresa/reportes/presupuesto/',  reporte_presupuesto,   name='reporte-presupuesto'),
     path('api/empresa/reportes/documentos/',   reporte_documentos,    name='reporte-documentos'),
     path('api/empresa/reportes/combustible/',  reporte_combustible,   name='reporte-combustible'),
+    path('api/empresa/reportes/rutas/',        reporte_rutas,         name='reporte-rutas'),
+    path('api/empresa/reportes/solicitudes/',  reporte_solicitudes,   name='reporte-solicitudes'),
     path('api/admin/reportes/empresas/',       reporte_admin_empresas, name='reporte-admin-empresas'),
 
     # App conductores — endpoints exclusivos para la app móvil
@@ -216,6 +219,7 @@ urlpatterns = [
     path('api/empresa/gps/dispositivos/<int:id>/desasignar/', views_gps.DesasignarVehiculoView.as_view(), name='gps-desasignar'),
     path('api/empresa/gps/dispositivos/<int:id>/regenerar-clave/', views_gps.RegenerarClaveView.as_view(), name='gps-regenerar-clave'),
     path('api/empresa/gps/posicion/',                        views_gps.PosicionView.as_view(),            name='gps-posicion'),
+    path('api/empresa/gps/traccar/',                         views_gps.TraccarWebhookView.as_view(),      name='gps-traccar'),
     path('api/empresa/gps/vehiculos/posicion/',              views_gps.UltimasPosicionesView.as_view(),   name='gps-ultimas-posiciones'),
     path('api/empresa/gps/configuracion/',                   views_gps.ConfiguracionGPSView.as_view(),    name='gps-configuracion'),
 

@@ -7,8 +7,7 @@ Chart.register(...registerables)
 
 const toast = useToast()
 
-// ── Tabs
-const tabActivo = ref('mantencion')
+// (vista de página única — sin tabs)
 
 // ── Estado
 const cargando         = ref(false)
@@ -20,6 +19,8 @@ const datosConductores = ref(null)
 const datosDocumentos  = ref(null)
 const datosCombustible = ref(null)
 const datosPpto        = ref(null)
+const datosRutas       = ref(null)
+const datosSolicitudes = ref(null)
 const vehiculos        = ref([])
 
 // ── Filtros mantenciones
@@ -58,7 +59,7 @@ const ESTADO = {
   cancelada:  { bg: '#FEF2F2', text: '#DC2626', label: 'Cancelada'   },
 }
 
-// ── Charts
+// ── Charts (originales)
 const chartCanvas      = ref(null)
 const chartTcoCanvas   = ref(null)
 const chartPptoCanvas  = ref(null)
@@ -70,8 +71,25 @@ let chartPptoInstance  = null
 let chartCombBarInst   = null
 let chartCombLineInst  = null
 
+// ── Charts (nuevos)
+const chartDonaGastos  = ref(null)   // dona distribución gastos por categoría
+const chartGastoMes    = ref(null)   // línea gasto total mensual
+const chartRutasMes    = ref(null)   // barras rutas finalizadas vs canceladas
+const chartRutasTipo   = ref(null)   // dona rutas por tipo
+const chartSolicMes    = ref(null)   // barras solicitudes por tipo/mes
+const chartSolicTipo   = ref(null)   // dona solicitudes por tipo
+const chartPptoAcum    = ref(null)   // línea presupuesto acumulado vs gasto acumulado
+let chartDonaGastosInst  = null
+let chartGastoMesInst    = null
+let chartRutasMesInst    = null
+let chartRutasTipoInst   = null
+let chartSolicMesInst    = null
+let chartSolicTipoInst   = null
+let chartPptoAcumInst    = null
+
 function crearChart() {
   if (!chartCanvas.value || !datosMantencion.value?.resumen?.por_mes?.length) return
+  if (!chartCanvas.value.offsetParent && chartCanvas.value.offsetHeight === 0) return
   if (chartInstance) { chartInstance.destroy(); chartInstance = null }
 
   const pm     = datosMantencion.value.resumen.por_mes
@@ -139,10 +157,11 @@ function crearChart() {
   })
 }
 
-watch(datosMantencion, async () => { await nextTick(); crearChart() }, { deep: true })
+watch(datosMantencion, () => { setTimeout(crearChart, 80) }, { deep: true, flush: 'post' })
 
 function crearChartTco() {
   if (!chartTcoCanvas.value || !datosTco.value?.vehiculos?.length) return
+  if (!chartTcoCanvas.value.offsetParent && chartTcoCanvas.value.offsetHeight === 0) return
   if (chartTcoInstance) { chartTcoInstance.destroy(); chartTcoInstance = null }
   const top10   = datosTco.value.vehiculos.slice(0, 10)
   const labels  = top10.map(v => v.patente)
@@ -172,7 +191,7 @@ function crearChartTco() {
     },
   })
 }
-watch(datosTco, async () => { await nextTick(); crearChartTco() }, { deep: true })
+watch(datosTco, () => { setTimeout(crearChartTco, 80) }, { deep: true, flush: 'post' })
 
 function crearChartPpto() {
   if (!chartPptoCanvas.value || !datosPpto.value?.meses?.length) return
@@ -204,11 +223,12 @@ function crearChartPpto() {
     },
   })
 }
-watch(datosPpto, async () => { await nextTick(); crearChartPpto() }, { deep: true })
+watch(datosPpto, () => { setTimeout(crearChartPpto, 80) }, { deep: true, flush: 'post' })
 
 function crearChartCombustible() {
   if (!datosCombustible.value) return
   if (chartCombBar.value && datosCombustible.value.por_vehiculo?.length) {
+    if (chartCombBar.value.offsetHeight === 0) return
     if (chartCombBarInst) { chartCombBarInst.destroy(); chartCombBarInst = null }
     const top5 = datosCombustible.value.por_vehiculo.slice(0, 5)
     chartCombBarInst = new Chart(chartCombBar.value, {
@@ -229,6 +249,7 @@ function crearChartCombustible() {
     })
   }
   if (chartCombLine.value && datosCombustible.value.por_mes?.length) {
+    if (chartCombLine.value.offsetHeight === 0) return
     if (chartCombLineInst) { chartCombLineInst.destroy(); chartCombLineInst = null }
     const meses = datosCombustible.value.por_mes
     chartCombLineInst = new Chart(chartCombLine.value, {
@@ -248,7 +269,188 @@ function crearChartCombustible() {
     })
   }
 }
-watch(datosCombustible, async () => { await nextTick(); crearChartCombustible() }, { deep: true })
+watch(datosCombustible, () => { setTimeout(crearChartCombustible, 80) }, { deep: true, flush: 'post' })
+
+// ── Paleta de colores compartida
+const PALETA_CATS = {
+  combustible: '#F59E0B', mantencion: '#6366F1', multa: '#EF4444',
+  peaje: '#8B5CF6', seguro: '#10B981', otro: '#9CA3AF',
+}
+const PALETA_TIPO_RUTA = { carga: '#6366F1', personas: '#10B981' }
+const PALETA_SOLICITUDES = {
+  mantencion: '#6366F1', combustible: '#F59E0B',
+  incidencia: '#EF4444', documento: '#10B981',
+}
+
+// ── Funciones de gráficos nuevos
+function crearChartDonaGastos() {
+  if (!chartDonaGastos.value || !datosTco.value?.gastos_categoria) return
+  if (chartDonaGastos.value.offsetHeight === 0) return
+  if (chartDonaGastosInst) { chartDonaGastosInst.destroy(); chartDonaGastosInst = null }
+  const cats  = Object.entries(datosTco.value.gastos_categoria).filter(([,v]) => v > 0)
+  if (!cats.length) return
+  chartDonaGastosInst = new Chart(chartDonaGastos.value, {
+    type: 'doughnut',
+    data: {
+      labels: cats.map(([k]) => k.charAt(0).toUpperCase() + k.slice(1)),
+      datasets: [{ data: cats.map(([,v]) => v), backgroundColor: cats.map(([k]) => PALETA_CATS[k] || '#9CA3AF'), borderWidth: 2, borderColor: '#fff' }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: {
+        legend: { position: 'right', labels: { font: { size: 11 }, usePointStyle: true, padding: 12 } },
+        tooltip: { callbacks: { label: (c) => ` ${c.label}: ${clp(c.parsed)}` } },
+      },
+    },
+  })
+}
+
+function crearChartGastoMes() {
+  if (!chartGastoMes.value || !datosPpto.value?.meses) return
+  if (chartGastoMes.value.offsetHeight === 0) return
+  if (chartGastoMesInst) { chartGastoMesInst.destroy(); chartGastoMesInst = null }
+  const meses = datosPpto.value.meses
+  chartGastoMesInst = new Chart(chartGastoMes.value, {
+    type: 'line',
+    data: {
+      labels: meses.map(m => m.mes_label),
+      datasets: [{ label: 'Gasto total', data: meses.map(m => m.gasto_real), borderColor: '#6366F1', backgroundColor: 'rgba(99,102,241,0.07)', borderWidth: 2.5, pointRadius: 4, tension: 0.35, fill: true }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${clp(c.parsed.y)}` } } },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { font: { size: 11 } } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: (v) => clp(v), font: { size: 10 } } },
+      },
+    },
+  })
+}
+
+function crearChartPptoAcum() {
+  if (!chartPptoAcum.value || !datosPpto.value?.meses) return
+  if (chartPptoAcum.value.offsetHeight === 0) return
+  if (chartPptoAcumInst) { chartPptoAcumInst.destroy(); chartPptoAcumInst = null }
+  const meses = datosPpto.value.meses
+  let acumPpto = 0, acumGasto = 0
+  const labAcumPpto = [], labAcumGasto = []
+  meses.forEach(m => {
+    acumPpto  += m.presupuesto; acumGasto += m.gasto_real
+    labAcumPpto.push(acumPpto); labAcumGasto.push(acumGasto)
+  })
+  chartPptoAcumInst = new Chart(chartPptoAcum.value, {
+    type: 'line',
+    data: {
+      labels: meses.map(m => m.mes_label),
+      datasets: [
+        { label: 'Presupuesto acumulado', data: labAcumPpto, borderColor: '#E5E7EB', backgroundColor: 'transparent', borderWidth: 2, borderDash: [5,4], pointRadius: 3, tension: 0 },
+        { label: 'Gasto acumulado',       data: labAcumGasto, borderColor: '#4F46E5', backgroundColor: 'rgba(79,70,229,0.06)', borderWidth: 2.5, pointRadius: 4, tension: 0.2, fill: true },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${clp(c.parsed.y)}` } } },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { font: { size: 11 } } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: (v) => clp(v), font: { size: 10 } } },
+      },
+    },
+  })
+}
+
+function crearChartRutasMes() {
+  if (!chartRutasMes.value || !datosRutas.value?.por_mes) return
+  if (chartRutasMes.value.offsetHeight === 0) return
+  if (chartRutasMesInst) { chartRutasMesInst.destroy(); chartRutasMesInst = null }
+  const meses = datosRutas.value.por_mes
+  chartRutasMesInst = new Chart(chartRutasMes.value, {
+    type: 'bar',
+    data: {
+      labels: meses.map(m => `${m.mes_label} ${String(m.anio).slice(2)}`),
+      datasets: [
+        { label: 'Finalizadas', data: meses.map(m => m.finalizadas), backgroundColor: '#10B981', borderRadius: 4, stack: 'rutas' },
+        { label: 'Canceladas',  data: meses.map(m => m.canceladas),  backgroundColor: '#EF4444', borderRadius: 4, stack: 'rutas' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { stacked: true, grid: { color: '#F3F4F6' }, ticks: { stepSize: 1, font: { size: 10 } } },
+      },
+    },
+  })
+}
+
+function crearChartRutasTipo() {
+  if (!chartRutasTipo.value || !datosRutas.value?.resumen?.por_tipo) return
+  if (chartRutasTipo.value.offsetHeight === 0) return
+  if (chartRutasTipoInst) { chartRutasTipoInst.destroy(); chartRutasTipoInst = null }
+  const tipos = Object.entries(datosRutas.value.resumen.por_tipo).filter(([,v]) => v > 0)
+  if (!tipos.length) return
+  chartRutasTipoInst = new Chart(chartRutasTipo.value, {
+    type: 'doughnut',
+    data: {
+      labels: tipos.map(([k]) => k.charAt(0).toUpperCase() + k.slice(1)),
+      datasets: [{ data: tipos.map(([,v]) => v), backgroundColor: tipos.map(([k]) => PALETA_TIPO_RUTA[k] || '#9CA3AF'), borderWidth: 2, borderColor: '#fff' }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: { legend: { position: 'right', labels: { font: { size: 11 }, usePointStyle: true } } },
+    },
+  })
+}
+
+function crearChartSolicMes() {
+  if (!chartSolicMes.value || !datosSolicitudes.value?.por_mes) return
+  if (chartSolicMes.value.offsetHeight === 0) return
+  if (chartSolicMesInst) { chartSolicMesInst.destroy(); chartSolicMesInst = null }
+  const meses = datosSolicitudes.value.por_mes
+  const TIPOS = ['mantencion', 'combustible', 'incidencia', 'documento']
+  const LABELS = { mantencion: 'Mantención', combustible: 'Combustible', incidencia: 'Incidencia', documento: 'Documento' }
+  chartSolicMesInst = new Chart(chartSolicMes.value, {
+    type: 'bar',
+    data: {
+      labels: meses.map(m => `${m.mes_label} ${String(m.anio).slice(2)}`),
+      datasets: TIPOS.map(t => ({
+        label: LABELS[t], data: meses.map(m => m[t] || 0),
+        backgroundColor: PALETA_SOLICITUDES[t], borderRadius: 4, stack: 'solic',
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { stacked: true, grid: { color: '#F3F4F6' }, ticks: { stepSize: 1, font: { size: 10 } } },
+      },
+    },
+  })
+}
+
+function crearChartSolicTipo() {
+  if (!chartSolicTipo.value || !datosSolicitudes.value?.resumen?.por_tipo) return
+  if (chartSolicTipo.value.offsetHeight === 0) return
+  if (chartSolicTipoInst) { chartSolicTipoInst.destroy(); chartSolicTipoInst = null }
+  const tipos = Object.entries(datosSolicitudes.value.resumen.por_tipo).filter(([,v]) => v > 0)
+  if (!tipos.length) return
+  const LABELS = { mantencion: 'Mantención', combustible: 'Combustible', incidencia: 'Incidencia', documento: 'Documento' }
+  chartSolicTipoInst = new Chart(chartSolicTipo.value, {
+    type: 'doughnut',
+    data: {
+      labels: tipos.map(([k]) => LABELS[k] || k),
+      datasets: [{ data: tipos.map(([,v]) => v), backgroundColor: tipos.map(([k]) => PALETA_SOLICITUDES[k] || '#9CA3AF'), borderWidth: 2, borderColor: '#fff' }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: { legend: { position: 'right', labels: { font: { size: 11 }, usePointStyle: true } } },
+    },
+  })
+}
 
 // ── Carga de datos
 async function cargarVehiculos() {
@@ -384,6 +586,20 @@ async function cargarPpto() {
   } catch { /* silencioso — se muestra en contexto de mantenciones */ }
 }
 
+async function cargarRutas() {
+  try {
+    const res = await apiFetch('/api/empresa/reportes/rutas/')
+    if (res.ok) datosRutas.value = await res.json()
+  } catch { /* silencioso */ }
+}
+
+async function cargarSolicitudes() {
+  try {
+    const res = await apiFetch('/api/empresa/reportes/solicitudes/')
+    if (res.ok) datosSolicitudes.value = await res.json()
+  } catch { /* silencioso */ }
+}
+
 function exportarTco() {
   if (!datosTco.value?.vehiculos) return
   const rows = [
@@ -436,29 +652,44 @@ const tcoOrdenada = computed(() => {
 
 // ── Watchers
 watch([anioSel, mesSel, vehiculoSel], cargarMantencion)
-watch(tabActivo, async (tab) => {
-  if (tab === 'flota'       && !datosFlota.value)       await cargarFlota()
-  if (tab === 'tco')                                    await cargarTco()
-  if (tab === 'conductores' && !datosConductores.value) await cargarConductores()
-  if (tab === 'documentos'  && !datosDocumentos.value)  await cargarDocumentos()
-  if (tab === 'combustible' && !datosCombustible.value) await cargarCombustible()
-})
-watch([anioSel, mesSel], () => {
-  if (tabActivo.value === 'tco') cargarTco()
-})
+watch([anioSel, mesSel], cargarTco)
 
-// ── Lifecycle
+// Watches nuevos gráficos
+watch(datosTco,         () => { setTimeout(crearChartDonaGastos, 80) }, { deep: true, flush: 'post' })
+watch(datosPpto,        () => { setTimeout(crearChartGastoMes,   80); setTimeout(crearChartPptoAcum, 80) }, { deep: true, flush: 'post' })
+watch(datosRutas,       () => { setTimeout(crearChartRutasMes,   80); setTimeout(crearChartRutasTipo, 80) }, { deep: true, flush: 'post' })
+watch(datosSolicitudes, () => { setTimeout(crearChartSolicMes,   80); setTimeout(crearChartSolicTipo, 80) }, { deep: true, flush: 'post' })
+
+// ── Lifecycle — carga todo de una vez (vista de página única)
 onMounted(async () => {
-  await Promise.all([cargarVehiculos(), cargarMantencion(), cargarPpto()])
+  await Promise.all([
+    cargarVehiculos(),
+    cargarMantencion(),
+    cargarPpto(),
+    cargarFlota(),
+    cargarTco(),
+    cargarConductores(),
+    cargarDocumentos(),
+    cargarCombustible(),
+    cargarRutas(),
+    cargarSolicitudes(),
+  ])
 })
 
 onUnmounted(() => {
-  if (chartInstance)    chartInstance.destroy()
-  if (chartTcoInstance) chartTcoInstance.destroy()
-  if (chartPptoInstance) chartPptoInstance.destroy()
-  if (chartCombBarInst)  chartCombBarInst.destroy()
-  if (chartCombLineInst) chartCombLineInst.destroy()
+  [
+    chartInstance, chartTcoInstance, chartPptoInstance,
+    chartCombBarInst, chartCombLineInst,
+    chartDonaGastosInst, chartGastoMesInst, chartPptoAcumInst,
+    chartRutasMesInst, chartRutasTipoInst,
+    chartSolicMesInst, chartSolicTipoInst,
+  ].forEach(c => { try { c?.destroy() } catch { /* noop */ } })
 })
+
+function diasSinMant(isoFecha) {
+  if (!isoFecha) return null
+  return Math.floor((Date.now() - new Date(isoFecha).getTime()) / 86400000)
+}
 
 // ── Max para barra de tipos
 const maxCostoTipo = computed(() => {
@@ -477,61 +708,77 @@ const maxCostoTipo = computed(() => {
       </div>
     </div>
 
-    <!-- Tabs -->
-    <div class="tabs-wrap">
-      <button :class="['tab-btn', tabActivo === 'mantencion' && 'tab-active']"
-        @click="tabActivo = 'mantencion'">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-        </svg>
-        Mantenciones
-      </button>
-      <button :class="['tab-btn', tabActivo === 'flota' && 'tab-active']"
-        @click="tabActivo = 'flota'">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-            d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
-        </svg>
-        Estado de Flota
-      </button>
-      <button :class="['tab-btn', tabActivo === 'tco' && 'tab-active']"
-        @click="tabActivo = 'tco'">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-        </svg>
-        Costo Total (TCO)
-      </button>
-      <button :class="['tab-btn', tabActivo === 'conductores' && 'tab-active']"
-        @click="tabActivo = 'conductores'">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
-        </svg>
-        Conductores
-      </button>
-      <button :class="['tab-btn', tabActivo === 'documentos' && 'tab-active']"
-        @click="tabActivo = 'documentos'">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-        </svg>
-        Documentos
-      </button>
-      <button :class="['tab-btn', tabActivo === 'combustible' && 'tab-active']"
-        @click="tabActivo = 'combustible'">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-            d="M3 7h12v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7zm0 0V5a2 2 0 012-2h8a2 2 0 012 2v2M15 7h4l2 3v4h-6V7z"/>
-        </svg>
-        Combustible
-      </button>
+    <!-- ── KPIs globales ─────────────────────────────────────────────────── -->
+    <div class="kpis-globales">
+
+      <!-- Mantenciones -->
+      <template v-if="datosMantencion">
+        <div class="kpi-g"><span class="kpi-tag">Mantenciones</span><span class="kpi-value">{{ datosMantencion.resumen.total }}</span><span class="kpi-label">Total mantenciones</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Mantenciones</span><span class="kpi-value">{{ clp(datosMantencion.resumen.costo_total) }}</span><span class="kpi-label">Costo total</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Mantenciones</span><span class="kpi-value">{{ clp(datosMantencion.resumen.costo_promedio) }}</span><span class="kpi-label">Costo promedio</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Mantenciones</span><span class="kpi-value" style="color:#059669">{{ datosMantencion.resumen.por_estado.realizada }}</span><span class="kpi-label">Realizadas</span></div>
+      </template>
+      <template v-else><div v-for="i in 4" :key="'mant'+i" class="kpi-skeleton"></div></template>
+
+      <!-- Flota -->
+      <template v-if="datosFlota">
+        <div class="kpi-g"><span class="kpi-tag">Flota</span><span class="kpi-value">{{ datosFlota.resumen.total }}</span><span class="kpi-label">Vehículos activos</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Flota</span><span class="kpi-value" :style="datosFlota.resumen.con_docs_vencidos > 0 ? 'color:#DC2626' : ''">{{ datosFlota.resumen.con_docs_vencidos }}</span><span class="kpi-label">Con docs vencidos</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Flota</span><span class="kpi-value" :style="datosFlota.resumen.sin_conductor > 0 ? 'color:#D97706' : ''">{{ datosFlota.resumen.sin_conductor }}</span><span class="kpi-label">Sin conductor</span></div>
+      </template>
+      <template v-else><div v-for="i in 3" :key="'flota'+i" class="kpi-skeleton"></div></template>
+
+      <!-- TCO -->
+      <template v-if="datosTco">
+        <div class="kpi-g"><span class="kpi-tag">TCO</span><span class="kpi-value">{{ clp(datosTco.resumen.total_gastos) }}</span><span class="kpi-label">Gastos operativos</span></div>
+        <div class="kpi-g"><span class="kpi-tag">TCO</span><span class="kpi-value">{{ clp(datosTco.resumen.total_mant) }}</span><span class="kpi-label">Costos mantención</span></div>
+        <div class="kpi-g"><span class="kpi-tag">TCO</span><span class="kpi-value">{{ clp(datosTco.resumen.costo_promedio) }}</span><span class="kpi-label">TCO promedio/vehículo</span></div>
+      </template>
+      <template v-else><div v-for="i in 3" :key="'tco'+i" class="kpi-skeleton"></div></template>
+
+      <!-- Conductores -->
+      <template v-if="datosConductores">
+        <div class="kpi-g"><span class="kpi-tag">Conductores</span><span class="kpi-value">{{ datosConductores.resumen.total }}</span><span class="kpi-label">Total conductores</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Conductores</span><span class="kpi-value" :style="datosConductores.resumen.sin_vehiculo > 0 ? 'color:#D97706' : ''">{{ datosConductores.resumen.sin_vehiculo }}</span><span class="kpi-label">Sin vehículo</span></div>
+      </template>
+      <template v-else><div v-for="i in 2" :key="'cond'+i" class="kpi-skeleton"></div></template>
+
+      <!-- Documentos -->
+      <template v-if="datosDocumentos">
+        <div class="kpi-g"><span class="kpi-tag">Documentos</span><span class="kpi-value" style="color:#059669">{{ datosDocumentos.resumen.vigentes }}</span><span class="kpi-label">Vigentes</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Documentos</span><span class="kpi-value" :style="datosDocumentos.resumen.por_vencer > 0 ? 'color:#D97706' : ''">{{ datosDocumentos.resumen.por_vencer }}</span><span class="kpi-label">Por vencer (30 días)</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Documentos</span><span class="kpi-value" :style="datosDocumentos.resumen.vencidos > 0 ? 'color:#DC2626' : ''">{{ datosDocumentos.resumen.vencidos }}</span><span class="kpi-label">Vencidos</span></div>
+      </template>
+      <template v-else><div v-for="i in 3" :key="'doc'+i" class="kpi-skeleton"></div></template>
+
+      <!-- Combustible -->
+      <template v-if="datosCombustible">
+        <div class="kpi-g"><span class="kpi-tag">Combustible</span><span class="kpi-value">{{ clp(datosCombustible.gasto_total) }}</span><span class="kpi-label">Gasto total</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Combustible</span><span class="kpi-value">{{ clp(datosCombustible.gasto_promedio_mes) }}</span><span class="kpi-label">Promedio mensual</span></div>
+      </template>
+      <template v-else><div v-for="i in 2" :key="'comb'+i" class="kpi-skeleton"></div></template>
+
+      <!-- Rutas -->
+      <template v-if="datosRutas">
+        <div class="kpi-g"><span class="kpi-tag">Rutas</span><span class="kpi-value">{{ datosRutas.resumen.total }}</span><span class="kpi-label">Total rutas</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Rutas</span><span class="kpi-value" style="color:#059669">{{ datosRutas.resumen.finalizadas }}</span><span class="kpi-label">Finalizadas</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Rutas</span><span class="kpi-value" :style="datosRutas.resumen.canceladas > 0 ? 'color:#EF4444' : ''">{{ datosRutas.resumen.canceladas }}</span><span class="kpi-label">Canceladas</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Rutas</span><span class="kpi-value" style="color:#6366F1">{{ datosRutas.resumen.activas }}</span><span class="kpi-label">En curso</span></div>
+      </template>
+      <template v-else><div v-for="i in 4" :key="'ruta'+i" class="kpi-skeleton"></div></template>
+
+      <!-- Solicitudes -->
+      <template v-if="datosSolicitudes">
+        <div class="kpi-g"><span class="kpi-tag">Solicitudes</span><span class="kpi-value">{{ datosSolicitudes.resumen.total }}</span><span class="kpi-label">Total solicitudes</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Solicitudes</span><span class="kpi-value" style="color:#6366F1">{{ datosSolicitudes.resumen.por_tipo.mantencion }}</span><span class="kpi-label">Mantención</span></div>
+        <div class="kpi-g"><span class="kpi-tag">Solicitudes</span><span class="kpi-value" :style="(datosSolicitudes.resumen.por_tipo.incidencia || 0) > 0 ? 'color:#EF4444' : ''">{{ datosSolicitudes.resumen.por_tipo.incidencia }}</span><span class="kpi-label">Incidencias</span></div>
+      </template>
+      <template v-else><div v-for="i in 3" :key="'solic'+i" class="kpi-skeleton"></div></template>
+
     </div>
 
-    <!-- ── TAB MANTENCIONES ── -->
-    <template v-if="tabActivo === 'mantencion'">
+    <!-- ── Mantenciones ── -->
+    <div class="bloque-reporte">
       <!-- Filtros -->
       <div class="filtros-bar">
         <div class="filtro-group">
@@ -563,58 +810,6 @@ const maxCostoTipo = computed(() => {
       </div>
 
       <template v-else-if="datosMantencion">
-        <!-- KPIs -->
-        <div class="kpis">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#EEF2FF;color:#4338CA">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ datosMantencion.resumen.total }}</div>
-              <div class="kpi-label">Total mantenciones</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#F0FDF4;color:#059669">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosMantencion.resumen.costo_total) }}</div>
-              <div class="kpi-label">Costo total</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosMantencion.resumen.costo_promedio) }}</div>
-              <div class="kpi-label">Costo promedio</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#ECFDF5;color:#059669">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" style="color:#059669">{{ datosMantencion.resumen.por_estado.realizada }}</div>
-              <div class="kpi-label">Realizadas</div>
-            </div>
-          </div>
-        </div>
-
         <!-- Gráfico evolución + top tipos -->
         <div class="grid-2 mb-4">
           <!-- Gráfico -->
@@ -719,60 +914,17 @@ const maxCostoTipo = computed(() => {
             </table>
           </div>
         </div>
-      </template>
-    </template>
+      </template><!-- /datosMantencion -->
+      <div v-else-if="!cargando" class="loading-wrap"><span>Sin datos de mantenciones.</span></div>
+    </div><!-- /mantenciones -->
 
-    <!-- ── TAB FLOTA ── -->
-    <template v-else-if="tabActivo === 'flota'">
+    <!-- ── Flota ── -->
+    <div class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando datos...</span>
       </div>
 
       <template v-else-if="datosFlota">
-        <!-- KPIs -->
-        <div class="kpis mb-4" style="margin-top:1.25rem">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#EEF2FF;color:#4338CA">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ datosFlota.resumen.total }}</div>
-              <div class="kpi-label">Vehículos activos</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FEF2F2;color:#DC2626">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosFlota.resumen.con_docs_vencidos > 0 ? 'color:#DC2626' : ''">
-                {{ datosFlota.resumen.con_docs_vencidos }}
-              </div>
-              <div class="kpi-label">Con docs vencidos</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosFlota.resumen.sin_conductor > 0 ? 'color:#D97706' : ''">
-                {{ datosFlota.resumen.sin_conductor }}
-              </div>
-              <div class="kpi-label">Sin conductor asignado</div>
-            </div>
-          </div>
-        </div>
-
         <!-- Tabla flota -->
         <div class="card">
           <div class="card-head">
@@ -833,10 +985,10 @@ const maxCostoTipo = computed(() => {
       <div v-else-if="!cargando" class="loading-wrap">
         <span>Cargando estado de flota...</span>
       </div>
-    </template>
+    </div><!-- /flota -->
 
-    <!-- ── TAB TCO ── -->
-    <template v-else-if="tabActivo === 'tco'">
+    <!-- ── TCO ── -->
+    <div class="bloque-reporte">
       <!-- Filtros TCO -->
       <div class="filtros-bar">
         <div class="filtro-group">
@@ -858,59 +1010,6 @@ const maxCostoTipo = computed(() => {
       </div>
 
       <template v-else-if="datosTco">
-        <!-- KPIs TCO -->
-        <div class="kpis">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#EEF2FF;color:#4338CA">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ datosTco.resumen.total_flota }}</div>
-              <div class="kpi-label">Vehículos analizados</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFF7ED;color:#EA580C">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosTco.resumen.total_gastos) }}</div>
-              <div class="kpi-label">Gastos operativos</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#F0FDF4;color:#059669">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosTco.resumen.total_mant) }}</div>
-              <div class="kpi-label">Costos mantención</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosTco.resumen.costo_promedio) }}</div>
-              <div class="kpi-label">TCO promedio / vehículo</div>
-            </div>
-          </div>
-        </div>
-
         <!-- Chart TCO comparativa -->
         <div v-if="datosTco.vehiculos.length" class="card" style="margin-bottom:1rem">
           <div class="card-head">
@@ -974,73 +1073,15 @@ const maxCostoTipo = computed(() => {
       <div v-else-if="!cargando" class="loading-wrap">
         <span>Cargando datos TCO...</span>
       </div>
-    </template>
+    </div><!-- /tco -->
 
-    <!-- ── TAB CONDUCTORES ── -->
-    <template v-else-if="tabActivo === 'conductores'">
+    <!-- ── Conductores ── -->
+    <div class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando conductores...</span>
       </div>
 
       <template v-else-if="datosConductores">
-        <!-- KPIs Conductores -->
-        <div class="kpis" style="margin-top:1.25rem">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#EEF2FF;color:#4338CA">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ datosConductores.resumen.total }}</div>
-              <div class="kpi-label">Total conductores</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FEF2F2;color:#DC2626">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosConductores.resumen.con_docs_vencidos > 0 ? 'color:#DC2626' : ''">
-                {{ datosConductores.resumen.con_docs_vencidos }}
-              </div>
-              <div class="kpi-label">Con docs vencidos</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosConductores.resumen.sin_vehiculo > 0 ? 'color:#D97706' : ''">
-                {{ datosConductores.resumen.sin_vehiculo }}
-              </div>
-              <div class="kpi-label">Sin vehículo asignado</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#F3F4F6;color:#6B7280">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosConductores.resumen.sin_docs > 0 ? 'color:#6B7280' : ''">
-                {{ datosConductores.resumen.sin_docs }}
-              </div>
-              <div class="kpi-label">Sin documentos</div>
-            </div>
-          </div>
-        </div>
-
         <!-- Tabla conductores -->
         <div class="card">
           <div class="card-head">
@@ -1101,58 +1142,16 @@ const maxCostoTipo = computed(() => {
       <div v-else-if="!cargando" class="loading-wrap">
         <span>Cargando datos de conductores...</span>
       </div>
-    </template>
+    </div><!-- /conductores -->
 
-    <!-- ── TAB DOCUMENTOS ── -->
-    <template v-else-if="tabActivo === 'documentos'">
+    <!-- ── Documentos ── -->
+    <div class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando documentos...</span>
       </div>
 
       <template v-else-if="datosDocumentos">
-        <!-- KPIs documentos -->
-        <div class="kpis" style="margin-top:1.25rem">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#ECFDF5;color:#059669">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" style="color:#059669">{{ datosDocumentos.resumen.vigentes }}</div>
-              <div class="kpi-label">Vigentes</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosDocumentos.resumen.por_vencer > 0 ? 'color:#D97706' : ''">
-                {{ datosDocumentos.resumen.por_vencer }}
-              </div>
-              <div class="kpi-label">Por vencer (30 días)</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FEF2F2;color:#DC2626">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value" :style="datosDocumentos.resumen.vencidos > 0 ? 'color:#DC2626' : ''">
-                {{ datosDocumentos.resumen.vencidos }}
-              </div>
-              <div class="kpi-label">Vencidos</div>
-            </div>
-          </div>
-        </div>
+        <!-- (KPIs en el encabezado global) -->
 
         <div class="grid-2 mb-4">
           <!-- Estado documental por vehículo -->
@@ -1227,58 +1226,16 @@ const maxCostoTipo = computed(() => {
       <div v-else-if="!cargando" class="loading-wrap">
         <span>Cargando documentos...</span>
       </div>
-    </template>
+    </div><!-- /documentos -->
 
-    <!-- ── TAB COMBUSTIBLE ── -->
-    <template v-else-if="tabActivo === 'combustible'">
+    <!-- ── Combustible ── -->
+    <div class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando datos...</span>
       </div>
 
       <template v-else-if="datosCombustible">
-        <!-- KPIs combustible -->
-        <div class="kpis" style="margin-top:1.25rem">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#FFFBEB;color:#D97706">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosCombustible.gasto_total) }}</div>
-              <div class="kpi-label">Gasto total combustible</div>
-            </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background:#EEF2FF;color:#4338CA">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-              </svg>
-            </div>
-            <div>
-              <div class="kpi-value">{{ clp(datosCombustible.gasto_promedio_mes) }}</div>
-              <div class="kpi-label">Promedio mensual</div>
-            </div>
-          </div>
-          <div v-if="datosCombustible.top_vehiculo" class="kpi-card" style="grid-column: span 2">
-            <div class="kpi-icon" style="background:#F0FDF4;color:#059669">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                  d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
-              </svg>
-            </div>
-            <div style="min-width:0">
-              <div class="kpi-value" style="font-size:1.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                {{ datosCombustible.top_vehiculo }}
-              </div>
-              <div class="kpi-label">Vehículo con más gasto</div>
-            </div>
-          </div>
-        </div>
+        <!-- (KPIs en el encabezado global) -->
 
         <div class="grid-2 mb-4">
           <!-- Barras horizontales top 5 -->
@@ -1322,7 +1279,150 @@ const maxCostoTipo = computed(() => {
       <div v-else-if="!cargando" class="loading-wrap">
         <span>Cargando datos de combustible...</span>
       </div>
-    </template>
+    </div><!-- /combustible -->
+
+    <!-- ── Gastos por categoría + Gasto mensual ── -->
+    <div class="bloque-reporte">
+      <div class="grid-2 mb-4">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Distribución de gastos por categoría</h3>
+            <span class="sub-count">todos los vehículos</span>
+          </div>
+          <div class="card-body">
+            <div v-if="!datosTco" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+            <div v-else-if="!datosTco.gastos_categoria || !Object.values(datosTco.gastos_categoria).some(v => v > 0)" class="empty-msg">Sin gastos registrados.</div>
+            <div v-else style="position:relative;height:220px"><canvas ref="chartDonaGastos"/></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Gasto operativo mensual</h3>
+            <span class="sub-count">año {{ anioSel }}</span>
+          </div>
+          <div class="card-body">
+            <div v-if="!datosPpto" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+            <div v-else class="chart-container"><canvas ref="chartGastoMes"/></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title">Presupuesto acumulado vs Gasto acumulado</h3>
+          <span class="sub-count">proyección anual — {{ anioSel }}</span>
+        </div>
+        <div class="card-body">
+          <div v-if="!datosPpto" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+          <div v-else class="chart-container"><canvas ref="chartPptoAcum"/></div>
+        </div>
+      </div>
+    </div><!-- /gastos-globales -->
+
+    <!-- ── Semáforo de vehículos críticos ── -->
+    <div class="bloque-reporte">
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title">Semáforo de vehículos críticos</h3>
+          <span class="sub-count">atención requerida hoy</span>
+        </div>
+        <div v-if="!datosFlota" class="card-body loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+        <div v-else-if="!datosFlota.vehiculos.length" class="card-body"><p class="empty-msg">No hay vehículos activos.</p></div>
+        <div v-else class="tabla-wrap">
+          <table class="tabla">
+            <thead>
+              <tr><th>Patente</th><th>Vehículo</th><th>Conductor</th><th>Docs</th><th>Mantención</th><th>Días sin mant.</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="v in datosFlota.vehiculos" :key="v.id"
+                :class="['semaforo-row', v.docs_vencidos > 0 || !v.conductor ? 'semaforo-rojo' : v.docs_por_vencer > 0 ? 'semaforo-amarillo' : '']">
+                <td class="font-medium">{{ v.patente }}</td>
+                <td>{{ v.marca }} {{ v.modelo }}</td>
+                <td>
+                  <span v-if="v.conductor">{{ v.conductor }}</span>
+                  <span v-else class="badge" style="background:#FEF2F2;color:#DC2626">Sin asignar</span>
+                </td>
+                <td>
+                  <span v-if="v.docs_vencidos" class="badge" style="background:#FEF2F2;color:#DC2626">{{ v.docs_vencidos }} vencido{{ v.docs_vencidos !== 1 ? 's' : '' }}</span>
+                  <span v-else-if="v.docs_por_vencer" class="badge" style="background:#FFFBEB;color:#D97706">{{ v.docs_por_vencer }} por vencer</span>
+                  <span v-else class="badge" style="background:#ECFDF5;color:#059669">Al día</span>
+                </td>
+                <td>
+                  <span v-if="v.costo_total_mantenciones === 0 && !v.ultima_mantencion" class="badge" style="background:#FEF2F2;color:#DC2626">Sin registro</span>
+                  <span v-else class="badge" style="background:#ECFDF5;color:#059669">Registrada</span>
+                </td>
+                <td>
+                  <span v-if="v.ultima_mantencion" :style="diasSinMant(v.ultima_mantencion) > 180 ? 'color:#DC2626;font-weight:600' : diasSinMant(v.ultima_mantencion) > 90 ? 'color:#D97706' : ''">
+                    {{ diasSinMant(v.ultima_mantencion) }} días
+                  </span>
+                  <span v-else style="color:#DC2626;font-weight:600">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /semaforo -->
+
+    <!-- ── Rutas por mes + por tipo ── -->
+    <div class="bloque-reporte">
+      <div class="grid-2 mb-4">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Rutas finalizadas vs canceladas</h3>
+            <span class="sub-count">últimos 12 meses</span>
+          </div>
+          <div class="card-body">
+            <div v-if="!datosRutas" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+            <div v-else-if="!datosRutas.por_mes.some(m => m.total > 0)" class="empty-msg">Sin rutas registradas.</div>
+            <div v-else class="chart-container"><canvas ref="chartRutasMes"/></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Rutas por tipo</h3>
+            <span class="sub-count">carga vs personas</span>
+          </div>
+          <div class="card-body">
+            <div v-if="!datosRutas" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+            <div v-else-if="!Object.values(datosRutas.resumen.por_tipo || {}).some(v => v > 0)" class="empty-msg">Sin rutas registradas.</div>
+            <div v-else style="position:relative;height:220px"><canvas ref="chartRutasTipo"/></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /rutas -->
+
+    <!-- ── Solicitudes por mes + por tipo ── -->
+    <div class="bloque-reporte">
+      <div class="grid-2 mb-4">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Solicitudes de conductores por mes</h3>
+            <span class="sub-count">últimos 12 meses</span>
+          </div>
+          <div class="card-body">
+            <div v-if="!datosSolicitudes" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+            <div v-else-if="!datosSolicitudes.por_mes.some(m => m.total > 0)" class="empty-msg">Sin solicitudes registradas.</div>
+            <div v-else class="chart-container"><canvas ref="chartSolicMes"/></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Solicitudes por tipo</h3>
+            <span class="sub-count">distribución total</span>
+          </div>
+          <div class="card-body">
+            <div v-if="!datosSolicitudes" class="loading-wrap"><div class="spinner"/><span>Cargando...</span></div>
+            <div v-else-if="!datosSolicitudes.resumen.total" class="empty-msg">Sin solicitudes registradas.</div>
+            <div v-else style="position:relative;height:220px"><canvas ref="chartSolicTipo"/></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /solicitudes -->
+
   </div>
 </template>
 
@@ -1342,9 +1442,46 @@ const maxCostoTipo = computed(() => {
   cursor: pointer; border-bottom: 2px solid transparent;
   margin-bottom: -2px; transition: all 0.15s; font-family: inherit; border-radius: 4px 4px 0 0;
 }
-.tab-btn svg { width: 16px; height: 16px; }
-.tab-btn:hover { color: #4F46E5; background: #F5F3FF; }
-.tab-active { color: #4F46E5 !important; border-bottom-color: #4F46E5 !important; }
+/* KPIs globales al tope */
+.kpis-globales {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+.kpi-g {
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.kpi-g .kpi-tag {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: #9CA3AF; margin-bottom: 0.2rem;
+}
+.kpi-g .kpi-value {
+  font-size: 1.3rem; font-weight: 800; color: #111827; line-height: 1.2;
+}
+.kpi-g .kpi-label {
+  font-size: 0.72rem; color: #6B7280; font-weight: 500;
+}
+.kpi-skeleton {
+  min-height: 72px; background: #F3F4F6; border-radius: 14px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .5 } }
+
+/* Bloques de reporte */
+.bloque-reporte {
+  margin-bottom: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #F3F4F6;
+}
+.bloque-reporte:first-of-type { border-top: none; padding-top: 0; }
 
 /* Filtros */
 .filtros-bar { display: flex; align-items: flex-end; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
@@ -1366,6 +1503,10 @@ const maxCostoTipo = computed(() => {
 .loading-wrap { display: flex; align-items: center; gap: 0.75rem; color: #6B7280; padding: 3rem 0; font-size: 0.875rem; }
 .spinner { width: 20px; height: 20px; border: 2.5px solid #E5E7EB; border-top-color: #4F46E5; border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Semáforo */
+.semaforo-rojo { background: #FEF2F2 !important; }
+.semaforo-amarillo { background: #FFFBEB !important; }
 
 /* KPIs */
 .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }

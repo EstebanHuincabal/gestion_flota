@@ -14,6 +14,7 @@ from rest_framework import status
 from .models import (
     Empresa, Vehiculo, Mantencion, Rol,
     GastoOperativo, Documento, Usuario, PresupuestoMensual,
+    Ruta, SolicitudConductor,
 )
 
 
@@ -438,6 +439,12 @@ def reporte_tco(request):
     total_gastos  = sum(r['gastos_total'] for r in resultados)
     total_mant    = sum(r['mantenciones_total'] for r in resultados)
 
+    # Distribución global de gastos por categoría (suma de todos los vehículos)
+    categorias_global = {}
+    for r in resultados:
+        for cat, monto in r['gastos_cat'].items():
+            categorias_global[cat] = categorias_global.get(cat, 0) + monto
+
     return Response({
         'resumen': {
             'total_flota':    total_flota,
@@ -446,7 +453,8 @@ def reporte_tco(request):
             'vehiculos':      len(resultados),
             'costo_promedio': round(total_flota / len(resultados)) if resultados else 0,
         },
-        'vehiculos': resultados,
+        'vehiculos':         resultados,
+        'gastos_categoria':  categorias_global,   # dona de distribución
     })
 
 
@@ -695,4 +703,144 @@ def reporte_combustible(request):
         'top_vehiculo':       top_vehiculo,
         'por_vehiculo':       por_vehiculo,
         'por_mes':            por_mes,
+    })
+
+
+# ─────────────────────────────────────────
+# Reporte de rutas por mes
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_rutas(request):
+    """Rutas completadas vs canceladas por mes (últimos 12 meses)."""
+    user = request.user
+    if user.rol == Rol.CONDUCTOR:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+
+    empresa = _get_empresa(user, request.query_params)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    hoy    = date_cls.today()
+    inicio = date_cls(hoy.year - 1 if hoy.month == 12 else hoy.year, (hoy.month % 12) + 1, 1)
+
+    MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+    rutas_qs = Ruta.objects.filter(
+        empresa=empresa,
+        estado__in=['finalizado', 'cancelado'],
+        fecha_fin__date__gte=inicio,
+    )
+
+    meses_dict = {}
+    for r in rutas_qs:
+        if not r.fecha_fin:
+            continue
+        key = (r.fecha_fin.year, r.fecha_fin.month)
+        if key not in meses_dict:
+            meses_dict[key] = {'finalizadas': 0, 'canceladas': 0}
+        if r.estado == 'finalizado':
+            meses_dict[key]['finalizadas'] += 1
+        else:
+            meses_dict[key]['canceladas'] += 1
+
+    # Rellenar los 12 meses aunque no haya datos
+    resultado = []
+    for i in range(12):
+        m = (inicio.month + i - 1) % 12 + 1
+        a = inicio.year + ((inicio.month + i - 1) // 12)
+        d = meses_dict.get((a, m), {'finalizadas': 0, 'canceladas': 0})
+        resultado.append({
+            'mes_label':   MESES_ES[m - 1],
+            'anio':        a,
+            'finalizadas': d['finalizadas'],
+            'canceladas':  d['canceladas'],
+            'total':       d['finalizadas'] + d['canceladas'],
+        })
+
+    # KPIs globales
+    total_rutas       = Ruta.objects.filter(empresa=empresa).count()
+    total_finalizadas = Ruta.objects.filter(empresa=empresa, estado='finalizado').count()
+    total_canceladas  = Ruta.objects.filter(empresa=empresa, estado='cancelado').count()
+    total_activas     = Ruta.objects.filter(empresa=empresa, estado='activo').count()
+    tipos = {}
+    for r in Ruta.objects.filter(empresa=empresa).values('tipo'):
+        tipos[r['tipo']] = tipos.get(r['tipo'], 0) + 1
+
+    return Response({
+        'resumen': {
+            'total':       total_rutas,
+            'finalizadas': total_finalizadas,
+            'canceladas':  total_canceladas,
+            'activas':     total_activas,
+            'por_tipo':    tipos,
+        },
+        'por_mes': resultado,
+    })
+
+
+# ─────────────────────────────────────────
+# Reporte de solicitudes de conductores
+# ─────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_solicitudes(request):
+    """Solicitudes de conductores por tipo y mes (últimos 12 meses)."""
+    user = request.user
+    if user.rol == Rol.CONDUCTOR:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+
+    empresa = _get_empresa(user, request.query_params)
+    if not empresa:
+        return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    hoy    = date_cls.today()
+    inicio = date_cls(hoy.year - 1 if hoy.month == 12 else hoy.year, (hoy.month % 12) + 1, 1)
+
+    MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+    TIPOS    = ['mantencion', 'combustible', 'incidencia', 'documento']
+
+    solicitudes = SolicitudConductor.objects.filter(
+        empresa=empresa,
+        created_at__date__gte=inicio,
+    )
+
+    # Agrupar por mes y tipo
+    meses_dict = {}
+    for s in solicitudes:
+        key = (s.created_at.year, s.created_at.month)
+        if key not in meses_dict:
+            meses_dict[key] = {t: 0 for t in TIPOS}
+        if s.tipo in meses_dict[key]:
+            meses_dict[key][s.tipo] += 1
+
+    resultado = []
+    for i in range(12):
+        m = (inicio.month + i - 1) % 12 + 1
+        a = inicio.year + ((inicio.month + i - 1) // 12)
+        d = meses_dict.get((a, m), {t: 0 for t in TIPOS})
+        resultado.append({
+            'mes_label':  MESES_ES[m - 1],
+            'anio':       a,
+            **{t: d.get(t, 0) for t in TIPOS},
+            'total':      sum(d.get(t, 0) for t in TIPOS),
+        })
+
+    # Totales por tipo y por estado
+    por_tipo   = {t: solicitudes.filter(tipo=t).count() for t in TIPOS}
+    por_estado = {}
+    for s in solicitudes.values('estado'):
+        por_estado[s['estado']] = por_estado.get(s['estado'], 0) + 1
+
+    return Response({
+        'resumen': {
+            'total':     solicitudes.count(),
+            'por_tipo':  por_tipo,
+            'por_estado': por_estado,
+        },
+        'por_mes': resultado,
     })
