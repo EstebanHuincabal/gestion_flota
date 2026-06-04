@@ -95,7 +95,7 @@ class NMEAEmulatorAdapter(IGPSProvider):
 
     def __init__(self, imei: str, api_url: str, intervalo_seg: int = 5,
                  ruta_puntos: Optional[list] = None, api_key: str = '',
-                 traccar_url: str = ''):
+                 traccar_url: str = '', desviar: bool = False):
         self.imei          = imei
         self.api_url       = api_url.rstrip('/')
         self.intervalo_seg = intervalo_seg
@@ -123,6 +123,9 @@ class NMEAEmulatorAdapter(IGPSProvider):
         self._thread: Optional[threading.Thread] = None
         self._callback: Optional[Callable[[Dict], None]] = None
         self._ultima_posicion: Optional[Dict] = None
+        # Modo prueba: alterna 5 ticks en ruta / 5 ticks fuera de ruta (~350 m)
+        self.desviar          = desviar
+        self._tick_count      = 0
 
     @staticmethod
     def _submuestrear(puntos: list, max_puntos: int = 40) -> list:
@@ -232,6 +235,13 @@ class NMEAEmulatorAdapter(IGPSProvider):
         ruido = 0.0001 if self._ruta_real else 0.0005
         lat = lat_base + random.uniform(-ruido, ruido)
         lng = lng_base + random.uniform(-ruido, ruido)
+
+        # Modo prueba --desviar: cada bloque de 5 ticks alterna en-ruta / fuera-de-ruta.
+        # Un offset de 0.003° lat ≈ 333 m — supera el umbral de 200 m.
+        if self.desviar:
+            self._tick_count += 1
+            if (self._tick_count // 5) % 2 == 1:
+                lat += 0.003
         velocidad = round(random.uniform(20, 70), 1)
 
         # Trama NMEA (se reparsea para validar el ciclo generar→parsear)

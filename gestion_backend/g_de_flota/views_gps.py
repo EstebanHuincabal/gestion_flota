@@ -15,6 +15,7 @@ Endpoints:
     POST            /api/empresa/gps/posicion/              (sin JWT — ingesta)
     GET             /api/empresa/gps/vehiculos/posicion/
 """
+import math
 import secrets
 
 from django.utils import timezone
@@ -24,7 +25,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from .models import (
     Empresa, Vehiculo, Ubicacion, Rol,
-    DispositivoGPS,
+    DispositivoGPS, Ruta, TipoNotificacion,
 )
 from .error_helpers import error_response
 from .audit import registrar_log
@@ -146,6 +147,127 @@ def notificar_rutas_cambiadas(empresa_id):
             })
     except Exception:
         pass
+
+
+# ── Detección de desviación de ruta ──────────────────────────────────────────
+
+UMBRAL_DESVIACION_M = 200   # metros fuera del corredor para disparar la alerta
+COOLDOWN_NOTIF_S    = 300   # segundos mínimos entre notificaciones del mismo vehículo
+
+# Estado en memoria por vehículo. En multi-worker aplica por proceso; suficiente
+# para dev y para despliegues con un único worker (gunicorn -w 1 / daphne).
+_estado_desviacion = {}   # vehiculo_id → {'desviado': bool, 'ultima_notif': datetime|None}
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    """Distancia en metros entre dos puntos geográficos (Haversine)."""
+    R = 6_371_000
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def _dist_punto_a_segmento(lat, lng, lat1, lng1, lat2, lng2):
+    """Distancia mínima en metros del punto al segmento (proyección plana local)."""
+    cos_lat = math.cos(math.radians((lat1 + lat2) / 2))
+    px = (lng - lng1) * cos_lat
+    py = lat - lat1
+    dx = (lng2 - lng1) * cos_lat
+    dy = lat2 - lat1
+    seg2 = dx * dx + dy * dy
+    if seg2 == 0:
+        return _haversine_m(lat, lng, lat1, lng1)
+    t = max(0.0, min(1.0, (px * dx + py * dy) / seg2))
+    return _haversine_m(lat, lng, lat1 + t * dy, lng1 + t * (lng2 - lng1))
+
+
+def _distancia_a_polyline(lat, lng, polyline):
+    """Distancia mínima en metros del punto a la polilínea [[lat,lng],...]."""
+    if not polyline or len(polyline) < 2:
+        return float('inf')
+    return min(
+        _dist_punto_a_segmento(lat, lng,
+                               polyline[i][0], polyline[i][1],
+                               polyline[i + 1][0], polyline[i + 1][1])
+        for i in range(len(polyline) - 1)
+    )
+
+
+def _broadcast_evento_gps(empresa_id, payload):
+    """Emite un evento genérico al grupo WebSocket gps_{empresa_id}."""
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        layer = get_channel_layer()
+        if layer:
+            async_to_sync(layer.group_send)(f'gps_{empresa_id}', payload)
+    except Exception:
+        pass
+
+
+def _verificar_desviacion_ruta(dispositivo, lat, lng):
+    """Detecta si el vehículo se alejó de su ruta activa y emite alertas."""
+    vid = dispositivo.vehiculo_id
+    if not vid:
+        return
+
+    ruta = (
+        Ruta.objects
+        .filter(vehiculo_id=vid, estado='activo')
+        .exclude(polyline=[])
+        .only('id', 'nombre', 'polyline')
+        .first()
+    )
+    if not ruta or not ruta.polyline or len(ruta.polyline) < 2:
+        _estado_desviacion.pop(vid, None)
+        return
+
+    distancia = _distancia_a_polyline(lat, lng, ruta.polyline)
+    estado    = _estado_desviacion.get(vid, {'desviado': False, 'ultima_notif': None})
+    ahora     = timezone.now()
+
+    if distancia > UMBRAL_DESVIACION_M:
+        ya_notificado = (
+            estado['ultima_notif'] is not None and
+            (ahora - estado['ultima_notif']).total_seconds() < COOLDOWN_NOTIF_S
+        )
+        if not ya_notificado:
+            patente      = dispositivo.vehiculo.patente
+            ruta_nombre  = ruta.nombre or f'Ruta #{ruta.id}'
+            dist_m       = round(distancia)
+            _broadcast_evento_gps(dispositivo.empresa_id, {
+                'type':        'route_deviation',
+                'vehiculo_id': vid,
+                'patente':     patente,
+                'distancia_m': dist_m,
+                'ruta_nombre': ruta_nombre,
+            })
+            try:
+                from .notificaciones import notificar_admins_empresa
+                notificar_admins_empresa(
+                    dispositivo.empresa,
+                    TipoNotificacion.ACTIVIDAD,
+                    f'Vehículo fuera de ruta: {patente}',
+                    f'{patente} se alejó {dist_m} m de "{ruta_nombre}".',
+                    url_accion='/empresa/mapa',
+                    extra={'vehiculo_id': vid, 'ruta_id': ruta.id},
+                )
+            except Exception:
+                pass
+            _estado_desviacion[vid] = {'desviado': True, 'ultima_notif': ahora}
+        else:
+            _estado_desviacion[vid] = {**estado, 'desviado': True}
+    else:
+        if estado.get('desviado'):
+            _broadcast_evento_gps(dispositivo.empresa_id, {
+                'type':        'route_on_track',
+                'vehiculo_id': vid,
+                'patente':     dispositivo.vehiculo.patente,
+            })
+        _estado_desviacion[vid] = {'desviado': False, 'ultima_notif': estado.get('ultima_notif')}
 
 
 # ── Dispositivos: lista y creación ────────────────────────────────────────────
@@ -488,6 +610,7 @@ def _registrar_posicion(dispositivo, lat, lng, vel):
         'tiene_conductor':  conductor is not None,
         'conductor_nombre': conductor.nombre if conductor else None,
     })
+    _verificar_desviacion_ruta(dispositivo, lat, lng)
     return ubicacion
 
 

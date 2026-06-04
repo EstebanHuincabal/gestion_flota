@@ -38,6 +38,9 @@ class Command(BaseCommand):
         parser.add_argument('--traccar', type=str, default='',
                             help='URL del protocolo OsmAnd de Traccar (ej: http://localhost:5055). '
                                  'Si se indica, el emulador envía a Traccar en vez de al endpoint directo.')
+        parser.add_argument('--desviar', action='store_true', default=False,
+                            help='Modo prueba: alterna 5 ticks en ruta / 5 ticks fuera de ruta '
+                                 'para verificar las alertas de desviación en el mapa.')
 
     def handle(self, *args, **opts):
         qs = DispositivoGPS.objects.filter(activo=True, vehiculo__isnull=False)
@@ -71,8 +74,9 @@ class Command(BaseCommand):
                 api_url=opts['api_url'],
                 intervalo_seg=opts['intervalo'],
                 ruta_puntos=ruta_puntos,
-                api_key=d.api_key,   # autenticar la ingesta si el dispositivo tiene clave
-                traccar_url=opts['traccar'],   # si se indica, envía por Traccar (OsmAnd)
+                api_key=d.api_key,
+                traccar_url=opts['traccar'],
+                desviar=opts['desviar'],
             )
             emu.connect()
             emuladores.append(emu)
@@ -89,9 +93,12 @@ class Command(BaseCommand):
                 ))
 
         destino = f"Traccar OsmAnd ({opts['traccar']})" if opts['traccar'] else f"endpoint directo ({opts['api_url']})"
-        self.stdout.write(self.style.NOTICE(
-            f'\nEnviando a: {destino}'
-        ))
+        self.stdout.write(self.style.NOTICE(f'\nEnviando a: {destino}'))
+        if opts['desviar']:
+            self.stdout.write(self.style.WARNING(
+                '⚠ Modo --desviar activo: cada 5 ticks el vehículo saldrá ~333 m de la ruta '
+                'para probar las alertas de desviación.'
+            ))
         self.stdout.write(self.style.NOTICE(
             f'{len(emuladores)} emulador(es) activos. Ctrl+C para detener.\n'
         ))

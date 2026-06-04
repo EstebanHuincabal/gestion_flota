@@ -211,17 +211,37 @@ class GPSConsumer(AsyncWebsocketConsumer):
     async def position_update(self, event):
         """Reenvía la posición de un vehículo al cliente del mapa."""
         await self.send(text_data=json.dumps({
-            'type':        'position_update',
-            'vehiculo_id': event['vehiculo_id'],
-            'patente':     event['patente'],
-            'latitud':     event['latitud'],
-            'longitud':    event['longitud'],
-            'velocidad':   event['velocidad'],
-            'timestamp':   event['timestamp'],
+            'type':             'position_update',
+            'vehiculo_id':      event['vehiculo_id'],
+            'patente':          event['patente'],
+            'latitud':          event['latitud'],
+            'longitud':         event['longitud'],
+            'velocidad':        event['velocidad'],
+            'timestamp':        event['timestamp'],
+            'tiene_conductor':  event.get('tiene_conductor', False),
+            'conductor_nombre': event.get('conductor_nombre'),
         }))
 
     async def rutas_cambiadas(self, event):
         """Avisa al mapa que las rutas activas cambiaron (recargar trazados)."""
         await self.send(text_data=json.dumps({'type': 'rutas_cambiadas'}))
+
+    async def route_deviation(self, event):
+        """Alerta: vehículo salió del corredor de su ruta activa."""
+        await self.send(text_data=json.dumps({
+            'type':        'route_deviation',
+            'vehiculo_id': event['vehiculo_id'],
+            'patente':     event['patente'],
+            'distancia_m': event['distancia_m'],
+            'ruta_nombre': event['ruta_nombre'],
+        }))
+
+    async def route_on_track(self, event):
+        """Vehículo volvió al corredor de su ruta."""
+        await self.send(text_data=json.dumps({
+            'type':        'route_on_track',
+            'vehiculo_id': event['vehiculo_id'],
+            'patente':     event['patente'],
+        }))
 
 
