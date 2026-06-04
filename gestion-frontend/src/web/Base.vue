@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { clearEmpresaActiva } from '../utils/empresaActiva.js'
 import NotificacionesBell from '../components/NotificacionesBell.vue'
@@ -93,16 +93,30 @@ const navOperaciones = [
       d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>`
   },
   {
-    label: 'Mantenciones',
-    path: '/mantenciones',
+    label: 'Mantenimientos',
+    group: true,
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-      d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>`
-  },
-  {
-    label: 'Predictivo',
-    path: '/predictivo',
-    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-      d="M13 10V3L4 14h7v7l9-11h-7z"/>`
+      d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>`,
+    children: [
+      {
+        label: 'Mantenciones',
+        path: '/mantenciones',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>`,
+      },
+      {
+        label: 'Predictivo',
+        path: '/predictivo',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M13 10V3L4 14h7v7l9-11h-7z"/>`,
+      },
+      {
+        label: 'Correctivos',
+        path: '/finanzas/correctivos',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>`,
+      },
+    ],
   },
   {
     label: 'Documentos',
@@ -162,7 +176,33 @@ const navCuenta = [
   },
 ]
 
-const isActive = (path) => route.path.startsWith(path)
+// Grupo colapsable
+const groupsOpen = ref({})
+function toggleGroup(label) { groupsOpen.value[label] = !groupsOpen.value[label] }
+function isGroupActive(item) { return item.children?.some(c => route.path.startsWith(c.path)) }
+
+watch(route, () => {
+  navOperaciones.forEach(item => {
+    if (item.group && isGroupActive(item)) groupsOpen.value[item.label] = true
+  })
+}, { immediate: true })
+
+// Activo si la ruta coincide exactamente o es una subruta de un ítem que NO
+// tiene hijos en el menú. Para evitar que un padre (/finanzas) se marque activo
+// estando en una subruta que es su propio ítem (/finanzas/correctivos), se exige
+// que ningún otro ítem del menú sea un prefijo más específico de la ruta actual.
+const isActive = (path) => {
+  const actual = route.path
+  if (actual === path) return true
+  if (!actual.startsWith(path + '/')) return false
+  // Aplanar grupos para no llamar .startsWith sobre undefined
+  const todosItems = navOperaciones.flatMap(it => it.group ? it.children : [it])
+  const masEspecifico = todosItems.some(it =>
+    it.path !== path && it.path.startsWith(path + '/') &&
+    (actual === it.path || actual.startsWith(it.path + '/'))
+  )
+  return !masEspecifico
+}
 
 // ── Badge de solicitudes para SUPERADMIN ──────────────────────────────────────
 const solicitudesPendientes = ref(0)
@@ -282,25 +322,71 @@ onUnmounted(() => {
         <template v-if="!esConductor">
           <div class="nav-separator"/>
           <p v-if="!navCollapsed" class="nav-section-label">Operaciones</p>
-          <router-link
-            v-for="item in navOperaciones"
-            :key="item.path"
-            :to="item.path"
-            :class="['nav-item', { active: isActive(item.path) }]"
-            :title="navCollapsed ? item.label : ''"
-          >
-            <span class="nav-icon" style="position:relative">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
-              <!-- Punto rojo en modo colapsado -->
-              <span v-if="navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-dot"/>
-            </span>
-            <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
-            <!-- Contador inline en modo expandido -->
-            <span v-if="!navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-count">
-              {{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}
-            </span>
-            <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
-          </router-link>
+          <template v-for="item in navOperaciones" :key="item.group ? item.label : item.path">
+
+            <!-- Grupo colapsable -->
+            <template v-if="item.group">
+              <button
+                v-if="!navCollapsed"
+                class="nav-group-btn"
+                :class="{ 'group-active': isGroupActive(item) }"
+                @click="toggleGroup(item.label)"
+              >
+                <span class="nav-icon">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+                </span>
+                <span class="nav-label">{{ item.label }}</span>
+                <svg class="group-chevron" :class="{ open: groupsOpen[item.label] }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </button>
+              <template v-if="!navCollapsed && groupsOpen[item.label]">
+                <router-link
+                  v-for="child in item.children"
+                  :key="child.path"
+                  :to="child.path"
+                  :class="['nav-item', 'nav-child', { active: isActive(child.path) }]"
+                >
+                  <span class="nav-icon">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="child.icon"/>
+                  </span>
+                  <span class="nav-label">{{ child.label }}</span>
+                  <span v-if="isActive(child.path)" class="active-bar"/>
+                </router-link>
+              </template>
+              <router-link
+                v-if="navCollapsed"
+                v-for="child in item.children"
+                :key="child.path + '_c'"
+                :to="child.path"
+                :class="['nav-item', { active: isActive(child.path) }]"
+                :title="child.label"
+              >
+                <span class="nav-icon">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="child.icon"/>
+                </span>
+              </router-link>
+            </template>
+
+            <!-- Ítem normal -->
+            <router-link
+              v-else
+              :to="item.path"
+              :class="['nav-item', { active: isActive(item.path) }]"
+              :title="navCollapsed ? item.label : ''"
+            >
+              <span class="nav-icon" style="position:relative">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+                <span v-if="navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-dot"/>
+              </span>
+              <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
+              <span v-if="!navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-count">
+                {{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}
+              </span>
+              <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
+            </router-link>
+
+          </template>
         </template>
 
         <!-- Mi Panel — solo CONDUCTOR -->
@@ -649,4 +735,19 @@ onUnmounted(() => {
   text-align: center;
   flex-shrink: 0;
 }
+
+/* Grupo colapsable */
+.nav-group-btn {
+  width: 100%; display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.6rem 0.75rem; border-radius: 10px;
+  background: none; border: none; cursor: pointer;
+  color: rgba(255,255,255,0.7); font-size: 0.875rem; font-weight: 500;
+  font-family: inherit; text-align: left; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-group-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.nav-group-btn.group-active { color: #fff; font-weight: 600; }
+.group-chevron { width: 14px; height: 14px; margin-left: auto; flex-shrink: 0; transition: transform 0.2s; }
+.group-chevron.open { transform: rotate(180deg); }
+.nav-child { padding-left: 2.25rem; }
 </style>

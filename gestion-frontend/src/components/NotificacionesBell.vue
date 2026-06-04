@@ -21,7 +21,7 @@
     <!-- Dropdown -->
     <div
       v-if="abierto"
-      class="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-lg border border-gray-100 z-50 overflow-hidden"
+      class="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-lg border border-gray-100 z-[9999] overflow-hidden"
     >
       <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
         <span class="text-sm font-semibold text-gray-900">Notificaciones</span>

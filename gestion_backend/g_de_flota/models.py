@@ -684,6 +684,22 @@ class GastoOperativo(models.Model):
     vehiculo       = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True)
     conductor      = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='gastos_conductor')
     categoria      = models.CharField(max_length=20, choices=CATEGORIAS)
+    # ── Gastos correctivos no presupuestados (mantención NO planificada) ──────
+    CATEGORIAS_CORRECTIVAS = [
+        ('falla_mecanica',   'Falla mecánica urgente'),
+        ('repuesto_urgente', 'Repuesto no planificado'),
+        ('accidente',        'Daño por accidente'),
+        ('electrico',        'Falla eléctrica'),
+        ('neumatico',        'Neumático de emergencia'),
+        ('otro_correctivo',  'Otro correctivo'),
+    ]
+    PRIORIDADES = [('alta', 'Alta'), ('media', 'Media'), ('baja', 'Baja')]
+    es_correctivo        = models.BooleanField(default=False,
+                            help_text='True si es un gasto correctivo no presupuestado (falla inesperada).')
+    categoria_correctiva = models.CharField(max_length=30, blank=True, default='',
+                            choices=CATEGORIAS_CORRECTIVAS, help_text='Solo si es_correctivo=True.')
+    prioridad_correctiva = models.CharField(max_length=10, blank=True, default='',
+                            choices=PRIORIDADES, help_text='Solo si es_correctivo=True.')
     descripcion    = EncryptedCharField(max_length=300)
     monto          = models.DecimalField(max_digits=10, decimal_places=0)
     fecha          = models.DateField()

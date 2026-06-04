@@ -42,6 +42,7 @@ from g_de_flota.views_gastos import (
     GastosListView, GastoDetailView, GastosExportarView,
     PresupuestoView, PresupuestoDetailView,
     FinanzasSaasView, FinanzasHistoricoView,
+    GastosCorrectivosList, GastoCorrectivoDetail, GastoCorrectivoComprobante,
 )
 from g_de_flota.views_reportes import (
     reporte_mantencion, reporte_flota, reporte_exportar, reporte_admin_empresas,
@@ -148,6 +149,11 @@ urlpatterns = [
     path('api/notificaciones/no-leidas/',    notificaciones_no_leidas,     name='notificaciones-no-leidas'),
     path('api/notificaciones/leer/',         notificaciones_leer,          name='notificaciones-leer'),
     path('api/notificaciones/preferencias/', notificaciones_preferencias,  name='notificaciones-preferencias'),
+
+    # Finanzas — gastos correctivos (van ANTES de las rutas con <int:gasto_id>)
+    path('api/empresa/gastos/correctivos/',                       GastosCorrectivosList.as_view(),     name='gastos-correctivos'),
+    path('api/empresa/gastos/correctivos/<int:gasto_id>/',        GastoCorrectivoDetail.as_view(),     name='gastos-correctivo-detalle'),
+    path('api/empresa/gastos/correctivos/<int:gasto_id>/comprobante/', GastoCorrectivoComprobante.as_view(), name='gastos-correctivo-comprobante'),
 
     # Finanzas — gastos operativos (USUARIO)
     path('api/empresa/gastos/',                  GastosListView.as_view(),       name='gastos-lista'),

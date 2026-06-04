@@ -35,6 +35,7 @@ const MODULOS = [
   { cat: 'Avanzado', items: [
     { key: 'mantencion_predictiva',  label: 'Mantención Predictiva' },
     { key: 'documentos',             label: 'Documentos' },
+    { key: 'correctivos',            label: 'Gastos correctivos' },
     { key: 'notificaciones_avanzadas', label: 'Notificaciones Avanzadas' },
   ]},
   { cat: 'Premium', items: [

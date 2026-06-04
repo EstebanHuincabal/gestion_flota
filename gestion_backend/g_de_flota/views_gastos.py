@@ -16,8 +16,10 @@ from rest_framework.views import APIView
 from .models import (
     Empresa, GastoOperativo, PresupuestoMensual, Vehiculo, Usuario, Rol,
     Mantencion, PlanSuscripcion, CambioPlan, PagoTransbank, Suscripcion,
+    TipoNotificacion,
 )
 from .audit import registrar_log
+from .notificaciones import notificar_admins_empresa
 
 
 def _tiene_permiso(user, codigo: str) -> bool:
@@ -79,7 +81,9 @@ class GastosListView(APIView):
         vid  = request.query_params.get('vehiculo_id')
         cid  = request.query_params.get('conductor_id')
 
-        qs = GastoOperativo.objects.filter(empresa=empresa).select_related(
+        # Los gastos correctivos NO se mezclan con el presupuesto normal: tienen
+        # su propio módulo (tab "Correctivos"). Aquí se excluyen siempre.
+        qs = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=False).select_related(
             'vehiculo', 'conductor', 'registrado_por'
         )
 
@@ -124,14 +128,7 @@ class GastosListView(APIView):
             if total_km > 0 and total > 0:
                 costo_por_km = round(int(total) / total_km)
 
-        presupuesto_data = None
-        if mes and anio:
-            try:
-                p = PresupuestoMensual.objects.get(empresa=empresa, mes=int(mes), anio=int(anio))
-                pct = round(float(total) / float(p.monto) * 100) if p.monto > 0 else 0
-                presupuesto_data = {'id': p.id, 'monto': int(p.monto), 'utilizado_pct': pct}
-            except PresupuestoMensual.DoesNotExist:
-                presupuesto_data = None
+        presupuesto_data = None  # se calcula más abajo, tras sumar correctivos
 
         # Tendencia últimos 6 meses
         from datetime import date as _today_cls
@@ -145,14 +142,14 @@ class GastosListView(APIView):
                 m_t += 12
                 a_t -= 1
             tot_t = GastoOperativo.objects.filter(
-                empresa=empresa, fecha__year=a_t, fecha__month=m_t
+                empresa=empresa, es_correctivo=False, fecha__year=a_t, fecha__month=m_t
             ).aggregate(t=Sum('monto'))['t'] or 0
             tendencia_6meses.append({'label': f"{MESES_ES_T[m_t-1]} {str(a_t)[2:]}", 'total': int(tot_t)})
 
         # Por conductor
         por_conductor = []
         cond_totales = (
-            GastoOperativo.objects.filter(empresa=empresa)
+            GastoOperativo.objects.filter(empresa=empresa, es_correctivo=False)
             .filter(**({'fecha__month': int(mes), 'fecha__year': int(anio)} if mes and anio else ({'fecha__year': int(anio)} if anio else {})))
             .exclude(conductor__isnull=True)
             .values('conductor_id')
@@ -174,7 +171,7 @@ class GastosListView(APIView):
             m_ant = int(mes) - 1 if int(mes) > 1 else 12
             a_ant = int(anio) if int(mes) > 1 else int(anio) - 1
             tot_ant = GastoOperativo.objects.filter(
-                empresa=empresa, fecha__month=m_ant, fecha__year=a_ant
+                empresa=empresa, es_correctivo=False, fecha__month=m_ant, fecha__year=a_ant
             ).aggregate(t=Sum('monto'))['t'] or 0
             variacion_mes_anterior = {
                 'total_anterior': int(tot_ant),
@@ -293,6 +290,26 @@ class GastosListView(APIView):
                 'orden':  p.orden_compra or '',
             })
 
+        # Correctivos del período.
+        corr_qs = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=True)
+        if mes and anio:
+            corr_qs = corr_qs.filter(fecha__month=int(mes), fecha__year=int(anio))
+        elif anio:
+            corr_qs = corr_qs.filter(fecha__year=int(anio))
+        if vid:
+            corr_qs = corr_qs.filter(vehiculo_id=vid)
+        total_correctivos = int(corr_qs.aggregate(t=Sum('monto'))['t'] or 0)
+
+        # Presupuesto: ejecución = gastos normales + mantenciones + correctivos.
+        if mes and anio:
+            try:
+                p = PresupuestoMensual.objects.get(empresa=empresa, mes=int(mes), anio=int(anio))
+                total_utilizado = int(total) + total_correctivos
+                pct = round(float(total_utilizado) / float(p.monto) * 100) if p.monto > 0 else 0
+                presupuesto_data = {'id': p.id, 'monto': int(p.monto), 'utilizado_pct': pct}
+            except PresupuestoMensual.DoesNotExist:
+                presupuesto_data = None
+
         return Response({
             'gastos':          lista_gastos,
             'pagos_servicio':  pagos_servicio,
@@ -306,6 +323,8 @@ class GastosListView(APIView):
                 'presupuesto':           presupuesto_data,
                 'tendencia_6meses':      tendencia_6meses,
                 'variacion_mes_anterior': variacion_mes_anterior,
+                'total_correctivos_mes': total_correctivos,
+                'tiene_correctivos':     total_correctivos > 0,
             },
         })
 
@@ -481,7 +500,8 @@ class GastosExportarView(APIView):
         anio = request.query_params.get('anio')
         fmt  = request.query_params.get('formato', 'csv')
 
-        qs = GastoOperativo.objects.filter(empresa=empresa).select_related('vehiculo', 'conductor')
+        # La exportación de gastos normales excluye correctivos (tienen su módulo aparte).
+        qs = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=False).select_related('vehiculo', 'conductor')
         if mes and anio:
             qs = qs.filter(fecha__month=int(mes), fecha__year=int(anio))
         elif anio:
@@ -552,8 +572,12 @@ class PresupuestoView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not _tiene_permiso(request.user, 'finanzas.ver'):
-            return Response({'error': 'Sin permisos para ver finanzas.'}, status=403)
+        puede = (
+            _tiene_permiso(request.user, 'finanzas.ver') or
+            _tiene_permiso(request.user, 'correctivos.ver')
+        )
+        if not puede:
+            return Response({'error': 'Sin permisos para ver el presupuesto.'}, status=403)
         empresa = _get_empresa(request)
         if not empresa:
             return Response({'error': 'Empresa no encontrada.'}, status=400)
@@ -833,3 +857,346 @@ class FinanzasHistoricoView(APIView):
             })
 
         return Response(resultado)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Gastos correctivos no presupuestados
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Validación inline del comprobante (no existe file_validators en el proyecto).
+_COMPROBANTE_MAX_MB = 10
+
+
+def _validar_comprobante(archivo):
+    """Devuelve un mensaje de error si el archivo no es válido, o None si lo es."""
+    if archivo.size > _COMPROBANTE_MAX_MB * 1024 * 1024:
+        return f'El archivo no puede superar {_COMPROBANTE_MAX_MB} MB.'
+    ct = (archivo.content_type or '')
+    if not (ct == 'application/pdf' or ct.startswith('image/')):
+        return 'Solo se permiten archivos PDF o imágenes.'
+    return None
+
+
+def _gasto_correctivo_dict(g):
+    return {
+        'id':                   g.id,
+        'vehiculo_id':          g.vehiculo_id,
+        'vehiculo_patente':     g.vehiculo.patente if g.vehiculo else None,
+        'categoria_correctiva': g.categoria_correctiva,
+        'categoria_display':    g.get_categoria_correctiva_display() if g.categoria_correctiva else '',
+        'prioridad':            g.prioridad_correctiva,
+        'prioridad_display':    g.get_prioridad_correctiva_display() if g.prioridad_correctiva else '',
+        'descripcion':          g.descripcion,
+        'monto':                int(g.monto),
+        'fecha':                g.fecha.isoformat(),
+        'comprobante':          g.comprobante.url if g.comprobante else None,
+        'tiene_comprobante':    bool(g.comprobante),
+        'registrado_por':       g.registrado_por.nombre if g.registrado_por else None,
+        'created_at':           g.created_at.isoformat(),
+    }
+
+
+class GastosCorrectivosList(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _tiene_permiso(request.user, 'correctivos.ver'):
+            return Response({'error': 'Sin permisos para ver correctivos.'}, status=403)
+        empresa = _get_empresa(request)
+        if not empresa:
+            return Response({'error': 'Empresa no encontrada.'}, status=400)
+
+        mes  = request.query_params.get('mes')
+        anio = request.query_params.get('anio')
+        vid  = request.query_params.get('vehiculo_id')
+        cat  = request.query_params.get('categoria_correctiva')
+        prio = request.query_params.get('prioridad')
+
+        base = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=True)
+        if mes and anio:
+            base = base.filter(fecha__month=int(mes), fecha__year=int(anio))
+        elif anio:
+            base = base.filter(fecha__year=int(anio))
+
+        qs = base.select_related('vehiculo', 'registrado_por')
+        if vid:  qs = qs.filter(vehiculo_id=vid)
+        if cat:  qs = qs.filter(categoria_correctiva=cat)
+        if prio: qs = qs.filter(prioridad_correctiva=prio)
+
+        gastos = [_gasto_correctivo_dict(g) for g in qs.order_by('-fecha', '-created_at')]
+        total_correctivos = int(qs.aggregate(t=Sum('monto'))['t'] or 0)
+
+        # Total NORMAL del período (denominador del impacto): gasto operativo no
+        # correctivo. La regla: el impacto se calcula sobre el gasto normal.
+        normal_qs = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=False)
+        if mes and anio:
+            normal_qs = normal_qs.filter(fecha__month=int(mes), fecha__year=int(anio))
+        elif anio:
+            normal_qs = normal_qs.filter(fecha__year=int(anio))
+        total_normal = int(normal_qs.aggregate(t=Sum('monto'))['t'] or 0)
+        impacto = round(total_correctivos / total_normal * 100) if total_normal > 0 else 0
+
+        # Por categoría correctiva.
+        por_categoria = []
+        for row in qs.values('categoria_correctiva').annotate(s=Sum('monto')).order_by('-s'):
+            code  = row['categoria_correctiva']
+            label = dict(GastoOperativo.CATEGORIAS_CORRECTIVAS).get(code, code)
+            tot   = int(row['s'])
+            por_categoria.append({
+                'categoria': code, 'label': label, 'total': tot,
+                'pct': round(tot / total_correctivos * 100) if total_correctivos else 0,
+            })
+
+        # Por vehículo: correctivo vs normal del período.
+        corr_por_veh = {r['vehiculo_id']: int(r['s'])
+                        for r in qs.values('vehiculo_id').annotate(s=Sum('monto'))}
+        norm_por_veh = {r['vehiculo_id']: int(r['s'])
+                        for r in normal_qs.values('vehiculo_id').annotate(s=Sum('monto'))}
+        veh_ids = {i for i in (set(corr_por_veh) | set(norm_por_veh)) if i}
+        veh_map = {v.id: v for v in Vehiculo.objects.filter(id__in=veh_ids)}
+        por_vehiculo = []
+        for vidk in veh_ids:
+            v = veh_map.get(vidk)
+            por_vehiculo.append({
+                'vehiculo_id':      vidk,
+                'patente':          v.patente if v else '—',
+                'total_correctivo': corr_por_veh.get(vidk, 0),
+                'total_normal':     norm_por_veh.get(vidk, 0),
+            })
+        por_vehiculo.sort(key=lambda x: x['total_correctivo'], reverse=True)
+        vehiculo_top = None
+        if por_vehiculo and por_vehiculo[0]['total_correctivo'] > 0:
+            vehiculo_top = {
+                'vehiculo_id': por_vehiculo[0]['vehiculo_id'],
+                'patente':     por_vehiculo[0]['patente'],
+                'total':       por_vehiculo[0]['total_correctivo'],
+            }
+
+        # Evolución últimos 6 meses (siempre 6 puntos).
+        _MS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+        hoy = date_cls.today()
+        evolucion = []
+        for i in range(5, -1, -1):
+            m_e = hoy.month - i; a_e = hoy.year
+            if m_e <= 0: m_e += 12; a_e -= 1
+            tc = int(GastoOperativo.objects.filter(
+                empresa=empresa, es_correctivo=True, fecha__month=m_e, fecha__year=a_e
+            ).aggregate(t=Sum('monto'))['t'] or 0)
+            tn = int(GastoOperativo.objects.filter(
+                empresa=empresa, es_correctivo=False, fecha__month=m_e, fecha__year=a_e
+            ).aggregate(t=Sum('monto'))['t'] or 0)
+            evolucion.append({'mes': f"{_MS[m_e-1]} {str(a_e)[2:]}",
+                              'total_correctivo': tc, 'total_normal': tn})
+
+        presupuesto_mensual = None
+        if mes and anio:
+            try:
+                p = PresupuestoMensual.objects.get(empresa=empresa, mes=int(mes), anio=int(anio))
+                presupuesto_mensual = {'id': p.id, 'monto': int(p.monto)}
+            except PresupuestoMensual.DoesNotExist:
+                pass
+
+        return Response({
+            'gastos': gastos,
+            'resumen': {
+                'total_correctivos':     total_correctivos,
+                'total_normal':          total_normal,
+                'impacto_porcentaje':    impacto,
+                'vehiculo_mas_afectado': vehiculo_top,
+                'por_categoria':         por_categoria,
+                'por_vehiculo':          por_vehiculo,
+                'evolucion_mensual':     evolucion,
+                'presupuesto_mensual':   presupuesto_mensual,
+            },
+        })
+
+    def post(self, request):
+        if not _tiene_permiso(request.user, 'correctivos.crear'):
+            return Response({'error': 'Sin permisos para registrar correctivos.'}, status=403)
+        empresa = _get_empresa(request)
+        if not empresa:
+            return Response({'error': 'Empresa no encontrada.'}, status=400)
+
+        d = request.data
+        try:
+            monto = int(d.get('monto') or 0)
+        except (TypeError, ValueError):
+            return Response({'error': 'Monto inválido.'}, status=400)
+        if monto <= 0:
+            return Response({'error': 'El monto debe ser mayor a 0.'}, status=400)
+
+        cat = (d.get('categoria_correctiva') or '').strip()
+        if cat not in dict(GastoOperativo.CATEGORIAS_CORRECTIVAS):
+            return Response({'error': 'Categoría correctiva inválida.'}, status=400)
+        prio = (d.get('prioridad_correctiva') or '').strip()
+        if prio and prio not in dict(GastoOperativo.PRIORIDADES):
+            return Response({'error': 'Prioridad inválida.'}, status=400)
+
+        try:
+            fecha = date_cls.fromisoformat((d.get('fecha') or '').strip())
+        except ValueError:
+            return Response({'error': 'Fecha inválida.'}, status=400)
+        if fecha > date_cls.today():
+            return Response({'error': 'La fecha no puede ser futura.'}, status=400)
+
+        vehiculo = Vehiculo.objects.filter(pk=d.get('vehiculo_id'), empresa=empresa).first()
+        if not vehiculo:
+            return Response({'error': 'Vehículo no encontrado en esta empresa.'}, status=404)
+
+        descripcion = (d.get('descripcion') or '').strip()
+        if len(descripcion) < 10:
+            return Response({'error': 'La descripción debe tener al menos 10 caracteres.'}, status=400)
+        if len(descripcion) > 200:
+            return Response({'error': 'La descripción no puede superar los 200 caracteres.'}, status=400)
+
+        gasto = GastoOperativo.objects.create(
+            empresa=empresa, vehiculo=vehiculo,
+            categoria='mantencion',          # los correctivos siempre son de mantención
+            es_correctivo=True,
+            categoria_correctiva=cat,
+            prioridad_correctiva=prio,
+            descripcion=descripcion,
+            monto=monto, fecha=fecha,
+            registrado_por=request.user,
+        )
+
+        archivo = request.FILES.get('comprobante')
+        if archivo:
+            err = _validar_comprobante(archivo)
+            if err:
+                gasto.delete()
+                return Response({'error': err}, status=400)
+            gasto.comprobante = archivo
+            gasto.save(update_fields=['comprobante'])
+
+        registrar_log('ACTIVIDAD', 'gasto_correctivo_registrado', request, detalle={
+            'gasto_id': gasto.id, 'patente': vehiculo.patente, 'monto': monto, 'categoria': cat,
+        })
+        try:
+            monto_fmt = f"{monto:,}".replace(',', '.')
+            notificar_admins_empresa(
+                empresa, TipoNotificacion.ACTIVIDAD,
+                f'Nuevo gasto correctivo: {vehiculo.patente}',
+                f'Se registró un gasto correctivo de ${monto_fmt} por {descripcion}.',
+                url_accion='/empresa/finanzas',
+                extra={'gasto_id': gasto.id},
+            )
+        except Exception:
+            pass
+
+        return Response(_gasto_correctivo_dict(gasto), status=201)
+
+
+class GastoCorrectivoDetail(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _obtener(self, request):
+        empresa = _get_empresa(request)
+        return empresa
+
+    def _gasto(self, request, gasto_id):
+        empresa = _get_empresa(request)
+        if not empresa:
+            return None
+        return (GastoOperativo.objects
+                .filter(pk=gasto_id, empresa=empresa, es_correctivo=True)
+                .select_related('vehiculo', 'registrado_por').first())
+
+    def get(self, request, gasto_id):
+        if not _tiene_permiso(request.user, 'correctivos.ver'):
+            return Response({'error': 'Sin permisos.'}, status=403)
+        g = self._gasto(request, gasto_id)
+        if not g:
+            return Response({'error': 'Gasto no encontrado.'}, status=404)
+        return Response(_gasto_correctivo_dict(g))
+
+    def put(self, request, gasto_id):
+        if not _tiene_permiso(request.user, 'correctivos.editar'):
+            return Response({'error': 'Sin permisos.'}, status=403)
+        g = self._gasto(request, gasto_id)
+        if not g:
+            return Response({'error': 'Gasto no encontrado.'}, status=404)
+
+        d = request.data
+        if 'monto' in d:
+            try:
+                m = int(d['monto'])
+            except (TypeError, ValueError):
+                return Response({'error': 'Monto inválido.'}, status=400)
+            if m <= 0:
+                return Response({'error': 'El monto debe ser mayor a 0.'}, status=400)
+            g.monto = m
+        if 'fecha' in d:
+            try:
+                f = date_cls.fromisoformat(str(d['fecha']))
+            except ValueError:
+                return Response({'error': 'Fecha inválida.'}, status=400)
+            if f > date_cls.today():
+                return Response({'error': 'La fecha no puede ser futura.'}, status=400)
+            g.fecha = f
+        if 'categoria_correctiva' in d:
+            c = (d['categoria_correctiva'] or '').strip()
+            if c not in dict(GastoOperativo.CATEGORIAS_CORRECTIVAS):
+                return Response({'error': 'Categoría correctiva inválida.'}, status=400)
+            g.categoria_correctiva = c
+        if 'prioridad_correctiva' in d:
+            p = (d['prioridad_correctiva'] or '').strip()
+            if p and p not in dict(GastoOperativo.PRIORIDADES):
+                return Response({'error': 'Prioridad inválida.'}, status=400)
+            g.prioridad_correctiva = p
+        if 'descripcion' in d:
+            desc = (d['descripcion'] or '').strip()
+            if len(desc) < 10:
+                return Response({'error': 'La descripción debe tener al menos 10 caracteres.'}, status=400)
+            if len(desc) > 200:
+                return Response({'error': 'La descripción no puede superar los 200 caracteres.'}, status=400)
+            g.descripcion = desc
+
+        g.save()
+        registrar_log('ACTIVIDAD', 'gasto_correctivo_editado', request, detalle={'gasto_id': g.id})
+        return Response(_gasto_correctivo_dict(g))
+
+    def delete(self, request, gasto_id):
+        if not _tiene_permiso(request.user, 'correctivos.eliminar'):
+            return Response({'error': 'Sin permisos.'}, status=403)
+        g = self._gasto(request, gasto_id)
+        if not g:
+            return Response({'error': 'Gasto no encontrado.'}, status=404)
+        if g.comprobante:
+            try:
+                g.comprobante.delete(save=False)
+            except Exception:
+                pass
+        gid = g.id
+        g.delete()
+        registrar_log('ACTIVIDAD', 'gasto_correctivo_eliminado', request, detalle={'gasto_id': gid})
+        return Response({'ok': True})
+
+
+class GastoCorrectivoComprobante(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, gasto_id):
+        if not _tiene_permiso(request.user, 'correctivos.editar'):
+            return Response({'error': 'Sin permisos.'}, status=403)
+        empresa = _get_empresa(request)
+        if not empresa:
+            return Response({'error': 'Empresa no encontrada.'}, status=400)
+        g = GastoOperativo.objects.filter(pk=gasto_id, empresa=empresa, es_correctivo=True).first()
+        if not g:
+            return Response({'error': 'Gasto no encontrado.'}, status=404)
+        archivo = request.FILES.get('comprobante')
+        if not archivo:
+            return Response({'error': 'No se envió ningún archivo.'}, status=400)
+        err = _validar_comprobante(archivo)
+        if err:
+            return Response({'error': err}, status=400)
+        if g.comprobante:
+            try:
+                g.comprobante.delete(save=False)
+            except Exception:
+                pass
+        g.comprobante = archivo
+        g.save(update_fields=['comprobante'])
+        registrar_log('ACTIVIDAD', 'gasto_correctivo_editado', request, detalle={'gasto_id': g.id, 'comprobante': True})
+        return Response(_gasto_correctivo_dict(g))

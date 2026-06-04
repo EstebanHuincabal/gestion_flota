@@ -805,7 +805,10 @@ onUnmounted(() => {
 .periodo-btn.active { background: #fff; color: var(--color-accent, #4F46E5); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .periodo-btn:hover:not(.active):not(:disabled) { color: #374151; }
 .periodo-btn:disabled { opacity: 0.5; cursor: default; }
-.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+/* auto-fit: una fila con un solo card ocupa todo el ancho (sin hueco); con dos
+   cards se reparten en dos columnas. Evita filas descuadradas cuando los permisos
+   dejan un único gráfico en la fila. */
+.charts-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
 .charts-global { grid-template-columns: 2fr 1fr; }
 @media (max-width: 960px) { .charts-row, .charts-global { grid-template-columns: 1fr; } }
 .chart-wrap { padding: 1.25rem 1.5rem; height: 240px; }

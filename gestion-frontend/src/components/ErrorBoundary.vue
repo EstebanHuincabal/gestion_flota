@@ -1,5 +1,5 @@
 <template>
-  <slot v-if="!tieneError" />
+  <slot v-if="!tieneError" :key="intentos" />
   <div v-else style="padding:48px 24px; text-align:center; max-width:480px; margin:0 auto;">
     <i class="ti ti-alert-triangle" style="font-size:40px; color:#ef4444;"></i>
     <p style="font-size:16px; font-weight:600; margin:16px 0 6px; color:#1a1a1a;">Algo salió mal</p>
@@ -18,6 +18,7 @@ import { ref, onErrorCaptured } from 'vue'
 
 const tieneError   = ref(false)
 const mensajeError = ref('')
+const intentos     = ref(0)
 
 onErrorCaptured((error) => {
   tieneError.value   = true
@@ -26,6 +27,7 @@ onErrorCaptured((error) => {
 })
 
 function reintentar() {
+  intentos.value++
   tieneError.value = false
 }
 </script>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { apiFetch, safeJsonParse } from '../../utils/api.js'
 import NotificacionesBell from '../../components/NotificacionesBell.vue'
@@ -135,19 +135,34 @@ const navItems = [
       d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>`,
   },
   {
-    label: 'Mantenciones',
-    path: '/empresa/mantenciones',
-    permiso: 'mantenciones.ver',
+    label: 'Mantenimientos',
+    group: true,
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`,
-  },
-  {
-    label: 'Predictivo',
-    path: '/empresa/predictivo',
-    permiso: 'mantenciones.ver',
-    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-      d="M13 10V3L4 14h7v7l9-11h-7z"/>`
+      d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>`,
+    children: [
+      {
+        label: 'Mantenciones',
+        path: '/empresa/mantenciones',
+        permiso: 'mantenciones.ver',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`,
+      },
+      {
+        label: 'Predictivo',
+        path: '/empresa/predictivo',
+        permiso: 'mantenciones.ver',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M13 10V3L4 14h7v7l9-11h-7z"/>`,
+      },
+      {
+        label: 'Correctivos',
+        path: '/empresa/correctivos',
+        permiso: 'correctivos.ver',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>`,
+      },
+    ],
   },
   {
     label: 'Documentos',
@@ -224,8 +239,26 @@ const navItems = [
 ]
 
 const navItemsFiltrados = computed(() =>
-  navItems.filter(item => puedeVer(item.permiso))
+  navItems
+    .map(item => {
+      if (item.group) {
+        const children = item.children.filter(c => puedeVer(c.permiso))
+        return children.length ? { ...item, children } : null
+      }
+      return puedeVer(item.permiso) ? item : null
+    })
+    .filter(Boolean)
 )
+
+const groupsOpen = ref({})
+function toggleGroup(label) { groupsOpen.value[label] = !groupsOpen.value[label] }
+function isGroupActive(item) { return item.children?.some(c => route.path.startsWith(c.path)) }
+
+watch(route, () => {
+  navItemsFiltrados.value.forEach(item => {
+    if (item.group && isGroupActive(item)) groupsOpen.value[item.label] = true
+  })
+}, { immediate: true })
 
 const isActive = (path) => route.path.startsWith(path)
 
@@ -272,29 +305,77 @@ const cerrarSesion = () => {
       <!-- Nav -->
       <nav class="nav">
         <p v-if="!collapsed" class="nav-label-group">Gestión</p>
-        <router-link
-          v-for="item in navItemsFiltrados"
-          :key="item.path"
-          :to="item.path"
-          :class="['nav-item', { active: isActive(item.path) }]"
-          :title="collapsed ? item.label : ''"
-        >
-          <span class="nav-icon" style="position:relative">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
-            <!-- Badge de solicitudes pendientes -->
+        <template v-for="item in navItemsFiltrados" :key="item.group ? item.label : item.path">
+
+          <!-- Grupo colapsable -->
+          <template v-if="item.group">
+            <!-- Cabecera del grupo (sidebar expandido) -->
+            <button
+              v-if="!collapsed"
+              class="nav-group-btn"
+              :class="{ 'group-active': isGroupActive(item) }"
+              @click="toggleGroup(item.label)"
+            >
+              <span class="nav-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+              </span>
+              <span class="nav-label">{{ item.label }}</span>
+              <svg class="group-chevron" :class="{ open: groupsOpen[item.label] }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <!-- Hijos (sidebar expandido + grupo abierto) -->
+            <template v-if="!collapsed && groupsOpen[item.label]">
+              <router-link
+                v-for="child in item.children"
+                :key="child.path"
+                :to="child.path"
+                :class="['nav-item', 'nav-child', { active: isActive(child.path) }]"
+              >
+                <span class="nav-icon">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="child.icon"/>
+                </span>
+                <span class="nav-label">{{ child.label }}</span>
+                <span v-if="isActive(child.path)" class="active-bar"/>
+              </router-link>
+            </template>
+            <!-- Hijos como iconos planos cuando sidebar colapsado -->
+            <router-link
+              v-if="collapsed"
+              v-for="child in item.children"
+              :key="child.path + '_c'"
+              :to="child.path"
+              :class="['nav-item', { active: isActive(child.path) }]"
+              :title="child.label"
+            >
+              <span class="nav-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="child.icon"/>
+              </span>
+            </router-link>
+          </template>
+
+          <!-- Ítem normal -->
+          <router-link
+            v-else
+            :to="item.path"
+            :class="['nav-item', { active: isActive(item.path) }]"
+            :title="collapsed ? item.label : ''"
+          >
+            <span class="nav-icon" style="position:relative">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+              <span v-if="item.badge && solicitudesPendientes > 0" class="nav-badge">
+                {{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}
+              </span>
+            </span>
+            <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
             <span
-              v-if="item.badge && solicitudesPendientes > 0"
-              class="nav-badge"
+              v-if="!collapsed && item.badge && solicitudesPendientes > 0 && !isActive(item.path)"
+              class="nav-badge-inline"
             >{{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}</span>
-          </span>
-          <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
-          <!-- Badge visible también cuando está expandido -->
-          <span
-            v-if="!collapsed && item.badge && solicitudesPendientes > 0 && !isActive(item.path)"
-            class="nav-badge-inline"
-          >{{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}</span>
-          <span v-if="!collapsed && isActive(item.path)" class="active-bar"/>
-        </router-link>
+            <span v-if="!collapsed && isActive(item.path)" class="active-bar"/>
+          </router-link>
+
+        </template>
       </nav>
 
     </aside>
@@ -452,4 +533,19 @@ const cerrarSesion = () => {
   display: flex; align-items: center; justify-content: center;
   padding: 0 5px; pointer-events: none;
 }
+
+/* Grupo colapsable */
+.nav-group-btn {
+  width: 100%; display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.6rem 0.75rem; border-radius: 10px;
+  background: none; border: none; cursor: pointer;
+  color: rgba(255,255,255,0.7); font-size: 0.875rem; font-weight: 500;
+  font-family: inherit; text-align: left; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-group-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.nav-group-btn.group-active { color: #fff; font-weight: 600; }
+.group-chevron { width: 14px; height: 14px; margin-left: auto; flex-shrink: 0; transition: transform 0.2s; }
+.group-chevron.open { transform: rotate(180deg); }
+.nav-child { padding-left: 2.25rem; }
 </style>

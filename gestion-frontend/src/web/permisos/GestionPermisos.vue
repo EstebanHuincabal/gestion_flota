@@ -25,6 +25,7 @@ const LABELS = {
   rutas:        'Rutas',
   solicitudes:  'Solicitudes',
   finanzas:     'Finanzas',
+  correctivos:  'Gastos correctivos',
   documentos:   'Documentos',
   usuarios:     'Usuarios',
   calendario:   'Calendario',

@@ -38,6 +38,8 @@ import EmpresaLayout from '../web/empresa/EmpresaLayout.vue'
 // Finanzas
 import FinanzasEmpresa    from '../web/finanzas/FinanzasEmpresa.vue'
 import FinanzasSuperAdmin from '../web/finanzas/FinanzasSuperAdmin.vue'
+import GastosCorrectivosAdmin from '../web/finanzas/GastosCorrectivosAdmin.vue'
+import GastosCorrectivosEmpresa from '../web/finanzas/GastosCorrectivosEmpresa.vue'
 
 // Reportes
 import ReportesEmpresa    from '../web/reportes/ReportesEmpresa.vue'
@@ -138,6 +140,7 @@ const routes = [
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
       { path: 'documentos',   component: Documentos },
       { path: 'finanzas',     component: FinanzasSuperAdmin },
+      { path: 'finanzas/correctivos', component: GastosCorrectivosAdmin },
       { path: 'reportes',     component: ReportesSuperAdmin },
       { path: 'rutas',        component: Rutas },
       { path: 'mapa',         component: () => import('../web/empresa/flota/MapaFlota.vue') },
@@ -173,6 +176,7 @@ const routes = [
       { path: 'notificaciones/preferencias', component: PreferenciasNotificaciones },
       { path: 'documentos',      component: Documentos,       meta: { permiso: 'documentos.ver' } },
       { path: 'finanzas',        component: FinanzasEmpresa,  meta: { permiso: 'finanzas.ver' } },
+      { path: 'correctivos',     component: GastosCorrectivosEmpresa, meta: { permiso: 'correctivos.ver' } },
       { path: 'reportes',        component: ReportesEmpresa },
       { path: 'rutas',           component: Rutas,                   meta: { permiso: 'rutas.ver' } },
       { path: 'mapa',            component: () => import('../web/empresa/flota/MapaFlota.vue'),  meta: { permiso: 'gps.ver' } },
@@ -197,11 +201,44 @@ function safeJsonParse(str, fallback) {
   try { return JSON.parse(str) } catch { return fallback }
 }
 
+// Devuelve true si el JWT no existe, está corrupto o ya venció (lee su `exp`).
+function tokenExpirado(token) {
+  if (!token) return true
+  try {
+    const payload = JSON.parse(
+      atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))
+    )
+    if (typeof payload.exp !== 'number') return false   // sin exp → no podemos afirmar que venció
+    return payload.exp * 1000 < Date.now()
+  } catch {
+    return true   // token ilegible → tratar como expirado
+  }
+}
+
+// Limpia toda la sesión local (igual que api.js / useSessionTimer).
+function limpiarSesionLocal() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  localStorage.removeItem('usuario')
+  sessionStorage.removeItem('plan_modulos')
+  sessionStorage.removeItem('plan_nombre')
+  sessionStorage.removeItem('plan_permisos')
+  sessionStorage.removeItem('empresaActiva')
+}
+
 router.beforeEach((to, _from, next) => {
   let usuario = safeJsonParse(localStorage.getItem('usuario'), null)
 
   if (usuario && !usuario.rol) {
     localStorage.removeItem('usuario')
+    usuario = null
+  }
+
+  // Sesión vieja en caché: hay 'usuario' guardado pero el refresh token ya venció.
+  // El backend la rechazaría igual; se limpia acá para no entrar a una ruta
+  // protegida con una sesión muerta (y evitar la alerta de "sin conexión/sesión").
+  if (usuario && tokenExpirado(localStorage.getItem('refresh_token'))) {
+    limpiarSesionLocal()
     usuario = null
   }
 

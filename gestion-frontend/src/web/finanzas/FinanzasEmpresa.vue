@@ -1,5 +1,6 @@
 ﻿<script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
 import { tienePermiso } from '../../utils/permisos.js'
@@ -22,6 +23,7 @@ const puedeEditar      = tienePermiso('finanzas.editar')
 const puedeEliminar    = tienePermiso('finanzas.eliminar')
 const puedeExportar    = tienePermiso('finanzas.exportar')
 const puedePresupuesto = tienePermiso('finanzas.presupuesto')
+const router = useRouter()
 
 // ── Tabs ────────────────────────────────────────────────────
 const tabActivo = ref('resumen')
@@ -543,12 +545,17 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
           </div>
           <div>
             <div class="kpi-value-row">
-              <span class="kpi-value">{{ clp(resumen.total) }}</span>
+              <span class="kpi-value">{{ clp((resumen.total || 0) + (resumen.total_correctivos_mes || 0)) }}</span>
               <span v-if="variacion?.variacion_pct != null" class="var-badge" :style="varBadgeStyle(variacion.variacion_pct)">
                 {{ variacion.variacion_pct > 0 ? '+' : '' }}{{ variacion.variacion_pct }}%
               </span>
             </div>
             <div class="kpi-label">Gasto total del mes</div>
+            <p v-if="resumen.tiene_correctivos" class="aviso-correctivo">
+              <i class="ti ti-alert-triangle"/>
+              incluye {{ clp(resumen.total_correctivos_mes) }} en correctivos
+              <button @click="router.push('/empresa/correctivos')">Ver →</button>
+            </p>
           </div>
         </div>
 
@@ -806,6 +813,7 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
           </table>
         </div>
       </div>
+
 
       <!-- ═══ TAB POR VEHÍCULO ═══ -->
       <div v-else-if="tabActivo === 'vehiculo'" class="tab-content">
@@ -1069,6 +1077,8 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
 .kpi-icon svg { width: 22px; height: 22px; }
 .kpi-value { font-size: 1.35rem; font-weight: 700; color: #111827; line-height: 1.1; }
 .kpi-label { font-size: 0.775rem; color: #6B7280; margin-top: 0.2rem; }
+.aviso-correctivo { display: flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: #DC2626; margin: 0.3rem 0 0; }
+.aviso-correctivo button { font-size: 0.65rem; text-decoration: underline; background: none; border: none; cursor: pointer; color: #DC2626; padding: 0; }
 
 .presup-bar-wrap { height: 4px; background: #F3F4F6; border-radius: 2px; margin-top: 0.4rem; overflow: hidden; }
 .presup-bar-wrap.lg { height: 8px; border-radius: 4px; margin-top: 0.5rem; }
