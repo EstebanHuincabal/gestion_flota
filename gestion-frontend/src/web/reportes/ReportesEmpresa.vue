@@ -603,9 +603,9 @@ async function cargarSolicitudes() {
 function exportarTco() {
   if (!datosTco.value?.vehiculos) return
   const rows = [
-    ['Patente', 'Marca/Modelo', 'Flota', 'Conductor', 'KM', 'Gastos Operativos', 'Mantenciones', 'TCO Total', 'Costo/KM'],
+    ['Patente', 'Marca/Modelo', 'Conductor', 'KM', 'Gastos Operativos', 'Mantenciones', 'TCO Total', 'Costo/KM'],
     ...datosTco.value.vehiculos.map(v => [
-      v.patente, `${v.marca} ${v.modelo}`, v.flota, v.conductor || '—',
+      v.patente, `${v.marca} ${v.modelo}`, v.conductor || '—',
       v.km_actuales || 0, v.gastos_total, v.mantenciones_total, v.tco_total,
       v.costo_por_km ?? '—',
     ]),
@@ -940,7 +940,6 @@ const maxCostoTipo = computed(() => {
                 <tr>
                   <th class="sortable" @click="toggleOrden('patente')">Patente{{ flechaOrden('patente') }}</th>
                   <th>Vehículo</th>
-                  <th class="sortable" @click="toggleOrden('flota')">Flota{{ flechaOrden('flota') }}</th>
                   <th class="sortable" @click="toggleOrden('km_actuales')">KM{{ flechaOrden('km_actuales') }}</th>
                   <th>Conductor</th>
                   <th>Documentos</th>
@@ -952,7 +951,6 @@ const maxCostoTipo = computed(() => {
                 <tr v-for="v in flotaOrdenada" :key="v.id">
                   <td class="font-medium">{{ v.patente }}</td>
                   <td>{{ v.marca }} {{ v.modelo }} <span class="text-muted">{{ v.anio }}</span></td>
-                  <td>{{ v.flota }}</td>
                   <td>{{ v.km_actuales.toLocaleString('es-CL') }} km</td>
                   <td>
                     <span v-if="v.conductor">{{ v.conductor }}</span>
@@ -1038,7 +1036,6 @@ const maxCostoTipo = computed(() => {
                 <tr>
                   <th class="sortable" @click="tcoOrdenCampo = 'patente'; tcoOrdenDesc = !tcoOrdenDesc">Patente</th>
                   <th>Vehículo</th>
-                  <th>Flota</th>
                   <th>Conductor</th>
                   <th class="sortable" @click="tcoOrdenCampo = 'km_actuales'; tcoOrdenDesc = !tcoOrdenDesc">KM</th>
                   <th class="sortable" @click="tcoOrdenCampo = 'gastos_total'; tcoOrdenDesc = !tcoOrdenDesc">Gastos Op.</th>
@@ -1051,7 +1048,6 @@ const maxCostoTipo = computed(() => {
                 <tr v-for="v in tcoOrdenada" :key="v.id">
                   <td class="font-medium">{{ v.patente }}</td>
                   <td>{{ v.marca }} {{ v.modelo }} <span class="text-muted">{{ v.anio }}</span></td>
-                  <td>{{ v.flota }}</td>
                   <td>
                     <span v-if="v.conductor">{{ v.conductor }}</span>
                     <span v-else class="badge" style="background:#FFFBEB;color:#D97706">Sin asignar</span>

@@ -61,7 +61,7 @@ class Command(BaseCommand):
                         tipo_notif = (TipoNotificacion.MANTENCION_VENCIDA
                                       if nivel == 'vencida'
                                       else TipoNotificacion.MANTENCION_POR_VENCER)
-                        empresa = prog.vehiculo.flota.empresa
+                        empresa = prog.vehiculo.empresa
                         notificar_admins_empresa(
                             empresa, tipo_notif,
                             f"Mantención {nivel.replace('_', ' ')}: {prog.vehiculo.patente}",
@@ -88,7 +88,7 @@ class Command(BaseCommand):
                         if regla.escalar_sin_respuesta and not alerta_existente.atendida:
                             dias_desde_alerta = (timezone.now() - alerta_existente.fecha_creacion).days
                             if dias_desde_alerta >= 2:
-                                empresa = prog.vehiculo.flota.empresa
+                                empresa = prog.vehiculo.empresa
                                 notificar_admins_empresa(
                                     empresa,
                                     TipoNotificacion.MANTENCION_VENCIDA,

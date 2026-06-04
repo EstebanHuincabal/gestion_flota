@@ -862,7 +862,7 @@ def _get_mantencion_conductor(request, mantencion_id):
         return None, None, Response({'error': 'Sin vehículo asignado.'}, status=404)
 
     try:
-        mantencion = Mantencion.objects.select_related('vehiculo__flota__empresa').get(
+        mantencion = Mantencion.objects.select_related('vehiculo__empresa').get(
             pk=mantencion_id, vehiculo=asignacion.vehiculo
         )
     except Mantencion.DoesNotExist:
@@ -898,7 +898,7 @@ def conductor_iniciar_mantencion(request, mantencion_id):
         'vehiculo':      vehiculo.patente,
     })
     # Notificar a los admins de la empresa
-    _empresa_mi = vehiculo.flota.empresa if vehiculo.flota else None
+    _empresa_mi = vehiculo.empresa if vehiculo.empresa_id else None
     if _empresa_mi:
         _nombre_mi = request.user.nombre or request.user.email
         notificar_admins_empresa(_empresa_mi, 'actividad',
@@ -978,7 +978,7 @@ def conductor_completar_mantencion(request, mantencion_id):
     vehiculo.save(update_fields=['en_mantencion'])
 
     # ── Crear GastoOperativo automáticamente ─────────────────────────────────
-    empresa = vehiculo.flota.empresa if vehiculo.flota else None
+    empresa = vehiculo.empresa if vehiculo.empresa_id else None
     gasto   = None
     if empresa:
         gasto = GastoOperativo.objects.create(

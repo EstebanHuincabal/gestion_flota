@@ -389,16 +389,8 @@ class Usuario(AbstractUser):
 
 
 # ─────────────────────────────────────────
-# Flota, Vehículo, Asignación
+# Vehículo, Asignación
 # ─────────────────────────────────────────
-
-class Flota(models.Model):
-    empresa = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="flotas")
-    nombre  = models.CharField(max_length=100)
-
-    def __str__(self):
-        return f"{self.nombre} ({self.empresa})"
-
 
 class Vehiculo(models.Model):
     COMBUSTIBLE = [
@@ -408,7 +400,7 @@ class Vehiculo(models.Model):
         ('hibrido',   'Híbrido'),
     ]
 
-    flota            = models.ForeignKey(Flota, on_delete=models.CASCADE, related_name="vehiculos")
+    empresa          = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name="vehiculos")
     patente          = EncryptedCharField(max_length=10)
     patente_hash     = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     marca            = EncryptedCharField(max_length=100, blank=True, default='')
@@ -1145,12 +1137,11 @@ class DispositivoGPS(models.Model):
     """
 
     MODELOS = [
-        ('emulador',          'Emulador NMEA'),
-        ('teltonika_fmb920',  'Teltonika FMB920'),
-        ('teltonika_fmc125',  'Teltonika FMC125'),
-        ('queclink_gl300',    'Queclink GL300'),
-        ('coban_tk103',       'Coban TK103'),
-        ('otro',              'Otro'),
+        ('emulador',  'Emulador NMEA'),
+        ('teltonika', 'Teltonika'),
+        ('queclink',  'Queclink'),
+        ('coban',     'Coban'),
+        ('otro',      'Otro'),
     ]
 
     empresa   = models.ForeignKey(
@@ -1162,6 +1153,9 @@ class DispositivoGPS(models.Model):
     )
     imei      = models.CharField(max_length=20, unique=True)
     modelo    = models.CharField(max_length=30, choices=MODELOS, default='emulador')
+    # Nombre libre del modelo cuando se elige la marca 'otro' (ej. un fabricante
+    # no listado). Vacío para las marcas conocidas.
+    modelo_otro = models.CharField(max_length=50, blank=True, default='')
     # Clave opcional para autenticación futura del dispositivo físico. Por ahora
     # la ingesta valida solo por IMEI existente y activo.
     api_key   = models.CharField(max_length=64, blank=True, default='')
@@ -1175,32 +1169,3 @@ class DispositivoGPS(models.Model):
 
     def __str__(self):
         return f"{self.imei} — {self.get_modelo_display()}"
-
-
-class ConfiguracionGPS(models.Model):
-    """Configuración del servidor de ingesta GPS por empresa.
-
-    Estos datos (IP + puerto + protocolo) se cargan en el dispositivo físico
-    una sola vez con su software de configuración. Con el emulador no se usan.
-    """
-
-    PROTOCOLOS = [
-        ('tcp', 'TCP'),
-        ('udp', 'UDP'),
-    ]
-
-    empresa         = models.OneToOneField(
-        Empresa, on_delete=models.CASCADE, related_name='configuracion_gps',
-    )
-    servidor_ip     = models.CharField(max_length=50, blank=True, default='')
-    servidor_puerto = models.IntegerField(default=5000)
-    protocolo       = models.CharField(max_length=3, choices=PROTOCOLOS, default='tcp')
-    activo          = models.BooleanField(default=True)
-    actualizado_at  = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name        = 'Configuración GPS'
-        verbose_name_plural = 'Configuraciones GPS'
-
-    def __str__(self):
-        return f"Config GPS — {self.empresa.nombre}"

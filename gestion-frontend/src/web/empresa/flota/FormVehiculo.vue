@@ -10,17 +10,14 @@ const router = useRouter()
 const route  = useRoute()
 const { ruta } = useEmpresaNav()
 const vehiculoId = route.params.id
-const flotaIdParam = route.params.flotaId   // solo en modo nuevo desde flota
 
 const toast     = useToast()
 const cargando  = ref(props.modo === 'editar')
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
-const flotas    = ref([])
 
 const form = ref({
-  flota: null,
   patente: '',
   marca: '',
   modelo: '',
@@ -31,21 +28,12 @@ const form = ref({
 
 const formatPatente = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')
 
-const cargarFlotas = async () => {
-  const res = await apiFetchEmpresa('/api/empresa/flotas/')
-  if (res.ok) {
-    const data = await res.json()
-    flotas.value = data
-    if (flotaIdParam && !form.value.flota) form.value.flota = Number(flotaIdParam)
-  }
-}
-
 const cargarVehiculo = async () => {
   try {
     const res = await apiFetchEmpresa(`/api/empresa/vehiculos/${vehiculoId}/`)
     if (!res.ok) throw new Error('Vehículo no encontrado')
     const v = await res.json()
-    form.value = { flota: v.flota, patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, km_actuales: v.km_actuales }
+    form.value = { patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, km_actuales: v.km_actuales }
   } catch (e) { error.value = e.message }
   finally { cargando.value = false }
 }
@@ -90,7 +78,6 @@ const guardar = async () => {
 }
 
 onMounted(async () => {
-  await cargarFlotas()
   if (props.modo === 'editar') await cargarVehiculo()
 })
 </script>
@@ -104,22 +91,13 @@ onMounted(async () => {
       Volver a Flota
     </button>
     <h1 class="page-title">{{ modo === 'editar' ? 'Editar Vehículo' : 'Nuevo Vehículo' }}</h1>
-    <p class="page-subtitle">{{ modo === 'editar' ? 'Modifica los datos del vehículo' : 'Registra un nuevo vehículo en la flota' }}</p>
+    <p class="page-subtitle">{{ modo === 'editar' ? 'Modifica los datos del vehículo' : 'Registra un nuevo vehículo' }}</p>
 
     <div v-if="cargando" class="loading"><div class="spinner"/> <span>Cargando...</span></div>
 
     <div v-else class="card">
       <div v-if="error" class="alert-error">{{ error }}</div>
       <form @submit.prevent="guardar" class="form">
-
-        <div class="form-group">
-          <label class="label">Flota</label>
-          <select v-model="form.flota" class="input select" :class="{ 'input-error': errores.flota }" required>
-            <option :value="null">— Seleccionar flota —</option>
-            <option v-for="f in flotas" :key="f.id" :value="f.id">{{ f.nombre }}</option>
-          </select>
-          <p v-if="errores.flota" class="field-error">{{ errores.flota[0] }}</p>
-        </div>
 
         <div class="form-row">
           <div class="form-group">

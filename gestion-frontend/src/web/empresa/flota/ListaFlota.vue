@@ -14,18 +14,16 @@ const usuario      = computed(() => safeJsonParse(localStorage.getItem('usuario'
 const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 
 // ── Datos ───────────────────────────────────────────────
-const flotas          = ref([])
-const todasLasFlotas  = ref([])
-const cargando        = ref(true)
-const operando        = ref(false)
-const error           = ref('')
-const sinEmpresa      = ref(false)
-const abiertos        = ref({})
-const toast = useToast()
-const confirm         = ref({ visible: false, item: null, tipo: '', flotaCtx: null })
+const vehiculos    = ref([])
+const conductores  = ref([])
+const cargando     = ref(true)
+const operando     = ref(false)
+const error        = ref('')
+const sinEmpresa   = ref(false)
+const toast        = useToast()
+const confirm      = ref({ visible: false, item: null, tipo: '' })
 
 const COMBUSTIBLE_LABEL = { bencina: 'Bencina', diesel: 'Diésel', electrico: 'Eléctrico', hibrido: 'Híbrido' }
-const colspan = computed(() => esSuperadmin.value ? 6 : 4)
 
 // ── Selector de empresa (SUPERADMIN — actúa como filtro) ─
 const empresas         = ref([])
@@ -54,50 +52,44 @@ const cargarEmpresas = async () => {
   }
 }
 
-// ── Filtrado client-side (SUPERADMIN) ───────────────────
-const aplicarFiltro = () => {
-  flotas.value = empresaActiva.value
-    ? todasLasFlotas.value.filter(f => f.empresa_id === empresaActiva.value.id)
-    : todasLasFlotas.value
-  flotas.value.forEach(f => { if (!(f.id in abiertos.value)) abiertos.value[f.id] = false })
-}
-
 const seleccionarEmpresa = (emp) => {
   setEmpresaActiva(emp)
   empresaActiva.value   = { id: emp.id, nombre: emp.nombre }
   mostrarDropdown.value = false
   busqueda.value        = ''
-  aplicarFiltro()
+  cargar()
 }
 
 const limpiarEmpresa = () => {
   setEmpresaActiva(null)
   empresaActiva.value   = null
   mostrarDropdown.value = false
-  aplicarFiltro()
+  vehiculos.value = []
 }
 
 // ── Carga ───────────────────────────────────────────────
 const cargar = async () => {
+  // SUPERADMIN necesita una empresa seleccionada para listar sus vehículos.
+  if (esSuperadmin.value && !empresaActiva.value) {
+    vehiculos.value = []
+    cargando.value  = false
+    return
+  }
   cargando.value   = true
   error.value      = ''
   sinEmpresa.value = false
   try {
-    if (esSuperadmin.value) {
-      const res = await apiFetch('/api/admin/flotas/')
-      if (!res.ok) throw new Error('Error al cargar flotas')
-      todasLasFlotas.value = await res.json()
-      aplicarFiltro()
-    } else {
-      const res = await apiFetchEmpresa('/api/empresa/flotas/')
-      if (res.status === 400) {
-        const d = await res.json()
-        if (d.error === 'sin_empresa') { sinEmpresa.value = true; return }
-      }
-      if (!res.ok) throw new Error('Error al cargar flotas')
-      flotas.value = await res.json()
-      flotas.value.forEach(f => { if (!(f.id in abiertos.value)) abiertos.value[f.id] = false })
+    const [rV, rC] = await Promise.all([
+      apiFetchEmpresa('/api/empresa/vehiculos/'),
+      apiFetchEmpresa('/api/empresa/conductores/'),
+    ])
+    if (rV.status === 400) {
+      const d = await rV.json()
+      if (d.error === 'sin_empresa') { sinEmpresa.value = true; return }
     }
+    if (!rV.ok) throw new Error('Error al cargar los vehículos')
+    vehiculos.value   = await rV.json()
+    conductores.value = rC.ok ? await rC.json() : []
   } catch (e) {
     error.value = e.message
   } finally {
@@ -105,68 +97,86 @@ const cargar = async () => {
   }
 }
 
-// ── Contexto de empresa para acciones SUPERADMIN ────────
-const ensureEmpresaCtx = (flota) => {
-  if (esSuperadmin.value && flota?.empresa_id) {
-    const ctx = { id: flota.empresa_id, nombre: flota.empresa_nombre }
-    setEmpresaActiva(ctx)
-    empresaActiva.value = ctx
-  }
-}
-
 // ── Permisos ────────────────────────────────────────────
 const sinPermiso = (msg) =>
   window.dispatchEvent(new CustomEvent('permiso-denegado', { detail: msg }))
 
-const irNuevaFlota = () => {
-  if (!tienePermiso('flotas.crear')) return sinPermiso('No tienes permiso para crear flotas.')
-  router.push(ruta('/flota/nueva'))
-}
-const irNuevoVehiculo = (flota) => {
+const irNuevoVehiculo = () => {
   if (!tienePermiso('vehiculos.crear')) return sinPermiso('No tienes permiso para agregar vehículos.')
-  ensureEmpresaCtx(flota)
-  router.push(ruta(`/flota/${flota.id}/nuevo-vehiculo`))
+  router.push(ruta('/vehiculos/nuevo'))
 }
-const irEditarFlota = (flota) => {
-  if (!tienePermiso('flotas.editar')) return sinPermiso('No tienes permiso para editar flotas.')
-  ensureEmpresaCtx(flota)
-  router.push(ruta(`/flota/${flota.id}/editar`))
-}
-const irEditarVehiculo = (vehiculoId, flota) => {
+const irEditarVehiculo = (vehiculoId) => {
   if (!tienePermiso('vehiculos.editar')) return sinPermiso('No tienes permiso para editar vehículos.')
-  ensureEmpresaCtx(flota)
   router.push(ruta(`/vehiculos/${vehiculoId}/editar`))
 }
 
-// ── Acciones con confirmación ────────────────────────────
-const pedir    = (item, tipo, flotaCtx = null) => { confirm.value = { visible: true, item, tipo, flotaCtx } }
-const cancelar = () => { confirm.value = { visible: false, item: null, tipo: '', flotaCtx: null } }
+// ── Asignar conductor ────────────────────────────────────
+const modalAsignar  = ref(false)
+const vehiculoSel   = ref(null)
+const conductorSel  = ref(null)
+const guardandoAsig = ref(false)
 
-const permisosPorTipo = {
-  'eliminar-flota':      { permiso: 'flotas.eliminar',  msg: 'No tienes permiso para eliminar flotas.'       },
-  'desactivar-vehiculo': { permiso: 'vehiculos.editar',  msg: 'No tienes permiso para desactivar vehículos.' },
-  'activar-vehiculo':    { permiso: 'vehiculos.editar',  msg: 'No tienes permiso para activar vehículos.'    },
+// Conductores libres (sin vehículo) + el ya asignado a este vehículo (para reasignar).
+const conductoresDisponibles = computed(() => {
+  const actualId = vehiculoSel.value?.conductor_asignado?.id
+  return conductores.value.filter(c => c.is_active && (!c.vehiculo || c.id === actualId))
+})
+
+const abrirAsignar = (v) => {
+  if (!tienePermiso('conductores.asignar')) return sinPermiso('No tienes permiso para asignar conductores.')
+  vehiculoSel.value  = v
+  conductorSel.value = v.conductor_asignado?.id ?? null
+  modalAsignar.value = true
 }
-const pedirConPermiso = (item, tipo, flotaCtx = null) => {
+
+const guardarAsignacion = async () => {
+  if (guardandoAsig.value) return
+  guardandoAsig.value = true
+  try {
+    // Sin selección → desasignar el conductor actual del vehículo (si lo hay).
+    if (!conductorSel.value) {
+      const actualId = vehiculoSel.value?.conductor_asignado?.id
+      if (actualId) {
+        const res = await apiFetchEmpresa(`/api/empresa/conductores/${actualId}/desasignar/`, { method: 'POST' })
+        if (!res.ok) { const d = await res.json().catch(() => ({})); toast.agregar(d.error || 'Error al desasignar', 'error'); return }
+        toast.agregar('Conductor desasignado.', 'success')
+      }
+    } else {
+      const res = await apiFetchEmpresa(`/api/empresa/conductores/${conductorSel.value}/asignar/`, {
+        method: 'POST',
+        body:   { vehiculo_id: vehiculoSel.value.id },
+      })
+      if (!res.ok) { const d = await res.json().catch(() => ({})); toast.agregar(d.error || 'Error al asignar conductor', 'error'); return }
+      toast.agregar('Conductor asignado correctamente.', 'success')
+    }
+    modalAsignar.value = false
+    await cargar()
+  } catch {
+    toast.agregar('Error de conexión.', 'error')
+  } finally {
+    guardandoAsig.value = false
+  }
+}
+
+// ── Activar / desactivar vehículo (con confirmación) ─────
+const permisosPorTipo = {
+  'desactivar-vehiculo': { permiso: 'vehiculos.editar', msg: 'No tienes permiso para desactivar vehículos.' },
+  'activar-vehiculo':    { permiso: 'vehiculos.editar', msg: 'No tienes permiso para activar vehículos.'    },
+}
+const pedirConPermiso = (item, tipo) => {
   const cfg = permisosPorTipo[tipo]
   if (cfg && !tienePermiso(cfg.permiso)) return sinPermiso(cfg.msg)
-  pedir(item, tipo, flotaCtx)
+  confirm.value = { visible: true, item, tipo }
 }
+const cancelar = () => { confirm.value = { visible: false, item: null, tipo: '' } }
 
 const confirmar = async () => {
   if (operando.value) return
-  const { item, tipo, flotaCtx } = confirm.value
+  const { item, tipo } = confirm.value
   cancelar()
   operando.value = true
-  // Para SUPERADMIN: establecer empresa antes de la llamada API
-  const ctx = flotaCtx || item
-  ensureEmpresaCtx(ctx)
   try {
-    if (tipo === 'eliminar-flota') {
-      const res = await apiFetchEmpresa(`/api/empresa/flotas/${item.id}/`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Error al eliminar la flota')
-      toast.agregar(`Flota "${item.nombre}" eliminada.`, 'success')
-    } else if (tipo === 'desactivar-vehiculo') {
+    if (tipo === 'desactivar-vehiculo') {
       const res = await apiFetchEmpresa(`/api/empresa/vehiculos/${item.id}/`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al desactivar el vehículo')
       toast.agregar(`Vehículo ${item.patente} desactivado.`, 'success')
@@ -184,13 +194,11 @@ const confirmar = async () => {
 }
 
 const confirmConfig = {
-  'eliminar-flota':      { titulo: 'Eliminar flota',      peligroso: true,  labelOk: 'Eliminar'   },
   'desactivar-vehiculo': { titulo: 'Desactivar vehículo', peligroso: true,  labelOk: 'Desactivar' },
   'activar-vehiculo':    { titulo: 'Activar vehículo',    peligroso: false, labelOk: 'Activar'    },
 }
 const mensajeConfirm = () => {
   const { item, tipo } = confirm.value
-  if (tipo === 'eliminar-flota')      return `¿Eliminar la flota "${item?.nombre}"? Se eliminarán también sus vehículos.`
   if (tipo === 'desactivar-vehiculo') return `¿Desactivar el vehículo ${item?.patente}?`
   if (tipo === 'activar-vehiculo')    return `¿Activar el vehículo ${item?.patente}?`
   return ''
@@ -221,7 +229,7 @@ onMounted(async () => {
       <div>
         <h1 class="page-title">Flota</h1>
         <p class="page-subtitle">
-          {{ esSuperadmin ? 'Gestión global de flotas y vehículos' : 'Gestiona las flotas y vehículos de tu empresa' }}
+          {{ esSuperadmin ? 'Vehículos por empresa' : 'Vehículos de tu empresa y su conductor asignado' }}
         </p>
       </div>
 
@@ -240,7 +248,7 @@ onMounted(async () => {
                   d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
               </svg>
             </span>
-            <span class="selector-texto">{{ empresaActiva ? empresaActiva.nombre : 'Todas las empresas' }}</span>
+            <span class="selector-texto">{{ empresaActiva ? empresaActiva.nombre : 'Seleccionar empresa' }}</span>
             <svg class="selector-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
             </svg>
@@ -258,10 +266,10 @@ onMounted(async () => {
             <button v-if="empresaActiva" class="dropdown-option dropdown-todos" @click="limpiarEmpresa">
               <span class="option-avatar option-todos">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
               </span>
-              <span class="option-nombre">Todas las empresas</span>
+              <span class="option-nombre">Quitar selección</span>
             </button>
 
             <div v-if="cargandoEmpresas" class="dropdown-empty">Cargando...</div>
@@ -286,14 +294,14 @@ onMounted(async () => {
 
         <button
           class="btn-primary"
-          @click="irNuevaFlota"
+          @click="irNuevoVehiculo"
           :disabled="(esSuperadmin && !empresaActiva) || operando"
-          :title="esSuperadmin && !empresaActiva ? 'Selecciona una empresa para crear una flota' : ''"
+          :title="esSuperadmin && !empresaActiva ? 'Selecciona una empresa para agregar un vehículo' : ''"
         >
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
           </svg>
-          Nueva Flota
+          Nuevo vehículo
         </button>
       </div>
     </div>
@@ -307,149 +315,114 @@ onMounted(async () => {
       <p>No tienes una empresa asignada.</p>
     </div>
 
+    <div v-else-if="esSuperadmin && !empresaActiva" class="empty">
+      <p>Selecciona una empresa para ver sus vehículos.</p>
+    </div>
+
     <div v-else-if="error" class="alert-error">{{ error }}</div>
 
     <div v-else-if="cargando" class="loading">
-      <div class="spinner"/> <span>Cargando flotas...</span>
+      <div class="spinner"/> <span>Cargando vehículos...</span>
     </div>
 
-    <div v-else-if="flotas.length === 0" class="empty">
+    <div v-else-if="vehiculos.length === 0" class="empty">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
           d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
           d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
       </svg>
-      <p>{{ empresaActiva ? `No hay flotas para ${empresaActiva.nombre}.` : 'No hay flotas creadas.' }}</p>
-      <button v-if="!esSuperadmin || empresaActiva" class="btn-primary" @click="irNuevaFlota">Crear primera flota</button>
+      <p>No hay vehículos registrados.</p>
+      <button class="btn-primary" @click="irNuevoVehiculo">Agregar primer vehículo</button>
     </div>
 
-    <!-- ── Tabla de flotas ── -->
+    <!-- ── Tabla de vehículos ── -->
     <div v-else class="tabla-wrap">
-      <table class="tabla-flotas">
+      <table class="tabla-vehiculos">
         <thead>
           <tr>
-            <th class="th-expand"></th>
-            <th>Flota</th>
-            <th v-if="esSuperadmin">Empresa</th>
-            <th v-if="esSuperadmin">Administrador</th>
-            <th>Vehículos</th>
-            <th>Acciones</th>
+            <th>Patente</th>
+            <th>Vehículo</th>
+            <th>Año</th>
+            <th>Combustible</th>
+            <th>KM</th>
+            <th>Estado</th>
+            <th>Conductor</th>
+            <th class="th-acciones">Acciones</th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="flota in flotas" :key="flota.id">
-
-            <!-- Fila principal de la flota -->
-            <tr class="fila-flota" @click="abiertos[flota.id] = !abiertos[flota.id]">
-              <td class="td-expand">
-                <span class="icon-toggle" :class="{ open: abiertos[flota.id] }">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                  </svg>
-                </span>
-              </td>
-
-              <td class="td-nombre">{{ flota.nombre }}</td>
-
-              <td v-if="esSuperadmin" class="td-empresa">{{ flota.empresa_nombre }}</td>
-
-              <td v-if="esSuperadmin" class="td-admin">
-                <div v-if="flota.admin_nombre || flota.admin_email" class="admin-info">
-                  <span class="admin-nombre">{{ flota.admin_nombre || '—' }}</span>
-                  <span class="admin-email">{{ flota.admin_email }}</span>
-                </div>
-                <span v-else class="sin-admin">Sin administrador</span>
-              </td>
-
-              <td>
-                <span class="badge-count">{{ flota.total_vehiculos }} veh.</span>
-              </td>
-
-              <td class="td-acciones" @click.stop>
-                <button class="btn-agregar" @click="irNuevoVehiculo(flota)" title="Agregar vehículo">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                  </svg>
-                  <span>Agregar</span>
-                </button>
-                <button class="btn-accion btn-editar-flota" @click="irEditarFlota(flota)" title="Editar flota">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                  </svg>
-                </button>
-                <button class="btn-accion btn-eliminar-flota" @click="pedirConPermiso(flota, 'eliminar-flota')" title="Eliminar flota">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                  </svg>
-                </button>
-              </td>
-            </tr>
-
-            <!-- Fila expandible con la sub-tabla de vehículos -->
-            <tr v-if="abiertos[flota.id]" class="fila-vehiculos">
-              <td :colspan="colspan" class="td-sub">
-                <div v-if="!flota.vehiculos?.length" class="vehiculos-empty">
-                  Sin vehículos —
-                  <button class="link-btn" @click="irNuevoVehiculo(flota)">agregar uno</button>
-                </div>
-                <table v-else class="tabla-vehiculos">
-                  <thead>
-                    <tr>
-                      <th>Patente</th>
-                      <th>Marca / Modelo</th>
-                      <th>Año</th>
-                      <th>Combustible</th>
-                      <th>KM</th>
-                      <th>Estado</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="v in flota.vehiculos" :key="v.id" :class="{ inactivo: !v.activo }">
-                      <td class="td-patente">{{ v.patente }}</td>
-                      <td>{{ [v.marca, v.modelo].filter(Boolean).join(' ') || '—' }}</td>
-                      <td>{{ v.anio || '—' }}</td>
-                      <td>{{ COMBUSTIBLE_LABEL[v.tipo_combustible] || v.tipo_combustible }}</td>
-                      <td>{{ v.km_actuales.toLocaleString('es-CL') }} km</td>
-                      <td>
-                        <span :class="['badge', v.activo ? 'badge-activo' : 'badge-inactivo']">
-                          {{ v.activo ? 'Activo' : 'Inactivo' }}
-                        </span>
-                      </td>
-                      <td class="td-acciones-v">
-                        <button class="btn-accion btn-editar" @click="irEditarVehiculo(v.id, flota)" title="Editar">
-                          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                          </svg>
-                        </button>
-                        <button v-if="v.activo" class="btn-accion btn-desactivar"
-                          @click="pedirConPermiso(v, 'desactivar-vehiculo', flota)" title="Desactivar">
-                          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
-                          </svg>
-                        </button>
-                        <button v-else class="btn-accion btn-activar"
-                          @click="pedirConPermiso(v, 'activar-vehiculo', flota)" title="Activar">
-                          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                          </svg>
-                        </button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-
-          </template>
+          <tr v-for="v in vehiculos" :key="v.id" :class="{ inactivo: !v.activo }">
+            <td class="td-patente">{{ v.patente }}</td>
+            <td>
+              <span v-if="v.marca || v.modelo">{{ [v.marca, v.modelo].filter(Boolean).join(' ') }}</span>
+              <span v-else class="texto-tenue">—</span>
+            </td>
+            <td>{{ v.anio || '—' }}</td>
+            <td>{{ COMBUSTIBLE_LABEL[v.tipo_combustible] || v.tipo_combustible }}</td>
+            <td>{{ (v.km_actuales ?? 0).toLocaleString('es-CL') }}</td>
+            <td>
+              <span :class="['badge', v.activo ? 'badge-ok' : 'badge-off']">
+                {{ v.activo ? 'Activo' : 'Inactivo' }}
+              </span>
+            </td>
+            <td>
+              <span v-if="v.conductor_asignado" class="conductor-chip">
+                {{ v.conductor_asignado.nombre }}
+              </span>
+              <span v-else class="texto-tenue">Sin conductor</span>
+            </td>
+            <td class="td-acciones">
+              <button class="btn-accion" title="Asignar conductor" @click="abrirAsignar(v)" :disabled="!v.activo">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                </svg>
+              </button>
+              <button class="btn-accion" title="Editar" @click="irEditarVehiculo(v.id)">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+              </button>
+              <button v-if="v.activo" class="btn-accion btn-peligro" title="Desactivar" @click="pedirConPermiso(v, 'desactivar-vehiculo')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+              <button v-else class="btn-accion btn-ok" title="Activar" @click="pedirConPermiso(v, 'activar-vehiculo')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+              </button>
+            </td>
+          </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- ── Modal asignar conductor ── -->
+    <div v-if="modalAsignar" class="modal-overlay" @click.self="modalAsignar = false">
+      <div class="modal-card">
+        <h2 class="modal-title">Asignar conductor</h2>
+        <p class="modal-sub">Vehículo <strong>{{ vehiculoSel?.patente }}</strong></p>
+
+        <label class="label">Conductor</label>
+        <select v-model="conductorSel" class="input select">
+          <option :value="null">— Sin conductor —</option>
+          <option v-for="c in conductoresDisponibles" :key="c.id" :value="c.id">{{ c.nombre }}</option>
+        </select>
+        <p v-if="!conductoresDisponibles.length" class="modal-hint">
+          No hay conductores libres. Libera a un conductor de su vehículo actual para reasignarlo.
+        </p>
+
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="modalAsignar = false" :disabled="guardandoAsig">Cancelar</button>
+          <button class="btn-primary" @click="guardarAsignacion" :disabled="guardandoAsig">
+            {{ guardandoAsig ? 'Guardando...' : 'Guardar' }}
+          </button>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -458,274 +431,84 @@ onMounted(async () => {
 <style scoped>
 * { box-sizing: border-box; }
 .page { padding: 2rem 2.5rem; font-family: 'Inter', system-ui, sans-serif; }
-
-.page-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 1.75rem; gap: 1rem;
-}
-.page-title    { font-size: 1.5rem; font-weight: 700; color: #1E1B4B; margin: 0 0 0.25rem; }
+.page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.75rem; flex-wrap: wrap; }
+.page-title { font-size: 1.5rem; font-weight: 700; color: #1E1B4B; margin: 0 0 0.25rem; }
 .page-subtitle { font-size: 0.875rem; color: #6B7280; margin: 0; }
-.header-actions { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+.header-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 
-/* ── Selector empresa ── */
-.selector-wrap { position: relative; }
-.selector-btn {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.55rem 0.875rem;
-  background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px;
-  font-size: 0.875rem; font-weight: 500; color: #374151;
-  cursor: pointer; font-family: inherit; white-space: nowrap;
-  transition: border-color 0.15s; max-width: 240px;
-}
-.selector-btn:hover { border-color: #7C3AED; }
-.selector-btn.sin-sel { border-style: dashed; color: #9CA3AF; }
-.selector-icono svg { width: 16px; height: 16px; color: #6B7280; flex-shrink: 0; }
-.selector-texto { flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
-.selector-chevron { width: 14px; height: 14px; color: #9CA3AF; flex-shrink: 0; }
-
-.selector-dropdown {
-  position: absolute; top: calc(100% + 6px); right: 0;
-  width: 280px; background: #fff;
-  border: 1px solid #E5E7EB; border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-  overflow: hidden; z-index: 200;
-  max-height: 320px; display: flex; flex-direction: column; overflow-y: auto;
-}
-.dropdown-search {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.625rem 0.875rem;
-  border-bottom: 1px solid #F3F4F6; flex-shrink: 0;
-}
-.dropdown-search svg { width: 15px; height: 15px; color: #9CA3AF; flex-shrink: 0; }
-.dropdown-input { flex: 1; border: none; outline: none; font-size: 0.875rem; color: #111827; font-family: inherit; background: transparent; }
-.dropdown-empty { padding: 1rem; font-size: 0.8125rem; color: #9CA3AF; text-align: center; }
-.dropdown-option {
-  display: flex; align-items: center; gap: 0.625rem;
-  width: 100%; padding: 0.625rem 0.875rem;
-  background: none; border: none; cursor: pointer;
-  text-align: left; font-family: inherit; transition: background 0.12s;
-}
-.dropdown-option:hover   { background: #F5F3FF; }
-.dropdown-option.selected { background: #EEF2FF; }
-.dropdown-todos { border-bottom: 1px solid #F3F4F6; }
-.option-avatar {
-  flex-shrink: 0; width: 28px; height: 28px;
-  background: linear-gradient(135deg, #4F46E5, #7C3AED);
-  border-radius: 8px; display: flex; align-items: center; justify-content: center;
-  font-size: 0.75rem; font-weight: 700; color: #fff;
-}
-.option-avatar.option-todos { background: #F3F4F6; }
-.option-avatar.option-todos svg { width: 14px; height: 14px; color: #6B7280; }
-.option-nombre { flex: 1; font-size: 0.875rem; font-weight: 500; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.option-check { width: 16px; height: 16px; color: #4F46E5; flex-shrink: 0; }
-.dropdown-overlay { position: fixed; inset: 0; z-index: 199; }
-
-/* ── Botón ── */
-.btn-primary {
-  display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1.25rem;
-  background: linear-gradient(135deg, #4F46E5, #7C3AED); color: #fff;
-  font-size: 0.875rem; font-weight: 600; border: none; border-radius: 10px;
-  cursor: pointer; transition: opacity 0.2s, transform 0.1s; font-family: inherit; white-space: nowrap;
-}
-.btn-primary:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
-.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1.1rem; background: linear-gradient(135deg, #4F46E5, #7C3AED); color: #fff; font-size: 0.875rem; font-weight: 600; border: none; border-radius: 10px; cursor: pointer; font-family: inherit; }
+.btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-primary svg { width: 16px; height: 16px; }
+.btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; font-family: inherit; }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ── Estados ── */
-.alert-error { background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626; padding: 0.75rem 1rem; border-radius: 10px; font-size: 0.875rem; }
-.loading { display: flex; align-items: center; gap: 0.75rem; color: #6B7280; font-size: 0.875rem; padding: 2rem 0; }
-.spinner { width: 22px; height: 22px; border: 2.5px solid #E5E7EB; border-top-color: #7C3AED; border-radius: 50%; animation: spin 0.7s linear infinite; }
-.sin-empresa { display: flex; flex-direction: column; align-items: center; gap: 1rem; padding: 5rem 2rem; color: #9CA3AF; text-align: center; }
-.sin-empresa svg { width: 56px; height: 56px; opacity: 0.35; }
-.sin-empresa p { font-size: 1rem; margin: 0; color: #6B7280; }
-.empty { display: flex; flex-direction: column; align-items: center; gap: 1rem; padding: 4rem 2rem; color: #9CA3AF; text-align: center; }
-.empty svg { width: 56px; height: 56px; opacity: 0.4; }
-.empty p { font-size: 1rem; margin: 0; }
+/* Selector empresa */
+.selector-wrap { position: relative; }
+.selector-btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.875rem; background: #fff; border: 1.5px solid #E5E7EB; border-radius: 10px; font-size: 0.875rem; font-weight: 500; color: #374151; cursor: pointer; font-family: inherit; max-width: 260px; }
+.selector-btn.sin-sel { border-color: #FCD34D; background: #FFFBEB; color: #B45309; }
+.selector-icono svg, .selector-chevron { width: 16px; height: 16px; flex-shrink: 0; }
+.selector-texto { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selector-dropdown { position: absolute; top: calc(100% + 6px); right: 0; width: 300px; background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); z-index: 30; padding: 0.5rem; max-height: 360px; overflow-y: auto; }
+.dropdown-search { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border: 1px solid #E5E7EB; border-radius: 8px; margin-bottom: 0.5rem; }
+.dropdown-search svg { width: 15px; height: 15px; color: #9CA3AF; }
+.dropdown-input { border: none; outline: none; font-size: 0.8125rem; flex: 1; font-family: inherit; }
+.dropdown-option { display: flex; align-items: center; gap: 0.6rem; width: 100%; padding: 0.5rem 0.6rem; border: none; background: none; cursor: pointer; border-radius: 8px; font-family: inherit; text-align: left; }
+.dropdown-option:hover { background: #F5F3FF; }
+.dropdown-option.selected { background: #EDE9FE; }
+.option-avatar { width: 28px; height: 28px; border-radius: 7px; background: linear-gradient(135deg,#6366F1,#8B5CF6); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8125rem; flex-shrink: 0; }
+.option-todos { background: #E5E7EB; color: #6B7280; }
+.option-todos svg { width: 15px; height: 15px; }
+.option-nombre { flex: 1; font-size: 0.8125rem; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.option-check { width: 16px; height: 16px; color: #7C3AED; }
+.dropdown-empty { padding: 0.75rem; text-align: center; color: #9CA3AF; font-size: 0.8125rem; }
+.dropdown-overlay { position: fixed; inset: 0; z-index: 20; }
 
-/* ── Tabla principal de flotas ── */
-.tabla-wrap {
-  background: #fff;
-  border: 1px solid #E5E7EB;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-}
-
-.tabla-flotas {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.tabla-flotas thead tr {
-  background: #F9FAFB;
-  border-bottom: 1px solid #E5E7EB;
-}
-.tabla-flotas th {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #6B7280;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-}
-.th-expand { width: 40px; }
-
-.fila-flota {
-  cursor: pointer;
-  border-bottom: 1px solid #F3F4F6;
-  transition: background 0.12s;
-}
-.fila-flota:hover { background: #F9FAFB; }
-.fila-flota:last-of-type { border-bottom: none; }
-
-.fila-flota td {
-  padding: 0.85rem 1rem;
-  font-size: 0.875rem;
-  color: #374151;
-  vertical-align: middle;
-}
-
-.td-expand { width: 40px; }
-.icon-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
-  color: #9CA3AF;
-  transition: transform 0.2s, color 0.2s;
-}
-.icon-toggle svg { width: 14px; height: 14px; }
-.icon-toggle.open { transform: rotate(90deg); color: #4F46E5; }
-
-.td-nombre { font-weight: 700; color: #111827; }
-
-.td-empresa { color: #374151; font-size: 0.875rem; }
-
-.td-admin .admin-info { display: flex; flex-direction: column; gap: 1px; }
-.admin-nombre { font-size: 0.875rem; font-weight: 500; color: #111827; }
-.admin-email  { font-size: 0.75rem; color: #9CA3AF; }
-.sin-admin    { font-size: 0.8125rem; color: #D1D5DB; font-style: italic; }
-
-.badge-count { background: #EEF2FF; color: #4338CA; font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.625rem; border-radius: 999px; white-space: nowrap; }
-
-.td-acciones { display: flex; align-items: center; gap: 0.5rem; }
-
-/* ── Sub-tabla de vehículos ── */
-.fila-vehiculos td { padding: 0; }
-.td-sub { background: #F8FAFC; border-top: 1px solid #EEF2FF; }
-
-.vehiculos-empty { padding: 1rem 1.5rem; font-size: 0.875rem; color: #9CA3AF; }
-.link-btn { background: none; border: none; color: #4F46E5; font-weight: 600; cursor: pointer; font-family: inherit; font-size: inherit; padding: 0; }
-.link-btn:hover { text-decoration: underline; }
-
-.tabla-vehiculos { width: 100%; border-collapse: collapse; }
-.tabla-vehiculos th {
-  padding: 0.55rem 1rem;
-  text-align: left;
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: #9CA3AF;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  background: #F1F5F9;
-  border-bottom: 1px solid #E5E7EB;
-}
-.tabla-vehiculos td { padding: 0.7rem 1rem; font-size: 0.8125rem; color: #374151; border-bottom: 1px solid #F1F5F9; }
+/* Tabla */
+.tabla-wrap { background: #fff; border: 1px solid #E5E7EB; border-radius: 14px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+.tabla-vehiculos { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.tabla-vehiculos thead th { text-align: left; padding: 0.75rem 1rem; font-weight: 600; color: #6B7280; font-size: 0.8125rem; background: #F9FAFB; border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+.tabla-vehiculos tbody td { padding: 0.75rem 1rem; border-bottom: 1px solid #F3F4F6; color: #374151; }
 .tabla-vehiculos tbody tr:last-child td { border-bottom: none; }
-.tabla-vehiculos tbody tr.inactivo td { opacity: 0.45; }
+.tabla-vehiculos tbody tr.inactivo { opacity: 0.55; }
+.td-patente { font-weight: 700; color: #1E1B4B; font-family: ui-monospace, monospace; }
+.texto-tenue { color: #9CA3AF; }
+.th-acciones, .td-acciones { text-align: right; white-space: nowrap; }
 
-.td-patente    { font-weight: 700; color: #111827; font-family: 'Courier New', monospace; }
-.td-acciones-v { display: flex; gap: 0.4rem; align-items: center; }
+.badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+.badge-ok  { background: #DCFCE7; color: #15803D; }
+.badge-off { background: #FEE2E2; color: #B91C1C; }
+.conductor-chip { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8125rem; font-weight: 500; background: #EDE9FE; color: #6D28D9; }
 
-/* ── Botones de acción ── */
-.btn-agregar {
-  display: flex; align-items: center; gap: 0.3rem;
-  padding: 0.35rem 0.75rem; border: 1.5px solid #4F46E5; border-radius: 8px;
-  background: #EEF2FF; color: #4F46E5; font-size: 0.8rem; font-weight: 600;
-  cursor: pointer; font-family: inherit; transition: background 0.15s; white-space: nowrap;
-}
-.btn-agregar:hover { background: #E0E7FF; }
-.btn-agregar svg { width: 13px; height: 13px; }
+.btn-accion { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid #E5E7EB; background: #fff; border-radius: 8px; cursor: pointer; color: #6B7280; margin-left: 0.35rem; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+.btn-accion svg { width: 16px; height: 16px; }
+.btn-accion:hover { background: #F5F3FF; color: #6D28D9; border-color: #DDD6FE; }
+.btn-accion:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-accion.btn-peligro:hover { background: #FEF2F2; color: #DC2626; border-color: #FECACA; }
+.btn-accion.btn-ok:hover { background: #ECFDF5; color: #16A34A; border-color: #BBF7D0; }
 
-.btn-accion {
-  width: 30px; height: 30px; border: 1px solid #E5E7EB; border-radius: 7px;
-  background: #fff; display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: border-color 0.15s, background 0.15s; flex-shrink: 0;
-}
-.btn-accion svg { width: 14px; height: 14px; }
-.btn-editar-flota        { color: #6B7280; }
-.btn-editar-flota:hover  { border-color: #6B7280; background: #F9FAFB; }
-.btn-eliminar-flota      { color: #DC2626; }
-.btn-eliminar-flota:hover { border-color: #DC2626; background: #FEF2F2; }
-.btn-editar              { color: #4F46E5; }
-.btn-editar:hover        { border-color: #4F46E5; background: #EEF2FF; }
-.btn-desactivar          { color: #DC2626; }
-.btn-desactivar:hover    { border-color: #DC2626; background: #FEF2F2; }
-.btn-activar             { color: #059669; }
-.btn-activar:hover       { border-color: #059669; background: #ECFDF5; }
-
-.badge { display: inline-flex; align-items: center; padding: 0.2rem 0.625rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
-.badge-activo   { background: #ECFDF5; color: #059669; }
-.badge-inactivo { background: #F3F4F6; color: #9CA3AF; }
-
+/* Estados */
+.loading { display: flex; align-items: center; gap: 0.75rem; color: #6B7280; font-size: 0.875rem; padding: 2.5rem 0; }
+.spinner { width: 22px; height: 22px; border: 2.5px solid #E5E7EB; border-top-color: #7C3AED; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.alert-error { background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626; padding: 0.75rem 1rem; border-radius: 10px; font-size: 0.875rem; }
+.empty, .sin-empresa { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 3rem 1rem; color: #9CA3AF; text-align: center; }
+.empty svg, .sin-empresa svg { width: 48px; height: 48px; color: #D1D5DB; }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 60; }
+.modal-card { background: #fff; border-radius: 16px; padding: 1.75rem; width: 100%; max-width: 420px; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
+.modal-title { font-size: 1.125rem; font-weight: 700; color: #1E1B4B; margin: 0 0 0.25rem; }
+.modal-sub { font-size: 0.875rem; color: #6B7280; margin: 0 0 1.25rem; }
+.label { display: block; font-size: 0.875rem; font-weight: 600; color: #374151; margin-bottom: 0.375rem; }
+.input { padding: 0.65rem 0.875rem; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; color: #111827; background: #fff; outline: none; width: 100%; font-family: inherit; }
+.input:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px rgba(124,58,237,0.1); }
+.select { cursor: pointer; }
+.modal-hint { font-size: 0.8125rem; color: #9CA3AF; margin: 0.5rem 0 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; }
 
 @media (max-width: 1024px) {
   .page { padding: 1rem; }
-  .page-header { flex-direction: column; align-items: stretch; }
-  .page-title { font-size: 1.25rem; }
-  .header-actions { flex-direction: column; align-items: stretch; }
-  .selector-btn { max-width: 100%; width: 100%; }
-  .btn-primary { justify-content: center; }
-
-  /* Sin scroll: el contenedor ya no fuerza overflow */
-  .tabla-wrap { overflow: visible; }
-
-  /* Tabla flotas: ocultar Admin (col 4 cuando superadmin, col 3 cuando no).
-     Para superadmin: Empresa(3) y Admin(4). Para usuario: nada extra que ocultar. */
-  .tabla-flotas { min-width: unset; width: 100%; }
-  .td-admin, .tabla-flotas th:nth-child(4) { display: none; }  /* Admin */
-
-  /* Acción "Agregar": solo ícono */
-  .btn-agregar span { display: none; }
-  .btn-agregar { padding: 0.35rem 0.5rem; }
-
-  /* Sub-tabla vehículos: ocultar Año(3), Combustible(4), KM(5) */
-  .tabla-vehiculos { min-width: unset; width: 100%; }
-  .tabla-vehiculos th:nth-child(3), .tabla-vehiculos td:nth-child(3) { display: none; }
-  .tabla-vehiculos th:nth-child(4), .tabla-vehiculos td:nth-child(4) { display: none; }
-  .tabla-vehiculos th:nth-child(5), .tabla-vehiculos td:nth-child(5) { display: none; }
-  /* Scroll horizontal con thumb visible */
-  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
-    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
-    overflow-y: hidden !important;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    scrollbar-color: #A78BFA #EDE9FE;
-  }
-  .tabla-wrap::-webkit-scrollbar,
-  .tabla-card::-webkit-scrollbar,
-  .sc-table-wrap::-webkit-scrollbar,
-  .card::-webkit-scrollbar,
-  .table-wrap::-webkit-scrollbar { height: 8px; }
-  .tabla-wrap::-webkit-scrollbar-track,
-  .tabla-card::-webkit-scrollbar-track,
-  .sc-table-wrap::-webkit-scrollbar-track,
-  .card::-webkit-scrollbar-track,
-  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
-  .tabla-wrap::-webkit-scrollbar-thumb,
-  .tabla-card::-webkit-scrollbar-thumb,
-  .sc-table-wrap::-webkit-scrollbar-thumb,
-  .card::-webkit-scrollbar-thumb,
-  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
-  .tabla-wrap::-webkit-scrollbar-thumb:hover,
-  .tabla-card::-webkit-scrollbar-thumb:hover,
-  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
-  .card::-webkit-scrollbar-thumb:hover,
-  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
-  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
-  .card table, .table-wrap table,
-  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
-
+  .tabla-wrap { overflow-x: auto; }
+  .tabla-vehiculos { min-width: 760px; }
 }
 </style>

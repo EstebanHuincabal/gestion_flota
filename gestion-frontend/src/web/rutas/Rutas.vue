@@ -763,9 +763,9 @@
           </div>
           <div class="flex justify-end gap-2 mt-4">
             <button @click="modalFinalizar = false" class="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg">Cancelar</button>
-            <button @click="confirmarFinalizar" :disabled="!finalizarForm.km_fin && finalizarForm.km_fin !== 0"
-              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50">
-              Finalizar
+            <button @click="confirmarFinalizar" :disabled="finalizando || (!finalizarForm.km_fin && finalizarForm.km_fin !== 0)"
+              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ finalizando ? 'Finalizando...' : 'Finalizar' }}
             </button>
           </div>
         </div>
@@ -1068,6 +1068,7 @@ const geoTimers      = {}
 const rutaAccion     = ref(null)
 const modalFinalizar = ref(false)
 const finalizarForm  = ref({ km_fin: '' })
+const finalizando    = ref(false)   // evita doble envío al finalizar
 const modalCancelar  = ref(false)
 const motivoCancelar = ref('')
 
@@ -1436,11 +1437,24 @@ function prepararFinalizar(ruta) {
 }
 
 async function confirmarFinalizar() {
-  const res = await apiFetch(`/api/empresa/rutas/${rutaAccion.value.id}/finalizar/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalizarForm.value),
-  })
-  if (res.ok) { modalFinalizar.value = false; await cargarRutas(); toast('exito', 'Ruta finalizada.') }
-  else { const err = await res.json(); toast('error', err.error || 'Error al finalizar la ruta.') }
+  if (finalizando.value) return            // ya hay un envío en curso
+  finalizando.value = true
+  try {
+    const res = await apiFetch(`/api/empresa/rutas/${rutaAccion.value.id}/finalizar/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalizarForm.value),
+    })
+    if (res.ok) {
+      modalFinalizar.value = false
+      await cargarRutas()
+      toast('exito', 'Ruta finalizada.')
+    } else {
+      const err = await res.json().catch(() => ({}))
+      toast('error', err.error || 'Error al finalizar la ruta.')
+      await cargarRutas()   // resincroniza por si la ruta ya cambió de estado
+    }
+  } finally {
+    finalizando.value = false
+  }
 }
 
 function prepararCancelar(ruta) {

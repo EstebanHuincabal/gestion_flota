@@ -1,7 +1,18 @@
 import { ref, onUnmounted } from 'vue'
+import { refreshAccessToken } from './api.js'
 
-const WARN_ANTES_MS = 2 * 60 * 1000  // Aviso 2 minutos antes de expirar
+// Cierre de sesión por INACTIVIDAD REAL del usuario (no por expiración del token).
+// Mientras haya actividad (mouse/teclado/scroll), el access token se renueva en
+// segundo plano y la sesión no se interrumpe — pensado para pantallas que quedan
+// abiertas todo el día. Solo tras un rato sin actividad se avisa y se cierra.
+const INACTIVIDAD_MAX_MS = 30 * 60 * 1000   // 30 min sin actividad → cerrar sesión
+const WARN_ANTES_MS      = 2 * 60 * 1000    // avisar 2 min antes del cierre
+const REFRESH_ANTES_MS   = 5 * 60 * 1000    // renovar el token si le quedan < 5 min
+const CHECK_MS           = 1000             // evaluar una vez por segundo
 
+const EVENTOS_ACTIVIDAD = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click']
+
+// Vencimiento (ms epoch) del access token actual, leído de su payload.
 function leerExp() {
   const token = localStorage.getItem('access_token')
   if (!token) return null
@@ -13,25 +24,6 @@ function leerExp() {
   } catch {
     return null
   }
-}
-
-async function renovarToken() {
-  const refresh = localStorage.getItem('refresh_token')
-  if (!refresh) return false
-  try {
-    const res = await fetch('/api/token/refresh/', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ refresh }),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      localStorage.setItem('access_token', data.access)
-      if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
-      return true
-    }
-  } catch {}
-  return false
 }
 
 function limpiarSesion() {
@@ -46,85 +38,75 @@ function limpiarSesion() {
 }
 
 export function useSessionTimer() {
-  const mostrarModal     = ref(false)
-  const segundosRestantes = ref(120)
+  const mostrarModal      = ref(false)
+  const segundosRestantes = ref(Math.round(WARN_ANTES_MS / 1000))
 
-  let timerAviso           = null
-  let timerCuentaRegresiva = null
+  let ultimaActividad = Date.now()
+  let intervalo       = null
+  let refrescando     = false
 
-  function limpiarTimers() {
-    clearTimeout(timerAviso)
-    clearInterval(timerCuentaRegresiva)
-    timerAviso           = null
-    timerCuentaRegresiva = null
+  function marcarActividad() {
+    ultimaActividad = Date.now()
+    if (mostrarModal.value) mostrarModal.value = false   // el usuario volvió
   }
 
-  function iniciarCuentaRegresiva(expMs) {
-    timerCuentaRegresiva = setInterval(() => {
-      const restantes = Math.round((expMs - Date.now()) / 1000)
-      if (restantes <= 0) {
-        limpiarTimers()
-        mostrarModal.value = false
-        limpiarSesion()
-        return
-      }
-      segundosRestantes.value = restantes
-    }, 1000)
-  }
+  async function tick() {
+    const ahora               = Date.now()
+    const restanteInactividad = INACTIVIDAD_MAX_MS - (ahora - ultimaActividad)
 
-  function programar() {
-    limpiarTimers()
-    const exp = leerExp()
-    if (!exp) return
-
-    const ahora            = Date.now()
-    const msHastaExpiracion = exp - ahora
-
-    if (msHastaExpiracion <= 0) {
+    // 1. Demasiado tiempo sin actividad → cerrar sesión.
+    if (restanteInactividad <= 0) {
+      detener()
       limpiarSesion()
       return
     }
 
-    const msHastaAviso = msHastaExpiracion - WARN_ANTES_MS
+    // 2. Entrando en la ventana de aviso → mostrar el modal con cuenta regresiva.
+    if (restanteInactividad <= WARN_ANTES_MS) {
+      segundosRestantes.value = Math.ceil(restanteInactividad / 1000)
+      mostrarModal.value = true
+      return
+    }
 
-    if (msHastaAviso <= 0) {
-      // Menos de 2 minutos — mostrar aviso inmediatamente
-      segundosRestantes.value = Math.round(msHastaExpiracion / 1000)
-      mostrarModal.value      = true
-      iniciarCuentaRegresiva(exp)
-    } else {
-      timerAviso = setTimeout(() => {
-        const expActual = leerExp()
-        if (!expActual) return
-        const restantes = Math.round((expActual - Date.now()) / 1000)
-        if (restantes <= 0) { limpiarSesion(); return }
-        segundosRestantes.value = restantes
-        mostrarModal.value      = true
-        iniciarCuentaRegresiva(expActual)
-      }, msHastaAviso)
+    // 3. Hay actividad reciente: mantener la sesión viva renovando el token en
+    //    segundo plano cuando está por expirar.
+    mostrarModal.value = false
+    const exp = leerExp()
+    if (exp && exp - ahora < REFRESH_ANTES_MS && !refrescando) {
+      refrescando = true
+      try {
+        const r = await refreshAccessToken()
+        // Solo si el refresh token venció de verdad cerramos; un fallo de red
+        // no interrumpe (se reintenta en el próximo tick).
+        if (!r.ok && r.expired) {
+          detener()
+          limpiarSesion()
+        }
+      } finally {
+        refrescando = false
+      }
     }
   }
 
-  async function extenderSesion() {
-    limpiarTimers()
-    mostrarModal.value = false
-    const ok = await renovarToken()
-    if (ok) {
-      programar()
-    } else {
-      limpiarSesion()
-    }
+  // El usuario confirma desde el modal que sigue ahí.
+  function extenderSesion() {
+    marcarActividad()
   }
 
   function logoutDesdeModal() {
-    limpiarTimers()
-    mostrarModal.value = false
+    detener()
     limpiarSesion()
   }
 
-  onUnmounted(limpiarTimers)
+  function detener() {
+    if (intervalo) { clearInterval(intervalo); intervalo = null }
+    EVENTOS_ACTIVIDAD.forEach(e => window.removeEventListener(e, marcarActividad))
+  }
 
-  programar()
+  EVENTOS_ACTIVIDAD.forEach(e => window.addEventListener(e, marcarActividad, { passive: true }))
+  intervalo = setInterval(tick, CHECK_MS)
+
+  onUnmounted(detener)
 
   return { mostrarModal, segundosRestantes, extenderSesion, logoutDesdeModal }
 }

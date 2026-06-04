@@ -10,7 +10,6 @@ from g_de_flota.views import (
     usuarios_lista, usuarios_crear, usuarios_detalle,
     usuario_reset_password, usuario_toggle_block, usuario_historial,
     conductores_lista_crear, conductores_detalle, conductores_asignar, conductores_desasignar,
-    admin_flotas_lista, flotas_lista_crear, flotas_detalle,
     vehiculos_lista_crear, vehiculos_detalle,
     mantenciones_lista_crear, mantenciones_detalle, mantenciones_resumen,
     mantenciones_calendario, mantenciones_sugerencias,
@@ -119,9 +118,6 @@ urlpatterns = [
     path('api/empresa/conductores/<int:pk>/asignar/',       conductores_asignar,      name='conductores-asignar'),
     path('api/empresa/conductores/<int:pk>/desasignar/',    conductores_desasignar,   name='conductores-desasignar'),
 
-    path('api/admin/flotas/',                admin_flotas_lista,    name='admin-flotas'),
-    path('api/empresa/flotas/',              flotas_lista_crear,    name='flotas-lista'),
-    path('api/empresa/flotas/<int:pk>/',     flotas_detalle,        name='flotas-detalle'),
     path('api/empresa/vehiculos/',           vehiculos_lista_crear, name='vehiculos-lista'),
     path('api/empresa/vehiculos/<int:pk>/',  vehiculos_detalle,     name='vehiculos-detalle'),
     
@@ -221,7 +217,6 @@ urlpatterns = [
     path('api/empresa/gps/posicion/',                        views_gps.PosicionView.as_view(),            name='gps-posicion'),
     path('api/empresa/gps/traccar/',                         views_gps.TraccarWebhookView.as_view(),      name='gps-traccar'),
     path('api/empresa/gps/vehiculos/posicion/',              views_gps.UltimasPosicionesView.as_view(),   name='gps-ultimas-posiciones'),
-    path('api/empresa/gps/configuracion/',                   views_gps.ConfiguracionGPSView.as_view(),    name='gps-configuracion'),
 
     # ── Transbank Webpay Plus ───────────────────────────────────────────────────
     path('api/pago/iniciar/',                          PagoIniciarView.as_view(),         name='pago-iniciar'),

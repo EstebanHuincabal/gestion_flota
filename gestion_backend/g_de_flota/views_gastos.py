@@ -115,7 +115,7 @@ class GastosListView(APIView):
         costo_por_km = None
         if mes and anio:
             km_data = Mantencion.objects.filter(
-                vehiculo__flota__empresa=empresa,
+                vehiculo__empresa=empresa,
                 fecha_realizada__month=int(mes),
                 fecha_realizada__year=int(anio),
                 kilometraje_realizado__isnull=False,
@@ -183,7 +183,7 @@ class GastosListView(APIView):
 
         # ── Incluir mantenciones realizadas en el período ──────────────
         mant_qs = Mantencion.objects.filter(
-            vehiculo__flota__empresa=empresa,
+            vehiculo__empresa=empresa,
             estado='realizada',
             costo__gt=0,
         ).select_related('vehiculo')
@@ -250,7 +250,7 @@ class GastosListView(APIView):
             _q_tend |= Q(fecha_realizada__month=_mt, fecha_realizada__year=_at)
         _mant_tend_map = {}
         for _m in Mantencion.objects.filter(
-            vehiculo__flota__empresa=empresa,
+            vehiculo__empresa=empresa,
             estado='realizada', costo__gt=0, fecha_realizada__isnull=False,
         ).filter(_q_tend):
             _k = (_m.fecha_realizada.month, _m.fecha_realizada.year % 100)
@@ -345,7 +345,7 @@ class GastosListView(APIView):
             return Response({'error': 'La fecha no puede ser futura.'}, status=400)
 
         try:
-            vehiculo = Vehiculo.objects.get(pk=vehiculo_id, flota__empresa=empresa)
+            vehiculo = Vehiculo.objects.get(pk=vehiculo_id, empresa=empresa)
         except Vehiculo.DoesNotExist:
             return Response({'error': 'Vehículo no encontrado.'}, status=404)
 
@@ -427,7 +427,7 @@ class GastoDetailView(APIView):
         if 'vehiculo_id' in data:
             if data['vehiculo_id']:
                 try:
-                    gasto.vehiculo = Vehiculo.objects.get(pk=data['vehiculo_id'], flota__empresa=empresa)
+                    gasto.vehiculo = Vehiculo.objects.get(pk=data['vehiculo_id'], empresa=empresa)
                 except Vehiculo.DoesNotExist:
                     return Response({'error': 'Vehículo no encontrado.'}, status=404)
             else:

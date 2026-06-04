@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import (
     Usuario, Empresa, CambioPlan,
-    Flota, Vehiculo, Asignacion,
+    Vehiculo, Asignacion,
     Mantencion,
     LogAuditoria, PlanSuscripcion, Permiso,
     Notificacion,
@@ -11,7 +11,7 @@ from .models import (
     GastoOperativo, PresupuestoMensual, Documento,
     Ruta, Parada, EventoRuta, Ubicacion,
     SolicitudConductor,
-    DispositivoGPS, ConfiguracionGPS,
+    DispositivoGPS,
 )
 
 # ─────────────────────────────────────────
@@ -59,31 +59,24 @@ class PermisoAdmin(admin.ModelAdmin):
     search_fields = ('codigo', 'nombre')
 
 
-@admin.register(Flota)
-class FlotaAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'empresa')
-    list_filter = ('empresa',)
-    search_fields = ('nombre', 'empresa__nombre')
-
-
 @admin.register(Vehiculo)
 class VehiculoAdmin(admin.ModelAdmin):
-    list_display = ('patente', 'marca', 'modelo', 'tipo_combustible', 'flota', 'activo')
-    list_filter = ('tipo_combustible', 'activo', 'flota__empresa')
+    list_display = ('patente', 'marca', 'modelo', 'tipo_combustible', 'empresa', 'activo')
+    list_filter = ('tipo_combustible', 'activo', 'empresa')
     search_fields = ('patente',)   # marca y modelo van cifrados
 
 
 @admin.register(Asignacion)
 class AsignacionAdmin(admin.ModelAdmin):
     list_display = ('vehiculo', 'conductor', 'activo', 'desde', 'hasta')
-    list_filter = ('activo', 'vehiculo__flota__empresa')
+    list_filter = ('activo', 'vehiculo__empresa')
     search_fields = ('vehiculo__patente', 'conductor__email')
 
 
 @admin.register(Mantencion)
 class MantencionAdmin(admin.ModelAdmin):
     list_display = ('tipo_mantencion', 'vehiculo', 'fecha_programada', 'estado', 'costo')
-    list_filter = ('estado', 'vehiculo__flota__empresa')
+    list_filter = ('estado', 'vehiculo__empresa')
     search_fields = ('vehiculo__patente',)   # tipo_mantencion va cifrado
 
 
@@ -124,7 +117,7 @@ class VehiculoPlanAdmin(admin.ModelAdmin):
 @admin.register(MantencionProgramada)
 class MantencionProgramadaAdmin(admin.ModelAdmin):
     list_display = ('vehiculo', 'regla', 'fecha_ultima', 'fecha_siguiente', 'estado')
-    list_filter = ('estado', 'vehiculo__flota__empresa')
+    list_filter = ('estado', 'vehiculo__empresa')
     search_fields = ('vehiculo__patente', 'regla__tipo')
 
 
@@ -217,7 +210,7 @@ class EventoRutaAdmin(admin.ModelAdmin):
 @admin.register(Ubicacion)
 class UbicacionAdmin(admin.ModelAdmin):
     list_display  = ('vehiculo', 'latitud', 'longitud', 'velocidad', 'timestamp')
-    list_filter   = ('vehiculo__flota__empresa', 'vehiculo')
+    list_filter   = ('vehiculo__empresa', 'vehiculo')
     search_fields = ('vehiculo__patente',)
     readonly_fields = ('timestamp',)
     ordering = ('-timestamp',)
@@ -259,11 +252,3 @@ class DispositivoGPSAdmin(admin.ModelAdmin):
     search_fields  = ('imei',)
     readonly_fields = ('creado_at',)
     list_select_related = ('empresa', 'vehiculo')
-
-
-@admin.register(ConfiguracionGPS)
-class ConfiguracionGPSAdmin(admin.ModelAdmin):
-    list_display   = ('empresa', 'servidor_ip', 'servidor_puerto', 'protocolo', 'activo', 'actualizado_at')
-    list_filter    = ('protocolo', 'activo')
-    search_fields  = ('empresa__nombre', 'servidor_ip')
-    readonly_fields = ('actualizado_at',)

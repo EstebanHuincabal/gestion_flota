@@ -33,7 +33,7 @@ def get_resumen_flota(empresa):
     from .models import Vehiculo, Ubicacion, Ruta
 
     vehiculos = Vehiculo.objects.filter(
-        flota__empresa=empresa, activo=True
+        empresa=empresa, activo=True
     ).prefetch_related('asignaciones', 'ubicaciones')
 
     resumen = {

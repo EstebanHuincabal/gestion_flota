@@ -91,8 +91,8 @@ def reporte_mantencion(request):
         return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
 
     qs = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa
-    ).select_related('vehiculo', 'vehiculo__flota')
+        vehiculo__empresa=empresa
+    ).select_related('vehiculo', 'vehiculo__empresa')
 
     mes         = request.query_params.get('mes')
     anio        = request.query_params.get('anio')
@@ -177,8 +177,8 @@ def reporte_flota(request):
         return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
 
     vehiculos = Vehiculo.objects.filter(
-        flota__empresa=empresa, activo=True
-    ).select_related('flota').prefetch_related(
+        empresa=empresa, activo=True
+    ).prefetch_related(
         'docs_v', 'mantenciones', 'asignaciones__conductor'
     )
 
@@ -215,7 +215,6 @@ def reporte_flota(request):
             'marca':                    v.marca,
             'modelo':                   v.modelo,
             'anio':                     v.anio,
-            'flota':                    v.flota.nombre,
             'km_actuales':              v.km_actuales or 0,
             'conductor':                conductor,
             'docs_vigentes':            docs_vigentes,
@@ -254,7 +253,7 @@ def reporte_exportar(request):
 
     if tipo == 'mantencion':
         qs = Mantencion.objects.filter(
-            vehiculo__flota__empresa=empresa
+            vehiculo__empresa=empresa
         ).select_related('vehiculo')
 
         mes         = request.query_params.get('mes')
@@ -282,13 +281,13 @@ def reporte_exportar(request):
 
     elif tipo == 'flota':
         vehiculos = Vehiculo.objects.filter(
-            flota__empresa=empresa, activo=True
-        ).select_related('flota').prefetch_related(
+            empresa=empresa, activo=True
+        ).prefetch_related(
             'docs_v', 'mantenciones', 'asignaciones__conductor'
         )
 
         headers = [
-            'Patente', 'Marca', 'Modelo', 'Año', 'Flota',
+            'Patente', 'Marca', 'Modelo', 'Año',
             'KM', 'Conductor', 'Docs Vencidos',
             'Última Mantención', 'Costo Total Mantenciones',
         ]
@@ -301,7 +300,7 @@ def reporte_exportar(request):
             costo_total   = int(v.mantenciones.filter(estado='realizada').aggregate(t=Sum('costo'))['t'] or 0)
             rows.append([
                 v.patente, v.marca, v.modelo, v.anio or '',
-                v.flota.nombre, v.km_actuales or 0, conductor,
+                v.km_actuales or 0, conductor,
                 docs_vencidos,
                 ultima.fecha_realizada.strftime('%d/%m/%Y') if ultima and ultima.fecha_realizada else '',
                 costo_total,
@@ -331,11 +330,10 @@ def reporte_admin_empresas(request):
     total_costo        = 0
 
     for e in empresas:
-        vehiculos_count   = Vehiculo.objects.filter(flota__empresa=e, activo=True).count()
+        vehiculos_count   = Vehiculo.objects.filter(empresa=e, activo=True).count()
         conductores_count = e.usuarios.filter(rol=Rol.CONDUCTOR, is_active=True).count()
-        flotas_count      = e.flotas.count()
 
-        mants      = Mantencion.objects.filter(vehiculo__flota__empresa=e, fecha_programada__year=anio)
+        mants      = Mantencion.objects.filter(vehiculo__empresa=e, fecha_programada__year=anio)
         mant_count = mants.count()
         costo_mant = int(mants.aggregate(t=Sum('costo'))['t'] or 0)
 
@@ -353,7 +351,6 @@ def reporte_admin_empresas(request):
             'nombre':                  e.nombre,
             'plan':                    e.plan.nombre if e.plan else None,
             'plan_display':            e.plan.get_nombre_display() if e.plan else '—',
-            'flotas':                  flotas_count,
             'vehiculos':               vehiculos_count,
             'conductores':             conductores_count,
             'mantenciones_anio':       mant_count,
@@ -392,8 +389,8 @@ def reporte_tco(request):
     mes  = request.query_params.get('mes')
 
     vehiculos_qs = Vehiculo.objects.filter(
-        flota__empresa=empresa
-    ).select_related('flota').prefetch_related('asignaciones__conductor')
+        empresa=empresa
+    ).prefetch_related('asignaciones__conductor')
 
     resultados = []
     for v in vehiculos_qs:
@@ -423,7 +420,6 @@ def reporte_tco(request):
             'marca':             v.marca,
             'modelo':            v.modelo,
             'anio_fab':          v.anio,
-            'flota':             v.flota.nombre,
             'conductor':         conductor,
             'km_actuales':       v.km_actuales,
             'gastos_total':      gastos_total,
@@ -583,7 +579,7 @@ def reporte_documentos(request):
 
     docs_qs = Documento.objects.filter(
         entidad='vehiculo',
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         fecha_vencimiento__isnull=False,
     ).select_related('vehiculo').order_by('fecha_vencimiento')
 

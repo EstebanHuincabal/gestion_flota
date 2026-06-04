@@ -18,8 +18,6 @@ import GestionPermisos from '../web/permisos/GestionPermisos.vue'
 
 // Componentes operativos (compartidos entre Base y EmpresaLayout)
 import ListaFlota       from '../web/empresa/flota/ListaFlota.vue'
-import NuevaFlota       from '../web/empresa/flota/NuevaFlota.vue'
-import EditarFlota      from '../web/empresa/flota/EditarFlota.vue'
 import FormVehiculo     from '../web/empresa/flota/FormVehiculo.vue'
 import ListaConductores from '../web/empresa/conductores/ListaConductores.vue'
 import NuevoConductor   from '../web/empresa/conductores/NuevoConductor.vue'
@@ -123,9 +121,7 @@ const routes = [
 
       // Operaciones de empresa (sin prefijo /empresa/)
       { path: 'flota',                                    component: ListaFlota       },
-      { path: 'flota/nueva',                              component: NuevaFlota       },
-      { path: 'flota/:id/editar',                         component: EditarFlota      },
-      { path: 'flota/:flotaId/nuevo-vehiculo',            component: FormVehiculo, props: { modo: 'nuevo' } },
+      { path: 'vehiculos/nuevo',                          component: FormVehiculo, props: { modo: 'nuevo' } },
       { path: 'vehiculos/:id/editar',                     component: FormVehiculo, props: { modo: 'editar' } },
       { path: 'conductores',                              component: ListaConductores },
       { path: 'conductores/nuevo',                        component: NuevoConductor  },
@@ -160,9 +156,7 @@ const routes = [
     children: [
       { path: 'dashboard',                            component: Dashboard },
       { path: 'flota',                                component: ListaFlota,       meta: { permiso: 'flotas.ver' } },
-      { path: 'flota/nueva',                          component: NuevaFlota,       meta: { permiso: 'flotas.ver' } },
-      { path: 'flota/:id/editar',                     component: EditarFlota,      meta: { permiso: 'flotas.ver' } },
-      { path: 'flota/:flotaId/nuevo-vehiculo',         component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'nuevo' } },
+      { path: 'vehiculos/nuevo',                       component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'nuevo' } },
       { path: 'vehiculos/:id/editar',                  component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'editar' } },
       { path: 'conductores',              component: ListaConductores, meta: { permiso: 'conductores.ver' } },
       { path: 'conductores/nuevo',        component: NuevoConductor,  meta: { permiso: 'conductores.ver' } },

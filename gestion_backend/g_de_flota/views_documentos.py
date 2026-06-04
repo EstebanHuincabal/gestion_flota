@@ -261,7 +261,7 @@ class DocumentosListView(APIView):
             if not vid:
                 return Response({'error': 'Se requiere vehiculo_id.'}, status=status.HTTP_400_BAD_REQUEST)
             try:
-                vehiculo = Vehiculo.objects.get(pk=vid, flota__empresa=empresa)
+                vehiculo = Vehiculo.objects.get(pk=vid, empresa=empresa)
             except Vehiculo.DoesNotExist:
                 return Response({'error': 'Vehículo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         else:

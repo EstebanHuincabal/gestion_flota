@@ -135,7 +135,7 @@ def calendario_eventos(request):
     # ── 2. MANTENCIONES ─────────────────────────────────────────────────────────
     mantenciones = (
         Mantencion.objects
-        .filter(vehiculo__flota__empresa_id=empresa_id)
+        .filter(vehiculo__empresa_id=empresa_id)
         .select_related('vehiculo')
     )
     COLOR_MANT = {
@@ -182,7 +182,7 @@ def calendario_eventos(request):
     # ── 3. MANTENCIONES PREDICTIVAS ─────────────────────────────────────────────
     mp_qs = (
         MantencionProgramada.objects
-        .filter(vehiculo__flota__empresa_id=empresa_id, estado='activa')
+        .filter(vehiculo__empresa_id=empresa_id, estado='activa')
         .select_related('vehiculo', 'regla')
     )
     for mp in mp_qs.filter(fecha_siguiente__range=(desde, hasta)):

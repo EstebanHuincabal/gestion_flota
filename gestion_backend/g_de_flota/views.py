@@ -20,7 +20,7 @@ from django.core.paginator import Paginator
 from decimal import Decimal
 
 from .models import (
-    Empresa, Rol, Permiso, Usuario, Flota, Vehiculo, Asignacion,
+    Empresa, Rol, Permiso, Usuario, Vehiculo, Asignacion,
     Mantencion, Documento, LogAuditoria, normalizar_rut, TipoLog, PlanSuscripcion,
     TipoNotificacion, CambioPlan, GastoOperativo, PresupuestoMensual, MantencionProgramada,
     Suscripcion,
@@ -40,9 +40,7 @@ from .serializers import (
     ConductorDetalleSerializer,
     ConductorCrearSerializer,
     ConductorEditarSerializer,
-    FlotaSerializer,
     VehiculoSerializer,
-    VehiculoResumenSerializer,
     MantencionSerializer,
     PlanSuscripcionSerializer,
     LogAuditoriaSerializer
@@ -170,7 +168,7 @@ def dashboard_global_view(request):
             crecimiento_values.append(meses_data[k])
 
     # Gráfico 2: Distribución por tamaño de flota (snapshot actual)
-    empresas_flota = Empresa.objects.annotate(num_vehiculos=Count('flotas__vehiculos'))
+    empresas_flota = Empresa.objects.annotate(num_vehiculos=Count('vehiculos'))
     distribucion_flota = {"0 vehículos": 0, "1-5 vehículos": 0, "6-10 vehículos": 0, "+10 vehículos": 0}
     for e in empresas_flota:
         n = e.num_vehiculos
@@ -184,7 +182,7 @@ def dashboard_global_view(request):
             distribucion_flota["+10 vehículos"] += 1
 
     # Gráfico 3: Top 5 empresas por vehículos
-    top_empresas = Empresa.objects.annotate(num_vehiculos=Count('flotas__vehiculos')).order_by('-num_vehiculos')[:5]
+    top_empresas = Empresa.objects.annotate(num_vehiculos=Count('vehiculos')).order_by('-num_vehiculos')[:5]
     top_empresas_data = [{"nombre": e.nombre, "vehiculos": e.num_vehiculos} for e in top_empresas]
 
     # ── Nuevos datos globales ────────────────────────────────────
@@ -200,7 +198,7 @@ def dashboard_global_view(request):
     sin_actividad = []
     for e in Empresa.objects.filter(estado='activa').order_by('nombre'):
         tiene_act = Mantencion.objects.filter(
-            vehiculo__flota__empresa=e, fecha_programada__gte=hace_30,
+            vehiculo__empresa=e, fecha_programada__gte=hace_30,
         ).exists()
         if not tiene_act:
             sin_actividad.append({'id': e.id, 'nombre': e.nombre})
@@ -241,7 +239,7 @@ def dashboard_global_view(request):
     ]
 
     # Top 10 empresas por vehículos (para bar chart)
-    top_empresas_10 = Empresa.objects.annotate(num_vehiculos=Count('flotas__vehiculos')).order_by('-num_vehiculos')[:10]
+    top_empresas_10 = Empresa.objects.annotate(num_vehiculos=Count('vehiculos')).order_by('-num_vehiculos')[:10]
     top_empresas_bar = [{"nombre": e.nombre, "vehiculos": e.num_vehiculos} for e in top_empresas_10]
 
     # ── S1: MRR histórico 12 meses ───────────────────────────────
@@ -282,12 +280,12 @@ def dashboard_global_view(request):
     alertas_glob_qs = (
         MantencionProgramada.objects
         .filter(estado='activa', fecha_siguiente__lte=now.date())
-        .values('vehiculo__flota__empresa__nombre')
+        .values('vehiculo__empresa__nombre')
         .annotate(alertas=Count('id'))
         .order_by('-alertas')[:8]
     )
     empresas_alertas = [
-        {'nombre': r['vehiculo__flota__empresa__nombre'], 'alertas': r['alertas']}
+        {'nombre': r['vehiculo__empresa__nombre'], 'alertas': r['alertas']}
         for r in alertas_glob_qs
     ]
 
@@ -386,11 +384,11 @@ def empresa_dashboard_view(request):
         })
 
     # ── Pre-cómputos compartidos ──────────────────────────────────
-    total_vehiculos = Vehiculo.objects.filter(flota__empresa=empresa).count()
+    total_vehiculos = Vehiculo.objects.filter(empresa=empresa).count()
     mant_pend = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa, estado='pendiente').count() if p_mant or p_flota else 0
+        vehiculo__empresa=empresa, estado='pendiente').count() if p_mant or p_flota else 0
     docs_pv = Documento.objects.filter(
-        entidad='vehiculo', vehiculo__flota__empresa=empresa,
+        entidad='vehiculo', vehiculo__empresa=empresa,
         fecha_vencimiento__gte=hoy,
         fecha_vencimiento__lte=hoy + timedelta(days=30),
     ).count() if p_docs or p_flota else 0
@@ -398,7 +396,6 @@ def empresa_dashboard_view(request):
     # ── KPIs (según permiso) ──────────────────────────────────────
     kpis = {}
     if p_flota:
-        kpis['total_flotas']    = Flota.objects.filter(empresa=empresa).count()
         kpis['total_vehiculos'] = total_vehiculos
     if p_conductores:
         kpis['total_conductores'] = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR).count()
@@ -411,22 +408,13 @@ def empresa_dashboard_view(request):
 
     # ── FLOTA ─────────────────────────────────────────────────────
     if p_flota:
-        flotas_qs = (
-            Flota.objects.filter(empresa=empresa)
-            .annotate(num_vehiculos=Count('vehiculos'))
-            .order_by('-num_vehiculos')
-        )
-        charts['vehiculos_por_flota'] = {
-            'labels': [f.nombre for f in flotas_qs],
-            'data':   [f.num_vehiculos for f in flotas_qs],
-        }
         charts['estado_flota'] = {
             'sin_alerta':     max(0, total_vehiculos - docs_pv - mant_pend),
             'docs_vencer':    docs_pv,
             'mant_pendiente': mant_pend,
         }
         marcas_qs = (
-            Vehiculo.objects.filter(flota__empresa=empresa)
+            Vehiculo.objects.filter(empresa=empresa)
             .values('marca').annotate(total=Count('id')).order_by('-total')[:8]
         )
         charts['marcas_flota'] = [
@@ -441,7 +429,7 @@ def empresa_dashboard_view(request):
             desde = hoy - timedelta(days=days - 1)
             rows = (
                 Mantencion.objects.filter(
-                    vehiculo__flota__empresa=empresa,
+                    vehiculo__empresa=empresa,
                     fecha_programada__gte=desde,
                     fecha_programada__lte=hoy,
                 )
@@ -459,7 +447,7 @@ def empresa_dashboard_view(request):
             desde = hoy - timedelta(weeks=weeks)
             rows = (
                 Mantencion.objects.filter(
-                    vehiculo__flota__empresa=empresa,
+                    vehiculo__empresa=empresa,
                     fecha_programada__gte=desde,
                     fecha_programada__lte=hoy,
                 )
@@ -477,7 +465,7 @@ def empresa_dashboard_view(request):
             hace_12 = hoy - timedelta(days=365)
             rows = (
                 Mantencion.objects.filter(
-                    vehiculo__flota__empresa=empresa,
+                    vehiculo__empresa=empresa,
                     fecha_programada__gte=hace_12,
                     fecha_programada__lte=hoy,
                 )
@@ -503,13 +491,13 @@ def empresa_dashboard_view(request):
         charts['mantenciones'] = {'labels': mant_labels, 'data': mant_values}
         charts['mant_por_estado'] = {
             estado: Mantencion.objects.filter(
-                vehiculo__flota__empresa=empresa, estado=estado
+                vehiculo__empresa=empresa, estado=estado
             ).count()
             for estado in ['pendiente', 'en_proceso', 'completada', 'cancelada']
         }
         alertas_qs = (
             MantencionProgramada.objects
-            .filter(vehiculo__flota__empresa=empresa, estado='activa',
+            .filter(vehiculo__empresa=empresa, estado='activa',
                     fecha_siguiente__lte=hoy)
             .values('regla__tipo').annotate(total=Count('id')).order_by('-total')[:6]
         )
@@ -548,12 +536,12 @@ def empresa_dashboard_view(request):
     if p_docs:
         charts['docs_por_estado'] = {
             'vigentes':   Documento.objects.filter(
-                entidad='vehiculo', vehiculo__flota__empresa=empresa,
+                entidad='vehiculo', vehiculo__empresa=empresa,
                 fecha_vencimiento__gt=hoy + timedelta(days=30),
             ).count(),
             'por_vencer': docs_pv,
             'vencidos':   Documento.objects.filter(
-                entidad='vehiculo', vehiculo__flota__empresa=empresa,
+                entidad='vehiculo', vehiculo__empresa=empresa,
                 fecha_vencimiento__lt=hoy,
             ).count(),
         }
@@ -594,7 +582,7 @@ def empresa_dashboard_view(request):
 
     if p_mant:
         proximas_qs = Mantencion.objects.filter(
-            vehiculo__flota__empresa=empresa,
+            vehiculo__empresa=empresa,
             estado__in=['pendiente', 'en_proceso'],
             fecha_programada__gte=hoy,
             fecha_programada__lte=hoy + timedelta(days=7),
@@ -605,7 +593,7 @@ def empresa_dashboard_view(request):
              'tipo': m.tipo_mantencion, 'fecha': m.fecha_programada.isoformat(), 'estado': m.estado}
             for m in proximas_qs
         ]
-        planes_act  = MantencionProgramada.objects.filter(vehiculo__flota__empresa=empresa, estado='activa')
+        planes_act  = MantencionProgramada.objects.filter(vehiculo__empresa=empresa, estado='activa')
         pred_al_dia   = planes_act.filter(fecha_siguiente__gt=hoy).count()
         pred_vencidas = planes_act.filter(fecha_siguiente__lte=hoy).count()
         pred_total    = pred_al_dia + pred_vencidas
@@ -803,13 +791,11 @@ def empresas_lista(request):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
     # Subconsultas para evitar el producto cartesiano en los COUNT
-    sq_flotas = Flota.objects.filter(empresa=OuterRef('pk')).values('empresa').annotate(cnt=Count('id')).values('cnt')
-    sq_vehiculos = Vehiculo.objects.filter(flota__empresa=OuterRef('pk')).values('flota__empresa').annotate(cnt=Count('id')).values('cnt')
+    sq_vehiculos = Vehiculo.objects.filter(empresa=OuterRef('pk')).values('empresa').annotate(cnt=Count('id')).values('cnt')
     sq_conductores = Usuario.objects.filter(empresa=OuterRef('pk'), rol=Rol.CONDUCTOR).values('empresa').annotate(cnt=Count('id')).values('cnt')
     sq_actividad = Usuario.objects.filter(empresa=OuterRef('pk')).values('empresa').annotate(last_login=Max('last_login')).values('last_login')
 
     empresas = Empresa.objects.annotate(
-        cantidad_flotas=Coalesce(Subquery(sq_flotas, output_field=IntegerField()), 0),
         cantidad_vehiculos=Coalesce(Subquery(sq_vehiculos, output_field=IntegerField()), 0),
         cantidad_conductores=Coalesce(Subquery(sq_conductores, output_field=IntegerField()), 0),
         ultima_actividad=Subquery(sq_actividad)
@@ -868,11 +854,10 @@ def empresas_detalle(request, pk):
     if request.method == 'GET':
 
         # Respuesta extendida para SUPERADMIN
-        cantidad_flotas = Flota.objects.filter(empresa=empresa).count()
-        cantidad_vehiculos = Vehiculo.objects.filter(flota__empresa=empresa).count()
+        cantidad_vehiculos = Vehiculo.objects.filter(empresa=empresa).count()
         cantidad_conductores = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR).count()
-        cantidad_mantenciones = Mantencion.objects.filter(vehiculo__flota__empresa=empresa).count()
-        cantidad_documentos = Documento.objects.filter(entidad='vehiculo', vehiculo__flota__empresa=empresa).count()
+        cantidad_mantenciones = Mantencion.objects.filter(vehiculo__empresa=empresa).count()
+        cantidad_documentos = Documento.objects.filter(entidad='vehiculo', vehiculo__empresa=empresa).count()
 
         usuarios = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO).order_by('email')
         usuarios_data = UsuarioListSerializer(usuarios, many=True).data
@@ -887,7 +872,6 @@ def empresas_detalle(request, pk):
         data = {
             "informacion": EmpresaSerializer(empresa).data,
             "estadisticas": {
-                "flotas": cantidad_flotas,
                 "vehiculos": cantidad_vehiculos,
                 "conductores": cantidad_conductores,
                 "mantenciones": cantidad_mantenciones,
@@ -1360,7 +1344,7 @@ def conductores_asignar(request, pk):
     try:
         empresa   = get_empresa(request)
         conductor = Usuario.objects.get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
-        vehiculo  = Vehiculo.objects.get(pk=request.data.get('vehiculo_id'), flota__empresa=empresa)
+        vehiculo  = Vehiculo.objects.get(pk=request.data.get('vehiculo_id'), empresa=empresa)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
     except (Usuario.DoesNotExist, Vehiculo.DoesNotExist):
@@ -1425,126 +1409,6 @@ def conductores_desasignar(request, pk):
 
 
 # ─────────────────────────────────────────
-# Flotas — vista global SUPERADMIN
-# ─────────────────────────────────────────
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def admin_flotas_lista(request):
-    if not es_superadmin(request.user):
-        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-
-    flotas = list(
-        Flota.objects.select_related('empresa')
-        .prefetch_related('vehiculos')
-        .order_by('empresa__nombre', 'nombre')
-    )
-
-    # Un admin (rol USUARIO) por empresa, pre-cargado
-    empresa_ids = {f.empresa_id for f in flotas}
-    admins = {}
-    for emp_id in empresa_ids:
-        user = Usuario.objects.filter(empresa_id=emp_id, rol=Rol.USUARIO, is_active=True).first()
-        if user:
-            admins[emp_id] = {'nombre': user.nombre, 'email': user.email}
-
-    result = []
-    for f in flotas:
-        admin = admins.get(f.empresa_id)
-        vehiculos = list(f.vehiculos.all())
-        result.append({
-            'id':             f.id,
-            'nombre':         f.nombre,
-            'empresa_id':     f.empresa_id,
-            'empresa_nombre': f.empresa.nombre,
-            'admin_nombre':   admin['nombre'] if admin else None,
-            'admin_email':    admin['email']  if admin else None,
-            'total_vehiculos': sum(1 for v in vehiculos if v.activo),
-            'vehiculos':      VehiculoResumenSerializer(vehiculos, many=True).data,
-        })
-
-    return Response(result)
-
-
-# ─────────────────────────────────────────
-# Flotas
-# ─────────────────────────────────────────
-
-@api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
-def flotas_lista_crear(request):
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
-
-    if request.method == 'GET':
-        if not tiene_permiso(request.user, 'flotas.ver'):
-            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        flotas = Flota.objects.filter(empresa=empresa).select_related('empresa').prefetch_related('vehiculos').order_by('nombre')
-        return Response(FlotaSerializer(flotas, many=True, context={'empresa': empresa}).data)
-
-    if not tiene_permiso(request.user, 'flotas.crear'):
-        return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-
-    puede, error_resp, _, _, _ = verificar_limite_plan(empresa, 'flotas')
-    if not puede:
-        return error_resp
-
-    serializer = FlotaSerializer(data=request.data, context={'empresa': empresa})
-    if serializer.is_valid():
-        flota = serializer.save(empresa=empresa)
-        registrar_log('ACTIVIDAD', 'flota_creada', request, detalle={
-            'nombre': flota.nombre, 'empresa': empresa.nombre,
-        })
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['GET', 'PUT', 'DELETE'])
-@permission_classes([IsAuthenticated])
-def flotas_detalle(request, pk):
-    try:
-        empresa = get_empresa(request)
-        flota   = Flota.objects.prefetch_related('vehiculos').get(pk=pk, empresa=empresa)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
-    except Flota.DoesNotExist:
-        return Response({"error": "Flota no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-    if request.method == 'GET':
-        if not tiene_permiso(request.user, 'flotas.ver'):
-            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        return Response(FlotaSerializer(flota, context={'empresa': empresa}).data)
-
-    if request.method == 'PUT':
-        if not tiene_permiso(request.user, 'flotas.editar'):
-            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        serializer = FlotaSerializer(flota, data=request.data, partial=True, context={'empresa': empresa})
-        if serializer.is_valid():
-            _antes = _snap(flota, ['nombre', 'descripcion'])
-            serializer.save()
-            flota.refresh_from_db()
-            _despues = _snap(flota, ['nombre', 'descripcion'])
-            registrar_log('ACTIVIDAD', 'flota_editada', request, detalle={
-                'nombre':   flota.nombre,
-                'flota_id': pk,
-                'cambios':  _diff_campos(_antes, _despues),
-            })
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    if request.method == 'DELETE':
-        if not tiene_permiso(request.user, 'flotas.eliminar'):
-            return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        registrar_log('ACTIVIDAD', 'flota_eliminada', request, detalle={
-            'nombre': flota.nombre, 'flota_id': pk,
-        })
-        flota.delete()
-        return Response({"message": "Flota eliminada."})
-
-
-# ─────────────────────────────────────────
 # Vehículos
 # ─────────────────────────────────────────
 
@@ -1560,8 +1424,8 @@ def vehiculos_lista_crear(request):
         if not tiene_permiso(request.user, 'vehiculos.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         vehiculos = Vehiculo.objects.filter(
-            flota__empresa=empresa
-        ).select_related('flota').prefetch_related(
+            empresa=empresa
+        ).prefetch_related(
             'asignaciones__conductor'
         ).order_by('patente')
         return Response(VehiculoSerializer(vehiculos, many=True, context={'empresa': empresa}).data)
@@ -1575,7 +1439,7 @@ def vehiculos_lista_crear(request):
 
     serializer = VehiculoSerializer(data=request.data, context={'empresa': empresa})
     if serializer.is_valid():
-        vehiculo = serializer.save()
+        vehiculo = serializer.save(empresa=empresa)
         registrar_log('ACTIVIDAD', 'vehiculo_creado', request, detalle={
             'patente': vehiculo.patente,
             'marca':   vehiculo.marca or '',
@@ -1590,7 +1454,7 @@ def vehiculos_lista_crear(request):
 def vehiculos_detalle(request, pk):
     try:
         empresa  = get_empresa(request)
-        vehiculo = Vehiculo.objects.select_related('flota').get(pk=pk, flota__empresa=empresa)
+        vehiculo = Vehiculo.objects.get(pk=pk, empresa=empresa)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
     except Vehiculo.DoesNotExist:
@@ -1749,7 +1613,7 @@ def mantenciones_lista_crear(request):
         
         vehiculo_id  = request.query_params.get('vehiculo_id')
         estado_param = request.query_params.get('estado')
-        qs = Mantencion.objects.filter(vehiculo__flota__empresa=empresa).select_related('vehiculo')
+        qs = Mantencion.objects.filter(vehiculo__empresa=empresa).select_related('vehiculo')
 
         if vehiculo_id:
             qs = qs.filter(vehiculo_id=vehiculo_id)
@@ -1766,7 +1630,7 @@ def mantenciones_lista_crear(request):
     fecha_programada = request.data.get('fecha_programada')
 
     # Vehículo válido y activo
-    vehiculo = Vehiculo.objects.filter(pk=vehiculo_id, flota__empresa=empresa).first()
+    vehiculo = Vehiculo.objects.filter(pk=vehiculo_id, empresa=empresa).first()
     if not vehiculo:
         return Response({"error": "Vehículo no válido."}, status=status.HTTP_400_BAD_REQUEST)
     if not vehiculo.activo:
@@ -1789,10 +1653,10 @@ def mantenciones_lista_crear(request):
         return Response({"error": "Este vehículo ya tiene una mantención programada para esa fecha."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Límite de flota: no más del 50 % de vehículos activos en mantenimiento simultáneamente
-    total_activos = Vehiculo.objects.filter(flota__empresa=empresa, activo=True).count()
+    total_activos = Vehiculo.objects.filter(empresa=empresa, activo=True).count()
     if total_activos > 0:
         en_mantencion = Mantencion.objects.filter(
-            vehiculo__flota__empresa=empresa,
+            vehiculo__empresa=empresa,
             estado__in=['pendiente', 'en_proceso']
         ).values('vehiculo_id').distinct().count()
         if en_mantencion / total_activos >= 0.50:
@@ -1830,7 +1694,7 @@ def mantenciones_lista_crear(request):
 def mantenciones_detalle(request, pk):
     try:
         empresa = get_empresa(request)
-        mantencion = Mantencion.objects.select_related('vehiculo').get(pk=pk, vehiculo__flota__empresa=empresa)
+        mantencion = Mantencion.objects.select_related('vehiculo').get(pk=pk, vehiculo__empresa=empresa)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
     except Mantencion.DoesNotExist:
@@ -1966,28 +1830,28 @@ def mantenciones_resumen(request):
     inicio_mes = hoy.replace(day=1)
     
     costo_mes = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         estado='realizada',
         fecha_realizada__gte=inicio_mes
     ).aggregate(total=Sum('costo'))['total'] or 0
 
     costo_total = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         estado='realizada'
     ).aggregate(total=Sum('costo'))['total'] or 0
     
     pendientes = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         estado='pendiente'
     ).count()
 
     en_proceso = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         estado='en_proceso'
     ).count()
 
     realizadas = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         estado='realizada'
     ).count()
 
@@ -2013,7 +1877,7 @@ def mantenciones_sugerencias(request):
     # Tipos desde historial de mantenciones de la empresa
     tipos_historial = list(
         Mantencion.objects
-        .filter(vehiculo__flota__empresa=empresa)
+        .filter(vehiculo__empresa=empresa)
         .exclude(tipo_mantencion='')
         .values_list('tipo_mantencion', flat=True)
         .distinct()
@@ -2023,7 +1887,7 @@ def mantenciones_sugerencias(request):
     # Tipos y presupuestos desde reglas de planes activos de la empresa
     from .models import ReglaMantenimiento, VehiculoPlan
     reglas_qs = ReglaMantenimiento.objects.filter(
-        plan__vehiculos_asignados__vehiculo__flota__empresa=empresa
+        plan__vehiculos_asignados__vehiculo__empresa=empresa
     ).distinct()
     if vehiculo_id:
         reglas_qs = ReglaMantenimiento.objects.filter(
@@ -2044,7 +1908,7 @@ def mantenciones_sugerencias(request):
     # Talleres desde historial
     talleres = list(
         Mantencion.objects
-        .filter(vehiculo__flota__empresa=empresa)
+        .filter(vehiculo__empresa=empresa)
         .exclude(taller_proveedor='')
         .values_list('taller_proveedor', flat=True)
         .distinct()
@@ -2073,7 +1937,7 @@ def mantenciones_calendario(request):
     month = request.query_params.get('month', timezone.now().date().month)
 
     qs = Mantencion.objects.filter(
-        vehiculo__flota__empresa=empresa,
+        vehiculo__empresa=empresa,
         fecha_programada__year=year,
         fecha_programada__month=month,
     ).exclude(estado='cancelada').select_related('vehiculo').order_by('fecha_programada')
@@ -2152,7 +2016,7 @@ class AlertaMantencionViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             empresa = get_empresa(self.request)
             qs = AlertaMantencion.objects.filter(
-                mantencion_programada__vehiculo__flota__empresa=empresa
+                mantencion_programada__vehiculo__empresa=empresa
             ).select_related('mantencion_programada__vehiculo', 'mantencion_programada__regla')
 
             estado = self.request.query_params.get('estado')
@@ -2232,7 +2096,7 @@ def simulador_vencimientos(request):
         return Response({"error": "vehiculo_id es requerido."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        vehiculo = Vehiculo.objects.get(id=vehiculo_id, flota__empresa=empresa)
+        vehiculo = Vehiculo.objects.get(id=vehiculo_id, empresa=empresa)
     except Vehiculo.DoesNotExist:
         return Response({"error": "Vehículo no encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -2281,7 +2145,7 @@ def vehiculo_planes_lista_crear(request):
 
     if request.method == 'GET':
         qs = VehiculoPlan.objects.filter(
-            vehiculo__flota__empresa=empresa
+            vehiculo__empresa=empresa
         ).select_related('vehiculo', 'plan')
         return Response(VehiculoPlanSerializer(qs, many=True).data)
 
@@ -2294,7 +2158,7 @@ def vehiculo_planes_lista_crear(request):
         return Response({'error': 'vehiculo_id y plan_id son requeridos.'}, status=400)
 
     try:
-        vehiculo = Vehiculo.objects.get(id=vehiculo_id, flota__empresa=empresa)
+        vehiculo = Vehiculo.objects.get(id=vehiculo_id, empresa=empresa)
     except Vehiculo.DoesNotExist:
         return Response({'error': 'Vehículo no encontrado.'}, status=404)
     try:
@@ -2318,7 +2182,7 @@ def vehiculo_plan_detalle(request, pk):
         return Response({'error': 'Sin permisos.'}, status=403)
     empresa = get_empresa(request)
     try:
-        asig = VehiculoPlan.objects.get(id=pk, vehiculo__flota__empresa=empresa)
+        asig = VehiculoPlan.objects.get(id=pk, vehiculo__empresa=empresa)
     except VehiculoPlan.DoesNotExist:
         return Response({'error': 'Asignación no encontrada.'}, status=404)
     asig.delete()
@@ -2336,7 +2200,7 @@ def predictivo_resumen(request):
         return Response({'error': 'Empresa no encontrada.'}, status=400)
 
     alertas_qs = AlertaMantencion.objects.filter(
-        mantencion_programada__vehiculo__flota__empresa=empresa
+        mantencion_programada__vehiculo__empresa=empresa
     )
     pendientes    = alertas_qs.filter(atendida=False)
     inicio_mes    = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -2349,7 +2213,7 @@ def predictivo_resumen(request):
         'vehiculos_con_alerta': pendientes.values('mantencion_programada__vehiculo_id').distinct().count(),
         'planes_activos':      PlanMantenimiento.objects.filter(empresa=empresa, activo=True).count(),
         'vehiculos_asignados': VehiculoPlan.objects.filter(
-            vehiculo__flota__empresa=empresa
+            vehiculo__empresa=empresa
         ).values('vehiculo_id').distinct().count(),
     })
 
@@ -2364,7 +2228,7 @@ def predictivo_generar_alertas(request):
     hoy = timezone.now().date()
     filtro = {'vehiculo__activo': True, 'plan__activo': True}
     if empresa:
-        filtro['vehiculo__flota__empresa'] = empresa
+        filtro['vehiculo__empresa'] = empresa
 
     vps = VehiculoPlan.objects.filter(**filtro).select_related(
         'vehiculo', 'plan'
@@ -2418,7 +2282,7 @@ def predictivo_generar_alertas(request):
                 
                 tipo_amigable = TIPOS_MANTENCION_MAP.get(prog.regla.tipo, prog.regla.tipo)
                 notificar_admins_empresa(
-                    prog.vehiculo.flota.empresa, tipo_notif,
+                    prog.vehiculo.empresa, tipo_notif,
                     f"Mantención {nivel.replace('_',' ')}: {prog.vehiculo.patente}",
                     f"El vehículo {prog.vehiculo.patente} requiere '{tipo_amigable}'. Días restantes: {dias_restantes}.",
                     url_accion='/empresa/predictivo',

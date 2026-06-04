@@ -15,10 +15,14 @@ class TeltonikaAdapter(IGPSProvider):
 
     Protocolo: CODEC8 sobre TCP.
 
+    NOTA: en producción el sistema usa Traccar como gateway, que ya recibe a los
+    Teltonika de forma nativa. Este adaptador (servidor TCP propio) es una
+    alternativa para no depender de Traccar; normalmente NO hace falta implementarlo.
+
     Configuración del dispositivo físico (se hace UNA sola vez con el software
     Teltonika Configurator):
-      - Server IP:   la IP pública del servidor Django.
-      - Server Port: el puerto configurado en ConfiguracionGPS (default 5000).
+      - Server IP:   la IP pública del servidor (donde corre Traccar).
+      - Server Port: el puerto del protocolo Teltonika en Traccar (rango 5000-5150).
       - Protocol:    TCP.
       - APN:         según operador (Entel: 'bam.entelpcs.cl',
                      Movistar: 'web.movistar.cl').
@@ -33,13 +37,12 @@ class TeltonikaAdapter(IGPSProvider):
             Preamble(4 = 0x00000000) + DataLength(4) + CodecID(1) +
             RecordCount(1) + Records(...) + RecordCount(1) + CRC16(4)
 
-    Para activar cuando llegue el hardware:
+    Para activar cuando llegue el hardware (solo si NO se usa Traccar):
       1. Implementar un servidor TCP (p. ej. en `gps_tcp_server.py`) que escuche
-         en `ConfiguracionGPS.servidor_puerto`, haga el handshake del IMEI y
-         vaya leyendo paquetes CODEC8.
+         en un puerto propio, haga el handshake del IMEI y vaya leyendo paquetes
+         CODEC8.
       2. Completar `parse_raw()` con el parser CODEC8 (ver TODO abajo).
-      3. Registrar este adaptador asociándolo al modelo
-         'teltonika_fmb920' / 'teltonika_fmc125'.
+      3. Registrar este adaptador asociándolo a la marca 'teltonika'.
       4. Por cada record decodificado, hacer POST a
          /api/empresa/gps/posicion/ con { imei, latitud, longitud, velocidad },
          exactamente igual que el emulador.

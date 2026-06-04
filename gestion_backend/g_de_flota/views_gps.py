@@ -14,7 +14,6 @@ Endpoints:
     POST            /api/empresa/gps/dispositivos/<id>/desasignar/
     POST            /api/empresa/gps/posicion/              (sin JWT — ingesta)
     GET             /api/empresa/gps/vehiculos/posicion/
-    GET/PUT         /api/empresa/gps/configuracion/
 """
 import secrets
 
@@ -25,7 +24,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from .models import (
     Empresa, Vehiculo, Ubicacion, Rol,
-    DispositivoGPS, ConfiguracionGPS,
+    DispositivoGPS,
 )
 from .error_helpers import error_response
 from .audit import registrar_log
@@ -69,6 +68,32 @@ def _tiene_permiso(user, codigo):
     return plan.permisos.filter(codigo=codigo).exists()
 
 
+def _modelo_display(d):
+    """Texto visible del modelo: el nombre libre si la marca es 'otro'."""
+    if d.modelo == 'otro' and d.modelo_otro:
+        return d.modelo_otro
+    return d.get_modelo_display()
+
+
+# Longitud del nombre libre del modelo cuando la marca es 'otro'.
+MODELO_OTRO_MIN, MODELO_OTRO_MAX = 2, 50
+
+
+def _validar_modelo_otro(modelo, modelo_otro):
+    """Normaliza y valida el nombre libre del modelo.
+
+    Devuelve (valor_normalizado, error). Solo se exige cuando la marca es 'otro';
+    para las marcas conocidas el nombre libre se descarta (queda vacío).
+    """
+    modelo_otro = (modelo_otro or '').strip()
+    if modelo == 'otro':
+        if not (MODELO_OTRO_MIN <= len(modelo_otro) <= MODELO_OTRO_MAX):
+            return None, (f'El nombre del modelo debe tener entre {MODELO_OTRO_MIN} '
+                          f'y {MODELO_OTRO_MAX} caracteres.')
+        return modelo_otro, None
+    return '', None
+
+
 def _serializar_dispositivo(d):
     """Dict de un DispositivoGPS para las respuestas de lista/detalle."""
     veh = d.vehiculo
@@ -76,7 +101,8 @@ def _serializar_dispositivo(d):
         'id':               d.id,
         'imei':             d.imei,
         'modelo':           d.modelo,
-        'modelo_display':   d.get_modelo_display(),
+        'modelo_otro':      d.modelo_otro,
+        'modelo_display':   _modelo_display(d),
         'activo':           d.activo,
         'vehiculo_id':      veh.id if veh else None,
         'vehiculo_patente': veh.patente if veh else None,
@@ -164,10 +190,15 @@ class DispositivosListView(APIView):
         if modelo not in modelos_validos:
             return error_response('Modelo de dispositivo no válido.', 'VALIDACION', 400)
 
+        modelo_otro, err = _validar_modelo_otro(modelo, request.data.get('modelo_otro'))
+        if err:
+            return error_response(err, 'VALIDACION', 400)
+
         dispositivo = DispositivoGPS.objects.create(
             empresa=empresa,
             imei=imei,
             modelo=modelo,
+            modelo_otro=modelo_otro,
             activo=bool(activo),
             api_key=secrets.token_urlsafe(32),   # secreto de ingesta, generado por el sistema
         )
@@ -238,9 +269,17 @@ class DispositivoDetailView(APIView):
             modelos_validos = [m[0] for m in DispositivoGPS.MODELOS]
             if nuevo_modelo not in modelos_validos:
                 return error_response('Modelo de dispositivo no válido.', 'VALIDACION', 400)
+            # Nombre libre asociado: se exige solo si la marca es 'otro'; en otro
+            # caso queda vacío aunque el cliente lo haya enviado.
+            nuevo_otro, err = _validar_modelo_otro(nuevo_modelo, request.data.get('modelo_otro'))
+            if err:
+                return error_response(err, 'VALIDACION', 400)
             if nuevo_modelo != dispositivo.modelo:
                 cambios.append('modelo')
                 dispositivo.modelo = nuevo_modelo
+            if nuevo_otro != dispositivo.modelo_otro:
+                cambios.append('modelo_otro')
+                dispositivo.modelo_otro = nuevo_otro
 
         if 'activo' in request.data:
             nuevo_activo = bool(request.data.get('activo'))
@@ -306,7 +345,7 @@ class AsignarVehiculoView(APIView):
         if not vehiculo_id:
             return error_response('vehiculo_id es obligatorio.', 'VALIDACION', 400)
 
-        vehiculo = Vehiculo.objects.filter(pk=vehiculo_id, flota__empresa=empresa).first()
+        vehiculo = Vehiculo.objects.filter(pk=vehiculo_id, empresa=empresa).first()
         if not vehiculo:
             return error_response('Vehículo no encontrado en esta empresa.', 'NO_ENCONTRADO', 404)
 
@@ -399,13 +438,22 @@ def _registrar_posicion(dispositivo, lat, lng, vel):
         longitud=lng,
         velocidad=vel,
     )
+    # Conductor asignado (para que el mapa muestre el nombre aunque el marcador
+    # se cree directamente desde el WebSocket, sin pasar por la carga REST).
+    asig = (
+        dispositivo.vehiculo.asignaciones
+        .filter(activo=True).select_related('conductor').first()
+    )
+    conductor = asig.conductor if asig and asig.conductor else None
     _broadcast_posicion(dispositivo.empresa_id, {
-        'vehiculo_id': dispositivo.vehiculo_id,
-        'patente':     dispositivo.vehiculo.patente,
-        'latitud':     lat,
-        'longitud':    lng,
-        'velocidad':   vel,
-        'timestamp':   ubicacion.timestamp.isoformat(),
+        'vehiculo_id':      dispositivo.vehiculo_id,
+        'patente':          dispositivo.vehiculo.patente,
+        'latitud':          lat,
+        'longitud':         lng,
+        'velocidad':        vel,
+        'timestamp':        ubicacion.timestamp.isoformat(),
+        'tiene_conductor':  conductor is not None,
+        'conductor_nombre': conductor.nombre if conductor else None,
     })
     return ubicacion
 
@@ -527,7 +575,7 @@ class UltimasPosicionesView(APIView):
         dispositivos = (
             DispositivoGPS.objects
             .filter(empresa=empresa, activo=True, vehiculo__isnull=False)
-            .select_related('vehiculo', 'vehiculo__flota')
+            .select_related('vehiculo', 'vehiculo__empresa')
         )
 
         vehiculos = []
@@ -556,7 +604,6 @@ class UltimasPosicionesView(APIView):
                 'patente':          veh.patente,
                 'marca':            veh.marca,
                 'modelo':           veh.modelo,
-                'flota':            veh.flota.nombre if veh.flota else None,
                 'latitud':          ult.latitud,
                 'longitud':         ult.longitud,
                 'velocidad':        round(ult.velocidad or 0, 1),
@@ -575,64 +622,3 @@ class UltimasPosicionesView(APIView):
         vehiculos.sort(key=lambda v: orden.get(v['estado'], 3))
 
         return Response({'vehiculos': vehiculos})
-
-
-# ── Configuración del servidor GPS ────────────────────────────────────────────
-
-class ConfiguracionGPSView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        empresa = _get_empresa(request)
-        if not empresa:
-            return error_response('Empresa no identificada.', 'VALIDACION', 400)
-        if not _tiene_permiso(request.user, 'gps.ver'):
-            return error_response('Sin permiso para ver GPS.', 'SIN_PERMISO', 403)
-
-        config, _ = ConfiguracionGPS.objects.get_or_create(empresa=empresa)
-        return Response({
-            'servidor_ip':     config.servidor_ip,
-            'servidor_puerto': config.servidor_puerto,
-            'protocolo':       config.protocolo,
-            'activo':          config.activo,
-        })
-
-    def put(self, request):
-        empresa = _get_empresa(request)
-        if not empresa:
-            return error_response('Empresa no identificada.', 'VALIDACION', 400)
-        if not _tiene_permiso(request.user, 'gps.gestionar'):
-            return error_response('Sin permiso para gestionar GPS.', 'SIN_PERMISO', 403)
-
-        config, _ = ConfiguracionGPS.objects.get_or_create(empresa=empresa)
-
-        if 'servidor_ip' in request.data:
-            config.servidor_ip = (request.data.get('servidor_ip') or '').strip()
-        if 'servidor_puerto' in request.data:
-            try:
-                puerto = int(request.data.get('servidor_puerto'))
-            except (TypeError, ValueError):
-                return error_response('Puerto inválido.', 'VALIDACION', 400)
-            if not (1 <= puerto <= 65535):
-                return error_response('El puerto debe estar entre 1 y 65535.', 'VALIDACION', 400)
-            config.servidor_puerto = puerto
-        if 'protocolo' in request.data:
-            protocolo = request.data.get('protocolo')
-            if protocolo not in ('tcp', 'udp'):
-                return error_response('Protocolo inválido (tcp/udp).', 'VALIDACION', 400)
-            config.protocolo = protocolo
-        if 'activo' in request.data:
-            config.activo = bool(request.data.get('activo'))
-
-        config.save()
-        registrar_log('ACTIVIDAD', 'gps_config_guardada', request, detalle={
-            'servidor_ip': config.servidor_ip,
-            'servidor_puerto': config.servidor_puerto,
-            'protocolo': config.protocolo,
-        })
-        return Response({
-            'servidor_ip':     config.servidor_ip,
-            'servidor_puerto': config.servidor_puerto,
-            'protocolo':       config.protocolo,
-            'activo':          config.activo,
-        })

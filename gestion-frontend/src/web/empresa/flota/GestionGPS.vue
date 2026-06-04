@@ -9,7 +9,6 @@ import SelectorEmpresa from '../../../components/SelectorEmpresa.vue'
 const { ruta } = useEmpresaNav()
 
 // ── Estado general ────────────────────────────────────────────────────────────
-const tab        = ref('dispositivos')   // 'dispositivos' | 'configuracion'
 const cargando   = ref(true)
 const dispositivos = ref([])
 const vehiculos    = ref([])
@@ -25,13 +24,16 @@ const empresaActiva = ref(getEmpresaActiva())
 const sinEmpresa = computed(() => esSuperadmin.value && !empresaActiva.value)
 
 const MODELOS = [
-  { value: 'emulador',         label: 'Emulador NMEA' },
-  { value: 'teltonika_fmb920', label: 'Teltonika FMB920' },
-  { value: 'teltonika_fmc125', label: 'Teltonika FMC125' },
-  { value: 'queclink_gl300',   label: 'Queclink GL300' },
-  { value: 'coban_tk103',      label: 'Coban TK103' },
-  { value: 'otro',             label: 'Otro' },
+  { value: 'emulador',  label: 'Emulador NMEA' },
+  { value: 'teltonika', label: 'Teltonika' },
+  { value: 'queclink',  label: 'Queclink' },
+  { value: 'coban',     label: 'Coban' },
+  { value: 'otro',      label: 'Otro' },
 ]
+
+// Longitud del nombre libre del modelo cuando se elige la marca "Otro".
+const MODELO_OTRO_MIN = 2
+const MODELO_OTRO_MAX = 50
 
 function toast(tipo, mensaje) {
   window.dispatchEvent(new CustomEvent('app-toast', { detail: { tipo, mensaje } }))
@@ -55,23 +57,9 @@ async function cargarVehiculos() {
   } catch { /* noop */ }
 }
 
-async function cargarConfiguracion() {
-  try {
-    const res = await apiFetch('/api/empresa/gps/configuracion/')
-    if (res.ok) {
-      const data = await res.json()
-      config.value = {
-        servidor_ip:     data.servidor_ip || '',
-        servidor_puerto: data.servidor_puerto ?? 5000,
-        protocolo:       data.protocolo || 'tcp',
-      }
-    }
-  } catch { /* noop */ }
-}
-
 async function cargarTodo() {
   cargando.value = true
-  await Promise.all([cargarDispositivos(), cargarVehiculos(), cargarConfiguracion()])
+  await Promise.all([cargarDispositivos(), cargarVehiculos()])
   cargando.value = false
 }
 
@@ -94,18 +82,18 @@ onMounted(async () => {
 // ── Modal alta / edición ──────────────────────────────────────────────────────
 const modalForm   = ref(false)
 const editandoId  = ref(null)
-const form        = ref({ imei: '', modelo: 'emulador', activo: true })
+const form        = ref({ imei: '', modelo: 'emulador', modelo_otro: '', activo: true })
 const guardando   = ref(false)
 
 function abrirCrear() {
   editandoId.value = null
-  form.value = { imei: '', modelo: 'emulador', activo: true }
+  form.value = { imei: '', modelo: 'emulador', modelo_otro: '', activo: true }
   modalForm.value = true
 }
 
 function abrirEditar(d) {
   editandoId.value = d.id
-  form.value = { imei: d.imei, modelo: d.modelo, activo: d.activo }
+  form.value = { imei: d.imei, modelo: d.modelo, modelo_otro: d.modelo_otro || '', activo: d.activo }
   modalForm.value = true
 }
 
@@ -115,13 +103,20 @@ async function guardar() {
     toast('error', 'El IMEI debe tener entre 10 y 20 caracteres.')
     return
   }
+  // Cuando la marca es "Otro" hay que anotar el nombre del modelo.
+  const modeloOtro = (form.value.modelo_otro || '').trim()
+  if (form.value.modelo === 'otro' &&
+      (modeloOtro.length < MODELO_OTRO_MIN || modeloOtro.length > MODELO_OTRO_MAX)) {
+    toast('error', `El nombre del modelo debe tener entre ${MODELO_OTRO_MIN} y ${MODELO_OTRO_MAX} caracteres.`)
+    return
+  }
   guardando.value = true
   try {
     const url    = editandoId.value
       ? `/api/empresa/gps/dispositivos/${editandoId.value}/`
       : '/api/empresa/gps/dispositivos/'
     const method = editandoId.value ? 'PUT' : 'POST'
-    const res = await apiFetch(url, { method, body: { ...form.value, imei } })
+    const res = await apiFetch(url, { method, body: { ...form.value, imei, modelo_otro: modeloOtro } })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       toast('error', err.error || 'No se pudo guardar el dispositivo.')
@@ -287,29 +282,6 @@ async function desasignar() {
   }
 }
 
-// ── Configuración del servidor ────────────────────────────────────────────────
-const config        = ref({ servidor_ip: '', servidor_puerto: 5000, protocolo: 'tcp' })
-const guardandoConfig = ref(false)
-
-async function guardarConfig() {
-  guardandoConfig.value = true
-  try {
-    const res = await apiFetch('/api/empresa/gps/configuracion/', {
-      method: 'PUT',
-      body: { ...config.value, servidor_puerto: Number(config.value.servidor_puerto) },
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      toast('error', err.error || 'No se pudo guardar la configuración.')
-      return
-    }
-    toast('exito', 'Configuración guardada.')
-  } catch {
-    toast('error', 'Error de conexión al guardar.')
-  } finally {
-    guardandoConfig.value = false
-  }
-}
 </script>
 
 <template>
@@ -319,7 +291,7 @@ async function guardarConfig() {
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-800">Gestión GPS</h1>
-        <p class="text-sm text-gray-500">Dispositivos de rastreo y configuración del servidor.</p>
+        <p class="text-sm text-gray-500">Dispositivos de rastreo de la flota.</p>
       </div>
       <div class="flex items-center gap-2">
         <router-link
@@ -329,7 +301,7 @@ async function guardarConfig() {
           Ver mapa de flota
         </router-link>
         <button
-          v-if="puedeGestionar && tab === 'dispositivos' && !sinEmpresa"
+          v-if="puedeGestionar && !sinEmpresa"
           @click="abrirCrear"
           class="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition"
         >
@@ -347,27 +319,13 @@ async function guardarConfig() {
     </div>
 
     <template v-else>
-    <!-- Tabs -->
-    <div class="flex gap-1 mb-5 border-b border-gray-200">
-      <button
-        @click="tab = 'dispositivos'"
-        :class="['px-4 py-2 text-sm font-medium -mb-px border-b-2 transition',
-                 tab === 'dispositivos' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700']"
-      >Dispositivos</button>
-      <button
-        @click="tab = 'configuracion'"
-        :class="['px-4 py-2 text-sm font-medium -mb-px border-b-2 transition',
-                 tab === 'configuracion' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700']"
-      >Configuración servidor</button>
-    </div>
-
     <!-- Skeleton -->
     <div v-if="cargando" class="space-y-3">
       <div v-for="i in 3" :key="i" class="h-14 bg-gray-100 rounded-lg animate-pulse"></div>
     </div>
 
-    <!-- Tab Dispositivos -->
-    <div v-else-if="tab === 'dispositivos'">
+    <!-- Lista de dispositivos -->
+    <div v-else>
       <div v-if="!dispositivos.length" class="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
         <p class="text-gray-500 mb-4">No hay dispositivos GPS registrados.</p>
         <button
@@ -427,39 +385,6 @@ async function guardarConfig() {
       </div>
     </div>
 
-    <!-- Tab Configuración -->
-    <div v-else class="max-w-lg bg-white rounded-xl border border-gray-100 shadow-sm p-6">
-      <p class="text-sm text-gray-500 mb-5">
-        Esta IP y puerto deben configurarse en el dispositivo GPS físico. Durante el
-        desarrollo con el emulador no es necesario.
-      </p>
-
-      <label class="block text-sm font-semibold text-gray-700 mb-1">IP del servidor</label>
-      <input v-model="config.servidor_ip" type="text" placeholder="190.20.30.40"
-        :disabled="!puedeGestionar"
-        class="w-full mb-4 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none disabled:bg-gray-50"/>
-
-      <label class="block text-sm font-semibold text-gray-700 mb-1">Puerto</label>
-      <input v-model="config.servidor_puerto" type="number" min="1" max="65535"
-        :disabled="!puedeGestionar"
-        class="w-full mb-4 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none disabled:bg-gray-50"/>
-
-      <label class="block text-sm font-semibold text-gray-700 mb-2">Protocolo</label>
-      <div class="flex gap-4 mb-6">
-        <label class="flex items-center gap-2 text-sm text-gray-700">
-          <input type="radio" value="tcp" v-model="config.protocolo" :disabled="!puedeGestionar"/> TCP
-        </label>
-        <label class="flex items-center gap-2 text-sm text-gray-700">
-          <input type="radio" value="udp" v-model="config.protocolo" :disabled="!puedeGestionar"/> UDP
-        </label>
-      </div>
-
-      <button v-if="puedeGestionar" @click="guardarConfig" :disabled="guardandoConfig"
-        class="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
-        {{ guardandoConfig ? 'Guardando...' : 'Guardar configuración' }}
-      </button>
-    </div>
-
     </template>
 
     <!-- Modal alta/edición -->
@@ -479,6 +404,17 @@ async function guardarConfig() {
           class="w-full mb-4 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none">
           <option v-for="m in MODELOS" :key="m.value" :value="m.value">{{ m.label }}</option>
         </select>
+
+        <!-- Nombre libre del modelo: solo cuando la marca es "Otro" -->
+        <template v-if="form.modelo === 'otro'">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">Nombre del modelo</label>
+          <input v-model="form.modelo_otro" type="text" :maxlength="MODELO_OTRO_MAX"
+            placeholder="Ej. Sinotrack ST-901"
+            class="w-full mb-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none"/>
+          <p class="text-xs text-gray-400 mb-4">
+            Entre {{ MODELO_OTRO_MIN }} y {{ MODELO_OTRO_MAX }} caracteres.
+          </p>
+        </template>
 
         <label class="flex items-center gap-2 text-sm text-gray-700 mb-6">
           <input type="checkbox" v-model="form.activo"/> Dispositivo activo

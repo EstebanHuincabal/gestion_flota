@@ -14,9 +14,24 @@ function getAccessToken() {
   return localStorage.getItem('access_token') || ''
 }
 
-async function refreshAccessToken() {
+// Refresh en curso compartido (single-flight): si varias peticiones reciben 401
+// a la vez, todas esperan UN solo refresh en vez de disparar varios en paralelo
+// (lo que con la rotación de tokens dejaría la sesión inconsistente).
+let _refreshPromise = null
+
+// Devuelve { ok, expired }:
+//   ok=true             → token renovado.
+//   ok=false expired=true  → el refresh token está vencido/es inválido → cerrar sesión.
+//   ok=false expired=false → fallo transitorio (red/servidor) → NO cerrar sesión.
+export function refreshAccessToken() {
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = _hacerRefresh().finally(() => { _refreshPromise = null })
+  return _refreshPromise
+}
+
+async function _hacerRefresh() {
   const refresh = localStorage.getItem('refresh_token')
-  if (!refresh) return false
+  if (!refresh) return { ok: false, expired: true }
   try {
     const res = await fetch('/api/token/refresh/', {
       method:  'POST',
@@ -27,10 +42,16 @@ async function refreshAccessToken() {
       const data = await res.json()
       localStorage.setItem('access_token', data.access)
       if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
-      return true
+      return { ok: true }
     }
-  } catch {}
-  return false
+    // 400/401 → el refresh token ya no sirve: la sesión realmente expiró.
+    if (res.status === 400 || res.status === 401) return { ok: false, expired: true }
+    // Otros (500, 502…) → problema del servidor, no de la sesión: no desloguear.
+    return { ok: false, expired: false }
+  } catch {
+    // Error de red (sin conexión, timeout…): no desloguear por un parpadeo.
+    return { ok: false, expired: false }
+  }
 }
 
 function limpiarSesion() {
@@ -76,14 +97,17 @@ export async function apiFetch(url, options = {}) {
 
     // Token expirado → intentar refresh y reintentar una vez
     if (response.status === 401 && !url.includes('/api/login/') && !url.includes('/api/token/')) {
-      const refreshed = await refreshAccessToken()
-      if (refreshed) {
+      const refresh = await refreshAccessToken()
+      if (refresh.ok) {
         headers['Authorization'] = `Bearer ${getAccessToken()}`
         response = await fetch(url, { ...options, headers })
-      } else {
+      } else if (refresh.expired) {
+        // El refresh token venció: la sesión terminó de verdad.
         limpiarSesion()
         return response
       }
+      // Fallo transitorio (red/servidor): se devuelve el 401 sin cerrar sesión;
+      // la próxima petición reintentará el refresh.
     }
 
     if (response.status === 402) {

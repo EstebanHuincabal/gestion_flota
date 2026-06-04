@@ -158,14 +158,14 @@ function iconoVehiculo(estado) {
   const color = colorEstado(estado)
   return window.L.divIcon({
     className: '',
-    html: `<svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
+    html: `<svg width="44" height="44" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
       <circle cx="15" cy="15" r="11" fill="${color}" stroke="white" stroke-width="3"/>
       <path d="M9 17a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM24 17a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" fill="white"/>
       <path d="M8 16v-3a1 1 0 011-1h7l3 2v2" stroke="white" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>`,
-    iconSize:    [30, 30],
-    iconAnchor:  [15, 15],
-    popupAnchor: [0, -16],
+    iconSize:    [44, 44],
+    iconAnchor:  [22, 22],
+    popupAnchor: [0, -24],
   })
 }
 
@@ -261,6 +261,8 @@ function conectarWS() {
         // estado inicial) y repintar el marcador.
         const idx = vehiculos.value.findIndex(v => v.vehiculo_id === msg.vehiculo_id)
         const estado = (msg.velocidad || 0) > 2 ? 'movimiento' : 'detenido'
+        // El broadcast incluye el conductor; se usa cuando viene definido.
+        const tieneConductor = 'tiene_conductor' in msg ? msg.tiene_conductor : undefined
         if (idx >= 0) {
           vehiculos.value[idx] = {
             ...vehiculos.value[idx],
@@ -269,6 +271,10 @@ function conectarWS() {
             velocidad: msg.velocidad,
             timestamp: msg.timestamp,
             estado,
+            // Refresca el conductor si el broadcast lo trae (asignación en vivo).
+            ...(tieneConductor !== undefined
+              ? { tiene_conductor: tieneConductor, conductor_nombre: msg.conductor_nombre }
+              : {}),
           }
           pintarMarcador(vehiculos.value[idx])
         } else {
@@ -280,8 +286,8 @@ function conectarWS() {
             longitud:    msg.longitud,
             velocidad:   msg.velocidad,
             timestamp:   msg.timestamp,
-            tiene_conductor: false,
-            conductor_nombre: null,
+            tiene_conductor:  tieneConductor ?? false,
+            conductor_nombre: msg.conductor_nombre ?? null,
             estado,
           }
           vehiculos.value.push(nuevo)

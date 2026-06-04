@@ -30,32 +30,19 @@ const form = ref({
   vehiculo_patente: '',
   vehiculo_marca: '',
   vehiculo_modelo: '',
-  vehiculo_flota_id: null,
-  vehiculo_flota_nuevo: ''
 })
 
 const asignarVehiculo = ref(false)
 const modoAsignacion = ref('existente') // 'existente' o 'nuevo'
-const flotas = ref([])
 const vehiculosLibres = ref([])
-const crearNuevaFlota = ref(false)
 
 onMounted(async () => {
   try {
-    const [resFlotas, resVehiculos] = await Promise.all([
-      apiFetchEmpresa('/api/empresa/flotas/'),
-      apiFetchEmpresa('/api/empresa/vehiculos/')
-    ])
-    if (resFlotas.ok) {
-        flotas.value = await resFlotas.json()
-        if (flotas.value.length === 0) {
-            crearNuevaFlota.value = true
-            form.value.vehiculo_flota_nuevo = "Flota Principal"
-        }
-    }
+    const resVehiculos = await apiFetchEmpresa('/api/empresa/vehiculos/')
     if (resVehiculos.ok) {
       const todos = await resVehiculos.json()
-      vehiculosLibres.value = todos.filter(v => v.activo) 
+      // Vehículos activos y sin conductor asignado (disponibles para asignar).
+      vehiculosLibres.value = todos.filter(v => v.activo && !v.conductor_asignado)
     }
   } catch (err) {
     console.error("Error cargando datos auxiliares", err)
@@ -154,15 +141,10 @@ const guardar = async () => {
     payload.crear_vehiculo = modoAsignacion.value === 'nuevo'
     if (payload.crear_vehiculo) {
         payload.vehiculo_id = null
-        if (!crearNuevaFlota.value) {
-            payload.vehiculo_flota_nuevo = ''
-        }
     } else {
       payload.vehiculo_patente = ''
       payload.vehiculo_marca = ''
       payload.vehiculo_modelo = ''
-      payload.vehiculo_flota_id = null
-      payload.vehiculo_flota_nuevo = ''
     }
   }
 
@@ -333,28 +315,10 @@ const guardar = async () => {
 
             <!-- MODO NUEVO -->
             <div v-if="modoAsignacion === 'nuevo'" class="tab-panel">
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="label">Patente</label>
-                  <input v-model="form.vehiculo_patente" type="text" class="input" maxlength="10" placeholder="ABCD12" :class="{ 'input-error': errores.vehiculo_patente }"/>
-                  <p v-if="errores.vehiculo_patente" class="field-error">{{ errores.vehiculo_patente[0] }}</p>
-                </div>
-                <div class="form-group">
-                  <label class="label">Flota</label>
-                  <div class="flex-col gap-1">
-                    <select v-if="!crearNuevaFlota" v-model="form.vehiculo_flota_id" class="input select" :class="{ 'input-error': errores.vehiculo_flota_id }">
-                        <option :value="null">-- Selecciona Flota --</option>
-                        <option v-for="f in flotas" :key="f.id" :value="f.id">{{ f.nombre }}</option>
-                    </select>
-                    <input v-else v-model="form.vehiculo_flota_nuevo" type="text" class="input" placeholder="Nombre de la nueva flota" :class="{ 'input-error': errores.vehiculo_flota_nuevo }"/>
-                    
-                    <button type="button" class="btn-link" @click="crearNuevaFlota = !crearNuevaFlota">
-                        {{ crearNuevaFlota ? (flotas.length > 0 ? 'Seleccionar flota existente' : '') : '+ Crear nueva flota' }}
-                    </button>
-                  </div>
-                  <p v-if="errores.vehiculo_flota_id" class="field-error">{{ errores.vehiculo_flota_id[0] }}</p>
-                  <p v-if="errores.vehiculo_flota_nuevo" class="field-error">{{ errores.vehiculo_flota_nuevo[0] }}</p>
-                </div>
+              <div class="form-group">
+                <label class="label">Patente</label>
+                <input v-model="form.vehiculo_patente" type="text" class="input" maxlength="10" placeholder="ABCD12" :class="{ 'input-error': errores.vehiculo_patente }"/>
+                <p v-if="errores.vehiculo_patente" class="field-error">{{ errores.vehiculo_patente[0] }}</p>
               </div>
               <div class="form-row mt-2">
                 <div class="form-group">

@@ -3,7 +3,7 @@ import hashlib
 from rest_framework import serializers
 from .models import (
     Empresa, Usuario, Rol, Permiso, normalizar_rut, REGIONES_CHILE,
-    Flota, Vehiculo, Asignacion, PlanSuscripcion, CambioPlan, LogAuditoria,
+    Vehiculo, Asignacion, PlanSuscripcion, CambioPlan, LogAuditoria,
     Mantencion, Documento, SolicitudConductor, descifrar,
 )
 
@@ -72,14 +72,12 @@ class EmpresaSerializer(serializers.Serializer):
     plan_id   = serializers.IntegerField(required=False, allow_null=True, default=None)
     plan_nombre = serializers.SerializerMethodField()
     created_at           = serializers.DateTimeField(read_only=True)
-    cantidad_flotas      = serializers.SerializerMethodField()
     cantidad_vehiculos   = serializers.SerializerMethodField()
     cantidad_conductores = serializers.SerializerMethodField()
     ultima_actividad     = serializers.SerializerMethodField()
 
     def get_plan_nombre(self, obj):          return obj.plan.get_nombre_display() if obj.plan else None
 
-    def get_cantidad_flotas(self, obj):      return getattr(obj, 'cantidad_flotas', None)
     def get_cantidad_vehiculos(self, obj):   return getattr(obj, 'cantidad_vehiculos', None)
     def get_cantidad_conductores(self, obj): return getattr(obj, 'cantidad_conductores', None)
     def get_ultima_actividad(self, obj):     return getattr(obj, 'ultima_actividad', None)
@@ -529,9 +527,9 @@ class ConductorDetalleSerializer(ConductorListSerializer):
         ]
 
     def get_vehiculo_detalle(self, obj):
-        asig = obj.asignaciones_conductor.filter(activo=True).select_related('vehiculo__flota__empresa').first()
+        asig = obj.asignaciones_conductor.filter(activo=True).select_related('vehiculo__empresa').first()
         if not asig and hasattr(obj, 'perfil'):
-            asig = obj.perfil.asignaciones.filter(activo=True).select_related('vehiculo__flota__empresa').first()
+            asig = obj.perfil.asignaciones.filter(activo=True).select_related('vehiculo__empresa').first()
         if not asig: return None
         v = asig.vehiculo
         return {
@@ -541,7 +539,7 @@ class ConductorDetalleSerializer(ConductorListSerializer):
             'anio': v.anio,
             'tipo_combustible': v.get_tipo_combustible_display() if hasattr(v, 'get_tipo_combustible_display') else v.tipo_combustible,
             'km_actuales': v.km_actuales,
-            'empresa_nombre': v.flota.empresa.nombre if v.flota and v.flota.empresa else None,
+            'empresa_nombre': v.empresa.nombre if v.empresa_id else None,
             'documentos': [
                 {
                     'id': d.id,
@@ -579,8 +577,6 @@ class ConductorCrearSerializer(serializers.Serializer):
     vehiculo_patente     = serializers.CharField(required=False, allow_blank=True)
     vehiculo_marca       = serializers.CharField(required=False, allow_blank=True)
     vehiculo_modelo      = serializers.CharField(required=False, allow_blank=True)
-    vehiculo_flota_id    = serializers.IntegerField(required=False, allow_null=True)
-    vehiculo_flota_nuevo = serializers.CharField(required=False, allow_blank=True)
 
     def validate_nombre(self, value):
         return value.strip().title()
@@ -625,26 +621,6 @@ class ConductorCrearSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"vehiculo_patente": "La patente es obligatoria para crear un vehículo."})
             if Vehiculo.objects.filter(patente_hash=Vehiculo.hash_patente(patente)).exists():
                 raise serializers.ValidationError({"vehiculo_patente": "Ya existe un vehículo con esta patente."})
-            
-            # Validación de Flota
-            flota_id = data.get('vehiculo_flota_id')
-            nueva_flota_nombre = data.get('vehiculo_flota_nuevo', '').strip()
-            
-            if not flota_id and not nueva_flota_nombre:
-                # Si no hay flotas en la empresa, permitimos que se cree una por defecto
-                if not Flota.objects.filter(empresa=empresa).exists():
-                    data['vehiculo_flota_nuevo'] = "Flota Principal"
-                else:
-                    raise serializers.ValidationError({"vehiculo_flota_id": "Debe seleccionar una flota o crear una nueva."})
-            
-            # Si quiere crear una nueva flota, validar límite
-            if nueva_flota_nombre:
-                if empresa.plan:
-                    actuales = Flota.objects.filter(empresa=empresa).count()
-                    if actuales >= empresa.plan.max_flotas:
-                        raise serializers.ValidationError({
-                            "vehiculo_flota_nuevo": f"Has alcanzado el límite de {empresa.plan.max_flotas} flotas de tu plan."
-                        })
 
             data['vehiculo_patente'] = patente
         elif data.get('vehiculo_id'):
@@ -681,8 +657,6 @@ class ConductorCrearSerializer(serializers.Serializer):
         v_patente         = validated_data.pop('vehiculo_patente', None)
         v_marca           = validated_data.pop('vehiculo_marca', '')
         v_modelo          = validated_data.pop('vehiculo_modelo', '')
-        v_flota_id        = validated_data.pop('vehiculo_flota_id', None)
-        v_flota_nuevo     = validated_data.pop('vehiculo_flota_nuevo', '').strip()
 
         nombre_completo = ' '.join(p for p in [nombre, ap_paterno, ap_materno] if p)
         user = Usuario.objects.create_user(
@@ -719,17 +693,12 @@ class ConductorCrearSerializer(serializers.Serializer):
         # Lógica de asignación
         final_vehiculo_id = None
         if crear_vehiculo:
-            # Gestionar Flota
-            if v_flota_nuevo:
-                flota = Flota.objects.create(empresa=empresa, nombre=v_flota_nuevo)
-                v_flota_id = flota.id
-            
             try:
                 nuevo_v = Vehiculo.objects.create(
                     patente = v_patente,
                     marca   = v_marca,
                     modelo  = v_modelo,
-                    flota_id = v_flota_id,
+                    empresa = empresa,
                     activo  = True
                 )
                 final_vehiculo_id = nuevo_v.id
@@ -822,63 +791,18 @@ class ConductorEditarSerializer(serializers.Serializer):
 
 
 # ─────────────────────────────────────────
-# Flota
-# ─────────────────────────────────────────
-
-class VehiculoResumenSerializer(serializers.ModelSerializer):
-    class Meta:
-        model  = Vehiculo
-        fields = ['id', 'patente', 'marca', 'modelo', 'anio',
-                  'tipo_combustible', 'km_actuales', 'activo']
-
-
-class FlotaSerializer(serializers.ModelSerializer):
-    vehiculos       = VehiculoResumenSerializer(many=True, read_only=True)
-    total_vehiculos = serializers.SerializerMethodField()
-    empresa_nombre  = serializers.SerializerMethodField()
-
-    class Meta:
-        model  = Flota
-        fields = ['id', 'nombre', 'empresa_nombre', 'total_vehiculos', 'vehiculos']
-        read_only_fields = ['id']
-
-    def get_total_vehiculos(self, obj):
-        return obj.vehiculos.filter(activo=True).count()
-
-    def get_empresa_nombre(self, obj):
-        try:
-            return obj.empresa.nombre
-        except Exception:
-            return None
-
-    def validate_nombre(self, value):
-        value   = value.strip().title()
-        empresa = self.context.get('empresa')
-        qs      = Flota.objects.filter(nombre__iexact=value, empresa=empresa)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError("Ya existe una flota con ese nombre en esta empresa.")
-        return value
-
-
-# ─────────────────────────────────────────
 # Vehículo
 # ─────────────────────────────────────────
 
 class VehiculoSerializer(serializers.ModelSerializer):
-    flota_nombre       = serializers.SerializerMethodField()
     conductor_asignado = serializers.SerializerMethodField()
 
     class Meta:
         model  = Vehiculo
-        fields = ['id', 'flota', 'flota_nombre', 'patente', 'marca', 'modelo',
+        fields = ['id', 'patente', 'marca', 'modelo',
                   'anio', 'tipo_combustible', 'km_actuales',
                   'conductor_asignado', 'activo']
         read_only_fields = ['id']
-
-    def get_flota_nombre(self, obj):
-        return obj.flota.nombre
 
     def get_conductor_asignado(self, obj):
         asig = obj.asignaciones.filter(activo=True).select_related('conductor').first()
@@ -908,12 +832,6 @@ class VehiculoSerializer(serializers.ModelSerializer):
     def validate_modelo(self, value):
         if not value: return value
         return value.strip().title()
-
-    def validate_flota(self, value):
-        empresa = self.context.get('empresa')
-        if empresa and value.empresa_id != empresa.id:
-            raise serializers.ValidationError("La flota no pertenece a tu empresa.")
-        return value
 
 
 # ─────────────────────────────────────────
@@ -1076,6 +994,14 @@ def _generar_descripcion(accion, detalle, nombre):
         'mantencion_completada_conductor': lambda: f'{u} completó una mantención desde la app móvil.',
         'checklist_completado':   lambda: f'{u} completó el checklist pre-viaje.',
         'checklist_push_fallido': lambda: 'Falló el envío de la notificación push del checklist.',
+        # GPS / Geolocalización
+        'gps_dispositivo_creado':    lambda: f'{u} registró el dispositivo GPS {d.get("imei","")} ({d.get("modelo","")}).',
+        'gps_dispositivo_editado':   lambda: f'{u} editó el dispositivo GPS {d.get("imei","")}.',
+        'gps_dispositivo_eliminado': lambda: f'{u} eliminó el dispositivo GPS {d.get("imei","")}.',
+        'gps_asignado':              lambda: f'{u} asignó el dispositivo GPS {d.get("imei","")} al vehículo {d.get("patente","")}.',
+        'gps_desasignado':           lambda: f'{u} desasignó el dispositivo GPS {d.get("imei","")}.',
+        'gps_clave_regenerada':      lambda: f'{u} regeneró la clave del dispositivo GPS {d.get("imei","")}.',
+        'gps_config_guardada':       lambda: f'{u} actualizó la configuración del servidor GPS.',
         # Cuenta / sistema
         'password_cambiado':      lambda: f'{u} cambió su contraseña.',
         'excepcion_no_manejada':  lambda: f'Error interno del servidor: {d.get("error","")}.',

@@ -9,20 +9,17 @@ export const setEmpresaActiva = (emp) =>
 export const clearEmpresaActiva = () =>
   sessionStorage.removeItem('empresaActiva')
 
-// Agrega ?empresa_id=X automáticamente para SUPERADMIN.
-// Si SUPERADMIN no tiene empresa activa devuelve una respuesta controlada
-// con status 400 para que los componentes muestren el estado "sin empresa".
+// Para SUPERADMIN exige que haya una empresa activa seleccionada; si no la hay,
+// devuelve una respuesta controlada con status 400 para que los componentes
+// muestren el estado "sin empresa".
+// El ?empresa_id=X lo inyecta apiFetch() de forma centralizada para los
+// endpoints /api/empresa/ — aquí NO se vuelve a agregar (evita duplicarlo).
 export const apiFetchEmpresa = (path, options = {}) => {
   const usuario = safeJsonParse(localStorage.getItem('usuario'), {})
-  if (usuario.rol === 'SUPERADMIN') {
-    const empresa = getEmpresaActiva()
-    if (!empresa) {
-      return Promise.resolve(
-        new Response(JSON.stringify({ error: 'sin_empresa' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
-      )
-    }
-    const sep = path.includes('?') ? '&' : '?'
-    return apiFetch(`${path}${sep}empresa_id=${empresa.id}`, options)
+  if (usuario.rol === 'SUPERADMIN' && !getEmpresaActiva()) {
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: 'sin_empresa' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+    )
   }
   return apiFetch(path, options)
 }

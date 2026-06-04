@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from .models import (
-    Empresa, Usuario, Flota, Vehiculo, PlanSuscripcion, CambioPlan,
+    Empresa, Usuario, Vehiculo, PlanSuscripcion, CambioPlan,
     Rol, TipoNotificacion, Notificacion, Permiso,
     ConfiguracionSistema, Suscripcion, PagoTransbank, TarjetaGuardada,
 )
@@ -54,9 +54,7 @@ def verificar_limite_plan(empresa, dimension):
     plan = empresa.plan
 
     conteos = {
-        'flotas':      (Flota.objects.filter(empresa=empresa).count(),
-                        plan.max_flotas),
-        'vehiculos':   (Vehiculo.objects.filter(flota__empresa=empresa, activo=True).count(),
+        'vehiculos':   (Vehiculo.objects.filter(empresa=empresa, activo=True).count(),
                         plan.max_vehiculos),
         'conductores': (Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR, is_active=True).count(),
                         plan.max_conductores),
@@ -240,13 +238,10 @@ def plan_asignar_empresa(request, pk):
     # ── Verificar límites si es downgrade ────────────────────────────────────
     advertencias = []
     if tipo_cambio in ('downgrade', 'lateral') and plan_anterior:
-        uso_flotas      = Flota.objects.filter(empresa=empresa).count()
-        uso_vehiculos   = Vehiculo.objects.filter(flota__empresa=empresa, activo=True).count()
+        uso_vehiculos   = Vehiculo.objects.filter(empresa=empresa, activo=True).count()
         uso_conductores = Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR, is_active=True).count()
         uso_usuarios    = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO,    is_active=True).count()
 
-        if uso_flotas      > plan.max_flotas:
-            advertencias.append(f'Flotas: tiene {uso_flotas} (nuevo límite: {plan.max_flotas})')
         if uso_vehiculos   > plan.max_vehiculos:
             advertencias.append(f'Vehículos: tiene {uso_vehiculos} (nuevo límite: {plan.max_vehiculos})')
         if uso_conductores > plan.max_conductores:
@@ -398,8 +393,7 @@ def plan_uso(request):
         return {"actual": actual, "limite": limite, "pct": pct}
 
     uso = {
-        "flotas":      _dim(Flota.objects.filter(empresa=empresa).count(), plan.max_flotas),
-        "vehiculos":   _dim(Vehiculo.objects.filter(flota__empresa=empresa).count(), plan.max_vehiculos),
+        "vehiculos":   _dim(Vehiculo.objects.filter(empresa=empresa).count(), plan.max_vehiculos),
         "conductores": _dim(Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR, is_active=True).count(), plan.max_conductores),
         "usuarios":    _dim(Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True).count(), plan.max_usuarios),
     }

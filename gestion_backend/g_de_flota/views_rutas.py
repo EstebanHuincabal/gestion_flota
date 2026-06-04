@@ -282,7 +282,7 @@ def _validar_estado_operacional(vehiculo_id, conductor_id, empresa, fecha_str=No
     # ── Vehículo ──────────────────────────────────────────────────────────
     if vehiculo_id:
         try:
-            vehiculo = Vehiculo.objects.get(pk=vehiculo_id, flota__empresa=empresa)
+            vehiculo = Vehiculo.objects.get(pk=vehiculo_id, empresa=empresa)
         except Vehiculo.DoesNotExist:
             return {'errores': [{'codigo': 'vehiculo_no_encontrado', 'mensaje': 'Vehículo no encontrado.'}], 'advertencias': []}
 
@@ -493,7 +493,7 @@ class RutasListView(APIView):
         # como alternativa a vehiculo_id/conductor_id.
         if not data.get('vehiculo_id') and data.get('vehiculo_patente'):
             v = Vehiculo.objects.filter(
-                patente_hash=Vehiculo.hash_patente(str(data['vehiculo_patente'])), flota__empresa=empresa
+                patente_hash=Vehiculo.hash_patente(str(data['vehiculo_patente'])), empresa=empresa
             ).first()
             if v:
                 data['vehiculo_id'] = v.id
@@ -548,7 +548,7 @@ class RutasListView(APIView):
                 pass
         if vehiculo_id:
             try:
-                ruta.vehiculo = Vehiculo.objects.get(pk=vehiculo_id, flota__empresa=empresa)
+                ruta.vehiculo = Vehiculo.objects.get(pk=vehiculo_id, empresa=empresa)
             except Vehiculo.DoesNotExist:
                 pass
 
@@ -654,7 +654,7 @@ class RutaDetailView(APIView):
             ruta.conductor = Usuario.objects.filter(pk=cid, empresa=empresa).first() if cid else None
         if 'vehiculo_id' in data:
             vid = data['vehiculo_id']
-            ruta.vehiculo = Vehiculo.objects.filter(pk=vid, flota__empresa=empresa).first() if vid else None
+            ruta.vehiculo = Vehiculo.objects.filter(pk=vid, empresa=empresa).first() if vid else None
 
         errores = _validar_conflictos(
             data.get('fecha_programada', ruta.fecha_programada),
