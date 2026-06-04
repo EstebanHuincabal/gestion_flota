@@ -81,10 +81,6 @@ onMounted(() => {
               </div>
               <div class="plan-body">
                 <div class="plan-row">
-                  <span class="plan-label">Flotas</span>
-                  <span class="plan-valor">{{ plan.max_flotas }}</span>
-                </div>
-                <div class="plan-row">
                   <span class="plan-label">Vehículos</span>
                   <span class="plan-valor">{{ plan.max_vehiculos }}</span>
                 </div>

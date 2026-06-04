@@ -106,6 +106,18 @@ export function validarPatente(patente) {
   return { valido: true, error: '' }
 }
 
+// ── Licencia de conducir (Chile) ─────────────────────────────────────────────
+// Formato: 3 letras + 10 dígitos (ej: ABC1234567890). Debe coincidir con el
+// backend (serializers.LICENCIA_PATRON). Campo opcional: vacío se considera válido.
+export function validarLicencia(licencia) {
+  const v = (licencia || '').trim().toUpperCase()
+  if (!v) return { valido: true, error: '' }
+  if (!/^[A-Z]{3}\d{10}$/.test(v)) {
+    return { valido: false, error: 'Formato inválido. Debe ser 3 letras y 10 dígitos. Ej: ABC1234567890.' }
+  }
+  return { valido: true, error: '' }
+}
+
 // ── Año de vehículo ──────────────────────────────────────────────────────────
 // Entre 1950 y año actual + 1
 export function validarAnioVehiculo(anio) {

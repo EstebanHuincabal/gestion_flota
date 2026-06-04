@@ -42,7 +42,7 @@ const sinActividad  = ref([])
 const empresasAlertas = ref([])
 
 // EMPRESA data
-const kpisEmpresa    = ref({ total_flotas: 0, total_vehiculos: 0, total_conductores: 0, mantenciones_pendientes: 0, docs_por_vencer: 0 })
+const kpisEmpresa    = ref({ total_vehiculos: 0, total_conductores: 0, mantenciones_pendientes: 0, docs_por_vencer: 0 })
 const widgetsEmpresa = ref({ proximas_7_dias: [], gasto_vs_presupuesto: null, top_vehiculos_costo: [] })
 const hayConductoresKm = ref(false)
 
@@ -60,7 +60,6 @@ const marcasGlobalCanvas = ref(null)
 const activosCanvas      = ref(null)
 
 // Empresa (existentes)
-const vehiculosCanvas    = ref(null)
 const mantencionesCanvas = ref(null)
 const flotaCanvas        = ref(null)
 const gastosCanvas       = ref(null)
@@ -265,13 +264,6 @@ const renderGraficosEmpresa = (charts) => {
   const ac = accentActual()
 
   // Flota
-  if (vehiculosCanvas.value && charts.vehiculos_por_flota) {
-    vehiculosChart = new Chart(vehiculosCanvas.value, {
-      type: 'bar',
-      data: { labels: charts.vehiculos_por_flota.labels, datasets: [{ data: charts.vehiculos_por_flota.data, backgroundColor: `color-mix(in oklch, ${ac} 80%, white)`, hoverBackgroundColor: ac, borderRadius: 6, barThickness: 32 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#9CA3AF', maxRotation: 30 } }, y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 10 }, color: '#9CA3AF' }, grid: { color: '#F3F4F6' } } } }
-    })
-  }
   if (flotaCanvas.value && charts.estado_flota) {
     const ef = charts.estado_flota
     flotaChart = new Chart(flotaCanvas.value, {
@@ -584,10 +576,6 @@ onUnmounted(() => {
       <div class="kpis">
         <template v-if="permisosDash.flota">
           <div class="kpi-card">
-            <div class="kpi-icon bg-indigo"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg></div>
-            <div class="kpi-data"><span class="kpi-value">{{ kpisEmpresa.total_flotas }}</span><span class="kpi-label">Flotas</span></div>
-          </div>
-          <div class="kpi-card">
             <div class="kpi-icon bg-purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/></svg></div>
             <div class="kpi-data"><span class="kpi-value">{{ kpisEmpresa.total_vehiculos }}</span><span class="kpi-label">Vehículos totales</span></div>
           </div>
@@ -606,12 +594,8 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- FLOTA: vehículos por flota + estado flota -->
+      <!-- FLOTA: estado de la flota -->
       <div v-if="permisosDash.flota" class="charts-row" style="margin-bottom:1.25rem">
-        <div class="card">
-          <div class="card-header"><div><h2 class="card-title">Vehículos por flota</h2><p class="card-subtitle">Distribución actual</p></div></div>
-          <div class="chart-wrap"><canvas ref="vehiculosCanvas"/></div>
-        </div>
         <div class="card">
           <div class="card-header"><div><h2 class="card-title">Estado de la flota</h2><p class="card-subtitle">Vehículos con y sin alertas activas</p></div></div>
           <div class="chart-wrap"><canvas ref="flotaCanvas"/></div>

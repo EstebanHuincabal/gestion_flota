@@ -48,7 +48,7 @@ class EmpresaAdmin(admin.ModelAdmin):
 
 @admin.register(PlanSuscripcion)
 class PlanSuscripcionAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'max_flotas', 'max_vehiculos', 'max_conductores')
+    list_display = ('nombre', 'max_vehiculos', 'max_conductores')
     search_fields = ('nombre',)
 
 

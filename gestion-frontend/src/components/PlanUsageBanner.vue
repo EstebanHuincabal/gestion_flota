@@ -9,7 +9,6 @@ const alertas = computed(() => {
   if (!datos.value?.uso) return []
   const resultado = []
   const etiquetas = {
-    flotas:      'flotas',
     vehiculos:   'vehículos',
     conductores: 'conductores',
     usuarios:    'usuarios',

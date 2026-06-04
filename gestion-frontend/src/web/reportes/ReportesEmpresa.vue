@@ -1,6 +1,7 @@
 ﻿<script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { apiFetch } from '../../utils/api.js'
+import { tienePermiso } from '../../utils/permisos.js'
 import { useToast } from '../../utils/useToast.js'
 import { Chart, registerables } from 'chart.js'
 Chart.register(...registerables)
@@ -22,6 +23,16 @@ const datosPpto        = ref(null)
 const datosRutas       = ref(null)
 const datosSolicitudes = ref(null)
 const vehiculos        = ref([])
+
+// Permisos por módulo: ocultan la sección completa (KPIs, skeletons y bloques)
+// cuando el plan no tiene el permiso, sin dejar espacios vacíos.
+const puedeMant  = computed(() => tienePermiso('mantenciones.ver'))
+const puedeFlota = computed(() => tienePermiso('flotas.ver'))
+const puedeFin   = computed(() => tienePermiso('finanzas.ver'))
+const puedeCond  = computed(() => tienePermiso('conductores.ver'))
+const puedeDocs  = computed(() => tienePermiso('documentos.ver'))
+const puedeRutas = computed(() => tienePermiso('rutas.ver'))
+const puedeSolic = computed(() => tienePermiso('solicitudes.ver'))
 
 // ── Filtros mantenciones
 const anioActual = new Date().getFullYear()
@@ -459,6 +470,7 @@ async function cargarVehiculos() {
 }
 
 async function cargarMantencion() {
+  if (!tienePermiso('mantenciones.ver')) return
   cargando.value = true
   try {
     let url = `/api/empresa/reportes/mantencion/?anio=${anioSel.value}`
@@ -475,6 +487,7 @@ async function cargarMantencion() {
 }
 
 async function cargarFlota() {
+  if (!tienePermiso('flotas.ver')) return
   cargando.value = true
   try {
     const res = await apiFetch('/api/empresa/reportes/flota/')
@@ -538,6 +551,7 @@ function flechaOrden(campo) {
 }
 
 async function cargarTco() {
+  if (!tienePermiso('finanzas.ver')) return
   cargando.value = true
   try {
     let url = `/api/empresa/reportes/tco/?anio=${anioSel.value}`
@@ -550,6 +564,7 @@ async function cargarTco() {
 }
 
 async function cargarConductores() {
+  if (!tienePermiso('conductores.ver')) return
   cargando.value = true
   try {
     const res = await apiFetch('/api/empresa/reportes/conductores/')
@@ -560,6 +575,7 @@ async function cargarConductores() {
 }
 
 async function cargarDocumentos() {
+  if (!tienePermiso('documentos.ver')) return
   cargando.value = true
   try {
     const res = await apiFetch('/api/empresa/reportes/documentos/')
@@ -570,6 +586,7 @@ async function cargarDocumentos() {
 }
 
 async function cargarCombustible() {
+  if (!tienePermiso('finanzas.ver')) return
   cargando.value = true
   try {
     const res = await apiFetch('/api/empresa/reportes/combustible/')
@@ -580,6 +597,7 @@ async function cargarCombustible() {
 }
 
 async function cargarPpto() {
+  if (!tienePermiso('finanzas.ver')) return
   try {
     const res = await apiFetch('/api/empresa/reportes/presupuesto/')
     if (res.ok) datosPpto.value = await res.json()
@@ -587,6 +605,7 @@ async function cargarPpto() {
 }
 
 async function cargarRutas() {
+  if (!tienePermiso('rutas.ver')) return
   try {
     const res = await apiFetch('/api/empresa/reportes/rutas/')
     if (res.ok) datosRutas.value = await res.json()
@@ -594,6 +613,7 @@ async function cargarRutas() {
 }
 
 async function cargarSolicitudes() {
+  if (!tienePermiso('solicitudes.ver')) return
   try {
     const res = await apiFetch('/api/empresa/reportes/solicitudes/')
     if (res.ok) datosSolicitudes.value = await res.json()
@@ -718,7 +738,7 @@ const maxCostoTipo = computed(() => {
         <div class="kpi-g"><span class="kpi-tag">Mantenciones</span><span class="kpi-value">{{ clp(datosMantencion.resumen.costo_promedio) }}</span><span class="kpi-label">Costo promedio</span></div>
         <div class="kpi-g"><span class="kpi-tag">Mantenciones</span><span class="kpi-value" style="color:#059669">{{ datosMantencion.resumen.por_estado.realizada }}</span><span class="kpi-label">Realizadas</span></div>
       </template>
-      <template v-else><div v-for="i in 4" :key="'mant'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeMant"><div v-for="i in 4" :key="'mant'+i" class="kpi-skeleton"></div></template>
 
       <!-- Flota -->
       <template v-if="datosFlota">
@@ -726,7 +746,7 @@ const maxCostoTipo = computed(() => {
         <div class="kpi-g"><span class="kpi-tag">Flota</span><span class="kpi-value" :style="datosFlota.resumen.con_docs_vencidos > 0 ? 'color:#DC2626' : ''">{{ datosFlota.resumen.con_docs_vencidos }}</span><span class="kpi-label">Con docs vencidos</span></div>
         <div class="kpi-g"><span class="kpi-tag">Flota</span><span class="kpi-value" :style="datosFlota.resumen.sin_conductor > 0 ? 'color:#D97706' : ''">{{ datosFlota.resumen.sin_conductor }}</span><span class="kpi-label">Sin conductor</span></div>
       </template>
-      <template v-else><div v-for="i in 3" :key="'flota'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeFlota"><div v-for="i in 3" :key="'flota'+i" class="kpi-skeleton"></div></template>
 
       <!-- TCO -->
       <template v-if="datosTco">
@@ -734,14 +754,14 @@ const maxCostoTipo = computed(() => {
         <div class="kpi-g"><span class="kpi-tag">TCO</span><span class="kpi-value">{{ clp(datosTco.resumen.total_mant) }}</span><span class="kpi-label">Costos mantención</span></div>
         <div class="kpi-g"><span class="kpi-tag">TCO</span><span class="kpi-value">{{ clp(datosTco.resumen.costo_promedio) }}</span><span class="kpi-label">TCO promedio/vehículo</span></div>
       </template>
-      <template v-else><div v-for="i in 3" :key="'tco'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeFin"><div v-for="i in 3" :key="'tco'+i" class="kpi-skeleton"></div></template>
 
       <!-- Conductores -->
       <template v-if="datosConductores">
         <div class="kpi-g"><span class="kpi-tag">Conductores</span><span class="kpi-value">{{ datosConductores.resumen.total }}</span><span class="kpi-label">Total conductores</span></div>
         <div class="kpi-g"><span class="kpi-tag">Conductores</span><span class="kpi-value" :style="datosConductores.resumen.sin_vehiculo > 0 ? 'color:#D97706' : ''">{{ datosConductores.resumen.sin_vehiculo }}</span><span class="kpi-label">Sin vehículo</span></div>
       </template>
-      <template v-else><div v-for="i in 2" :key="'cond'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeCond"><div v-for="i in 2" :key="'cond'+i" class="kpi-skeleton"></div></template>
 
       <!-- Documentos -->
       <template v-if="datosDocumentos">
@@ -749,14 +769,14 @@ const maxCostoTipo = computed(() => {
         <div class="kpi-g"><span class="kpi-tag">Documentos</span><span class="kpi-value" :style="datosDocumentos.resumen.por_vencer > 0 ? 'color:#D97706' : ''">{{ datosDocumentos.resumen.por_vencer }}</span><span class="kpi-label">Por vencer (30 días)</span></div>
         <div class="kpi-g"><span class="kpi-tag">Documentos</span><span class="kpi-value" :style="datosDocumentos.resumen.vencidos > 0 ? 'color:#DC2626' : ''">{{ datosDocumentos.resumen.vencidos }}</span><span class="kpi-label">Vencidos</span></div>
       </template>
-      <template v-else><div v-for="i in 3" :key="'doc'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeDocs"><div v-for="i in 3" :key="'doc'+i" class="kpi-skeleton"></div></template>
 
       <!-- Combustible -->
       <template v-if="datosCombustible">
         <div class="kpi-g"><span class="kpi-tag">Combustible</span><span class="kpi-value">{{ clp(datosCombustible.gasto_total) }}</span><span class="kpi-label">Gasto total</span></div>
         <div class="kpi-g"><span class="kpi-tag">Combustible</span><span class="kpi-value">{{ clp(datosCombustible.gasto_promedio_mes) }}</span><span class="kpi-label">Promedio mensual</span></div>
       </template>
-      <template v-else><div v-for="i in 2" :key="'comb'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeFin"><div v-for="i in 2" :key="'comb'+i" class="kpi-skeleton"></div></template>
 
       <!-- Rutas -->
       <template v-if="datosRutas">
@@ -765,7 +785,7 @@ const maxCostoTipo = computed(() => {
         <div class="kpi-g"><span class="kpi-tag">Rutas</span><span class="kpi-value" :style="datosRutas.resumen.canceladas > 0 ? 'color:#EF4444' : ''">{{ datosRutas.resumen.canceladas }}</span><span class="kpi-label">Canceladas</span></div>
         <div class="kpi-g"><span class="kpi-tag">Rutas</span><span class="kpi-value" style="color:#6366F1">{{ datosRutas.resumen.activas }}</span><span class="kpi-label">En curso</span></div>
       </template>
-      <template v-else><div v-for="i in 4" :key="'ruta'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeRutas"><div v-for="i in 4" :key="'ruta'+i" class="kpi-skeleton"></div></template>
 
       <!-- Solicitudes -->
       <template v-if="datosSolicitudes">
@@ -773,12 +793,12 @@ const maxCostoTipo = computed(() => {
         <div class="kpi-g"><span class="kpi-tag">Solicitudes</span><span class="kpi-value" style="color:#6366F1">{{ datosSolicitudes.resumen.por_tipo.mantencion }}</span><span class="kpi-label">Mantención</span></div>
         <div class="kpi-g"><span class="kpi-tag">Solicitudes</span><span class="kpi-value" :style="(datosSolicitudes.resumen.por_tipo.incidencia || 0) > 0 ? 'color:#EF4444' : ''">{{ datosSolicitudes.resumen.por_tipo.incidencia }}</span><span class="kpi-label">Incidencias</span></div>
       </template>
-      <template v-else><div v-for="i in 3" :key="'solic'+i" class="kpi-skeleton"></div></template>
+      <template v-else-if="puedeSolic"><div v-for="i in 3" :key="'solic'+i" class="kpi-skeleton"></div></template>
 
     </div>
 
     <!-- ── Mantenciones ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeMant" class="bloque-reporte">
       <!-- Filtros -->
       <div class="filtros-bar">
         <div class="filtro-group">
@@ -919,7 +939,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /mantenciones -->
 
     <!-- ── Flota ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeFlota" class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando datos...</span>
       </div>
@@ -986,7 +1006,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /flota -->
 
     <!-- ── TCO ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeFin" class="bloque-reporte">
       <!-- Filtros TCO -->
       <div class="filtros-bar">
         <div class="filtro-group">
@@ -1072,7 +1092,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /tco -->
 
     <!-- ── Conductores ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeCond" class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando conductores...</span>
       </div>
@@ -1141,7 +1161,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /conductores -->
 
     <!-- ── Documentos ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeDocs" class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando documentos...</span>
       </div>
@@ -1225,7 +1245,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /documentos -->
 
     <!-- ── Combustible ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeFin" class="bloque-reporte">
       <div v-if="cargando" class="loading-wrap">
         <div class="spinner"/><span>Cargando datos...</span>
       </div>
@@ -1278,7 +1298,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /combustible -->
 
     <!-- ── Gastos por categoría + Gasto mensual ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeFin" class="bloque-reporte">
       <div class="grid-2 mb-4">
         <div class="card">
           <div class="card-head">
@@ -1317,7 +1337,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /gastos-globales -->
 
     <!-- ── Semáforo de vehículos críticos ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeFin" class="bloque-reporte">
       <div class="card">
         <div class="card-head">
           <h3 class="card-title">Semáforo de vehículos críticos</h3>
@@ -1362,7 +1382,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /semaforo -->
 
     <!-- ── Rutas por mes + por tipo ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeRutas" class="bloque-reporte">
       <div class="grid-2 mb-4">
         <div class="card">
           <div class="card-head">
@@ -1391,7 +1411,7 @@ const maxCostoTipo = computed(() => {
     </div><!-- /rutas -->
 
     <!-- ── Solicitudes por mes + por tipo ── -->
-    <div class="bloque-reporte">
+    <div v-if="puedeSolic" class="bloque-reporte">
       <div class="grid-2 mb-4">
         <div class="card">
           <div class="card-head">

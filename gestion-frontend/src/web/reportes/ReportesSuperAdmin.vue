@@ -60,12 +60,12 @@ function planStyle(plan) {
 function exportarCSV() {
   if (!datos.value?.empresas?.length) return
   const cabecera = [
-    'Empresa', 'Plan', 'Flotas', 'Vehículos', 'Conductores',
+    'Empresa', 'Plan', 'Vehículos', 'Conductores',
     `Mantenciones ${anioSel.value}`, `Costo mantenciones ${anioSel.value}`, 'Docs vencidos',
   ]
   const filas = empresasOrdenadas.value.map(e => [
     e.nombre, e.plan_display || e.plan || '—',
-    e.flotas, e.vehiculos, e.conductores,
+    e.vehiculos, e.conductores,
     e.mantenciones_anio, e.costo_mantenciones_anio, e.docs_vencidos,
   ])
   const csv = [cabecera, ...filas]
@@ -252,7 +252,6 @@ onUnmounted(() => { if (planesChart) planesChart.destroy() })
               <tr>
                 <th class="sortable" @click="toggleOrden('nombre')">Empresa{{ flechaOrden('nombre') }}</th>
                 <th>Plan</th>
-                <th class="sortable" @click="toggleOrden('flotas')">Flotas{{ flechaOrden('flotas') }}</th>
                 <th class="sortable" @click="toggleOrden('vehiculos')">Vehículos{{ flechaOrden('vehiculos') }}</th>
                 <th class="sortable" @click="toggleOrden('conductores')">Conductores{{ flechaOrden('conductores') }}</th>
                 <th class="sortable" @click="toggleOrden('mantenciones_anio')">Mantenciones{{ flechaOrden('mantenciones_anio') }}</th>
@@ -268,7 +267,6 @@ onUnmounted(() => { if (planesChart) planesChart.destroy() })
                     {{ e.plan_display || '—' }}
                   </span>
                 </td>
-                <td>{{ e.flotas }}</td>
                 <td>{{ e.vehiculos }}</td>
                 <td>{{ e.conductores }}</td>
                 <td>{{ e.mantenciones_anio }}</td>

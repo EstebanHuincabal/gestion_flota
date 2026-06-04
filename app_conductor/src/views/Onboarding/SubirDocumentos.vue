@@ -5,7 +5,8 @@ import { Preferences } from '@capacitor/preferences'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import { useDocumentosStore, TIPOS_CONDUCTOR, TIPOS_VEHICULO } from '@/stores/documentos.js'
 import { useAuthStore } from '@/stores/auth.js'
-import { validarFechaVigente } from '@/utils/validators.js'
+import { getModulos } from '@/services/permisos.js'
+import { validarFechaVigente, validarLicencia } from '@/utils/validators.js'
 
 const store  = useDocumentosStore()
 const auth   = useAuthStore()
@@ -23,8 +24,9 @@ const licenciaCompletada = ref(false)
 async function guardarLicencia() {
   licenciaForm.value.error = ''
   const num = licenciaForm.value.numero.trim().toUpperCase()
-  if (num.length < 4) {
-    licenciaForm.value.error = 'Ingresa un número de licencia válido.'
+  const val = validarLicencia(num)
+  if (!val.valido) {
+    licenciaForm.value.error = val.error
     return
   }
   guardandoLicencia.value = true
@@ -53,28 +55,37 @@ const guardandoContinuar = ref(false)
 async function continuar() {
   errorContinuar.value = ''
 
-  // Verificar que se haya subido al menos la licencia del conductor
-  if (!store.docPorTipo['licencia']) {
-    errorContinuar.value = 'Debes subir tu licencia de conducir para continuar.'
+  // Todos los documentos son obligatorios: los del conductor siempre y los del
+  // vehículo cuando hay uno asignado.
+  const requeridos = [...TIPOS_CONDUCTOR, ...(vehiculo.value ? TIPOS_VEHICULO : [])]
+  const faltantes  = requeridos.filter(t => !store.docPorTipo[t.value])
+  if (faltantes.length) {
+    errorContinuar.value = `Faltan documentos por subir: ${faltantes.map(t => t.label).join(', ')}.`
     return
   }
 
   guardandoContinuar.value = true
   try {
-    const { apiFetch } = await import('@/services/api.js')
-    const res = await apiFetch('/api/conductor/perfil/', {
-      method: 'PATCH',
-      body: JSON.stringify({ completar_onboarding: true }),
-    })
-    // Actualizar primer_login en store y Preferences
-    const u = { ...auth.usuario, primer_login: false }
-    auth.usuario = u
-    await Preferences.set({ key: 'usuario', value: JSON.stringify(u) })
-  } catch {
-    // fail-silent: si falla el API igual dejamos pasar, el guard del router se actualizó localmente
+    await _completarYRedirigir()
   } finally {
     guardandoContinuar.value = false
   }
+}
+
+// Marca el onboarding como completado (primer_login = false) y entra a la app.
+async function _completarYRedirigir() {
+  try {
+    const { apiFetch } = await import('@/services/api.js')
+    await apiFetch('/api/conductor/perfil/', {
+      method: 'PATCH',
+      body: JSON.stringify({ completar_onboarding: true }),
+    })
+  } catch {
+    // fail-silent: si falla el API igual dejamos pasar, el guard se actualiza localmente
+  }
+  const u = { ...auth.usuario, primer_login: false }
+  auth.usuario = u
+  await Preferences.set({ key: 'usuario', value: JSON.stringify(u) })
 
   let modulos = []
   try {
@@ -85,7 +96,8 @@ async function continuar() {
   if (modulos.includes('rutas'))        return router.replace({ name: 'rutas' })
   if (modulos.includes('solicitudes'))  return router.replace({ name: 'solicitudes' })
   if (modulos.includes('mantenciones')) return router.replace({ name: 'mantencion' })
-  router.replace({ name: 'documentos' })
+  if (modulos.includes('documentos'))   return router.replace({ name: 'documentos' })
+  router.replace({ name: 'ajustes' })   // siempre disponible
 }
 
 // ── Helpers UI ───────────────────────────────────────────────────────────────
@@ -215,6 +227,9 @@ async function enviarDocumento() {
   if (notas && notas.trim() === '') { errorForm.value = 'Las notas no pueden contener solo espacios en blanco.'; return }
   if (notas.length > 50) { errorForm.value = 'Las notas no pueden superar 50 caracteres.'; return }
 
+  // El archivo adjunto es obligatorio (foto o PDF del documento).
+  if (!archivoBlob.value) { errorForm.value = 'Debes adjuntar el archivo del documento (foto o PDF).'; return }
+
   const fd = new FormData()
   fd.append('tipo',              form.value.tipo)
   fd.append('fecha_emision',     form.value.fechaEmision     || '')
@@ -243,7 +258,16 @@ async function enviarDocumento() {
   }
 }
 
-onMounted(() => store.cargarDocumentos())
+onMounted(async () => {
+  // Si el plan no incluye el módulo de documentos, no se solicitan: se completa
+  // el onboarding automáticamente y se entra a la app.
+  const modulos = await getModulos()
+  if (!modulos.includes('documentos')) {
+    await _completarYRedirigir()
+    return
+  }
+  store.cargarDocumentos()
+})
 </script>
 
 <template>
@@ -263,7 +287,7 @@ onMounted(() => store.cargarDocumentos())
         </p>
         <div class="bg-white rounded-2xl p-5 shadow-xl">
           <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">N° de licencia</label>
-          <input v-model="licenciaForm.numero" type="text" placeholder="Ej: A-123456"
+          <input v-model="licenciaForm.numero" type="text" placeholder="Ej: ABC1234567890" maxlength="13"
             class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono uppercase focus:outline-none focus:border-[var(--color-acento)]"
             :class="licenciaForm.error ? 'border-red-300' : ''"
             @keyup.enter="guardarLicencia"/>
@@ -407,8 +431,7 @@ onMounted(() => store.cargarDocumentos())
         <span v-else>Finalizar registro <i class="ti ti-check ml-1"/></span>
       </button>
       <p class="text-center text-xs text-gray-400 mt-3">
-        Se requiere subir la <strong>licencia de conducir</strong> para continuar.
-        Los demás documentos puedes completarlos después.
+        Debes subir <strong>todos los documentos</strong> para finalizar tu registro.
       </p>
     </div>
 
@@ -484,7 +507,7 @@ onMounted(() => store.cargarDocumentos())
             </div>
 
             <div class="mb-5">
-              <label class="block text-xs font-semibold text-gray-600 mb-2">Archivo adjunto <span class="text-gray-400">(opcional)</span></label>
+              <label class="block text-xs font-semibold text-gray-600 mb-2">Archivo adjunto <span class="text-red-500">*</span></label>
               <div v-if="archivoBlob" class="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-100 mb-2">
                 <img v-if="esImagen && archivoPreview" :src="archivoPreview" class="w-14 h-14 object-cover rounded-xl border border-gray-200 shrink-0" alt=""/>
                 <div v-else class="w-14 h-14 rounded-xl border border-gray-200 bg-white flex flex-col items-center justify-center gap-1 shrink-0">

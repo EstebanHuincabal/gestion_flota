@@ -561,6 +561,21 @@ class ConductorDetalleSerializer(ConductorListSerializer):
         return AsignacionHistorialSerializer(asigs, many=True).data
 
 
+# Formato de licencia de conducir chilena: 3 letras + 10 dígitos (ej: ABC1234567890).
+# Fuente única compartida por el panel web (estos serializers) y la app móvil
+# (views_conductor.py importa estas constantes para validar igual).
+LICENCIA_PATRON = r'^[A-Z]{3}\d{10}$'
+LICENCIA_ERROR  = 'Formato inválido. Debe ser 3 letras y 10 dígitos. Ej: ABC1234567890.'
+
+
+def validar_formato_licencia(value):
+    """Normaliza a mayúsculas y valida el formato. Vacío se permite (campo opcional)."""
+    v = (value or '').strip().upper()
+    if v and not re.match(LICENCIA_PATRON, v):
+        raise serializers.ValidationError(LICENCIA_ERROR)
+    return v
+
+
 class ConductorCrearSerializer(serializers.Serializer):
     nombre           = serializers.CharField()
     apellido_paterno = serializers.CharField()
@@ -608,8 +623,7 @@ class ConductorCrearSerializer(serializers.Serializer):
         return limpio
 
     def validate_licencia(self, value):
-        if not value: return value
-        return value.strip().upper()
+        return validar_formato_licencia(value)
 
     def validate(self, data):
         empresa = self.context.get('empresa')
@@ -751,8 +765,7 @@ class ConductorEditarSerializer(serializers.Serializer):
         return limpio
 
     def validate_licencia(self, value):
-        if not value: return value
-        return value.strip().upper()
+        return validar_formato_licencia(value)
 
     def update(self, instance, validated_data):
         changed = False
@@ -796,12 +809,13 @@ class ConductorEditarSerializer(serializers.Serializer):
 
 class VehiculoSerializer(serializers.ModelSerializer):
     conductor_asignado = serializers.SerializerMethodField()
+    gps_asociado       = serializers.SerializerMethodField()
 
     class Meta:
         model  = Vehiculo
         fields = ['id', 'patente', 'marca', 'modelo',
                   'anio', 'tipo_combustible', 'km_actuales',
-                  'conductor_asignado', 'activo']
+                  'conductor_asignado', 'gps_asociado', 'activo']
         read_only_fields = ['id']
 
     def get_conductor_asignado(self, obj):
@@ -810,6 +824,14 @@ class VehiculoSerializer(serializers.ModelSerializer):
             c = asig.conductor
             return {'id': c.id, 'nombre': c.nombre or c.email}
         return None
+
+    def get_gps_asociado(self, obj):
+        # OneToOne DispositivoGPS.vehiculo → related_name 'dispositivo_gps'.
+        d = getattr(obj, 'dispositivo_gps', None)
+        if not d:
+            return None
+        modelo = d.modelo_otro if (d.modelo == 'otro' and d.modelo_otro) else d.get_modelo_display()
+        return {'id': d.id, 'imei': d.imei, 'modelo': modelo, 'activo': d.activo}
 
     def validate_patente(self, value):
         valor = value.upper().replace(' ', '').replace('-', '')
@@ -848,7 +870,7 @@ class PlanSuscripcionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'nombre', 'nombre_display', 'descripcion',
             'precio_mensual', 'precio_display',
-            'max_flotas', 'max_vehiculos', 'max_conductores', 'max_usuarios',
+            'max_vehiculos', 'max_conductores', 'max_usuarios',
             'modulos', 'activo', 'orden', 'empresas_activas',
             'created_at', 'updated_at',
         ]

@@ -7,7 +7,6 @@ import { validarRut as _validarRutCentral } from '@/utils/validators.js'
 
 const router = useRouter()
 const auth   = useAuthStore()
-const apiUrl = import.meta.env.VITE_API_URL || '(vacío→localhost:8000)'
 
 // Oculta el formulario mientras se verifica si ya hay sesión activa
 const verificandoSesion = ref(true)
@@ -204,8 +203,6 @@ onMounted(async () => {
     >
       <h2 class="text-gray-800 text-xl font-bold mb-1">Iniciar sesión</h2>
       <p class="text-gray-400 text-sm mb-6">Ingresa tus credenciales para continuar</p>
-      <!-- DEBUG TEMPORAL -->
-      <p style="font-size:10px;color:#aaa;word-break:break-all;margin-bottom:4px;">API: {{ apiUrl }}</p>
 
       <!-- ── Banners de error diferenciados ──────────────────────────── -->
       <Transition name="error-slide">

@@ -28,7 +28,6 @@ const empresasSinPlan = computed(() =>
 const MODULOS = [
   { cat: 'Core', items: [
     { key: 'dashboard',           label: 'Dashboard' },
-    { key: 'flotas',              label: 'Flotas' },
     { key: 'vehiculos',           label: 'Vehículos' },
     { key: 'conductores',         label: 'Conductores' },
     { key: 'mantencion_correctiva', label: 'Mantención Correctiva' },
@@ -57,7 +56,7 @@ const cargandoPermisos = ref(false)
 const formPlan = ref({
   nombre: 'basico', descripcion: '',
   precio_mensual: '',
-  max_flotas: 2, max_vehiculos: 10,
+  max_vehiculos: 10,
   max_conductores: 15, max_usuarios: 3,
   modulos: [], activo: true, orden: 0,
 })
@@ -95,7 +94,7 @@ const abrirModalCrear = async () => {
   formPlan.value = {
     nombre: '', descripcion: '',
     precio_mensual: '',
-    max_flotas: 2, max_vehiculos: 10,
+    max_vehiculos: 10,
     max_conductores: 15, max_usuarios: 3,
     modulos: [], activo: true, orden: 0,
   }
@@ -114,7 +113,6 @@ const abrirModalEditar = async (plan) => {
     nombre:          plan.nombre,
     descripcion:     plan.descripcion || '',
     precio_mensual:  plan.precio_mensual ?? '',
-    max_flotas:      plan.max_flotas,
     max_vehiculos:   plan.max_vehiculos,
     max_conductores: plan.max_conductores,
     max_usuarios:    plan.max_usuarios,
@@ -162,7 +160,6 @@ const guardarPlan = async () => {
   }
   const numericos = {
     'Precio mensual':    f.precio_mensual,
-    'Máx. flotas':       f.max_flotas,
     'Máx. vehículos':    f.max_vehiculos,
     'Máx. conductores':  f.max_conductores,
     'Máx. usuarios':     f.max_usuarios,
@@ -352,12 +349,6 @@ const badgePlan = (nombre) => ({
         <!-- Límites -->
         <div class="px-5 py-3 border-t border-white/60 space-y-1.5">
           <div class="flex justify-between text-sm">
-            <span class="text-gray-600">Flotas</span>
-            <span class="font-semibold text-gray-900">
-              {{ plan.max_flotas >= 9999 ? 'Ilimitado' : plan.max_flotas }}
-            </span>
-          </div>
-          <div class="flex justify-between text-sm">
             <span class="text-gray-600">Vehículos</span>
             <span class="font-semibold text-gray-900">
               {{ plan.max_vehiculos >= 9999 ? 'Ilimitado' : plan.max_vehiculos }}
@@ -467,10 +458,6 @@ const badgePlan = (nombre) => ({
             </div>
 
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-              <div>
-                <label class="field-label">Máx. flotas</label>
-                <input v-model.number="formPlan.max_flotas" type="number" class="field-input" min="1"/>
-              </div>
               <div>
                 <label class="field-label">Máx. vehículos</label>
                 <input v-model.number="formPlan.max_vehiculos" type="number" class="field-input" min="1"/>

@@ -59,6 +59,12 @@ def _es_superadmin(user):
     return getattr(user, 'rol', None) == Rol.SUPERADMIN
 
 
+def _sin_permiso(user, codigo):
+    """True si el usuario NO tiene el permiso (SUPERADMIN siempre lo tiene)."""
+    from .views import tiene_permiso
+    return not tiene_permiso(user, codigo)
+
+
 def _get_empresa(user, params):
     if _es_superadmin(user):
         eid = params.get('empresa_id')
@@ -83,7 +89,7 @@ def _label_vehiculo(v):
 @permission_classes([IsAuthenticated])
 def reporte_mantencion(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'mantenciones.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -169,7 +175,7 @@ def reporte_mantencion(request):
 @permission_classes([IsAuthenticated])
 def reporte_flota(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'flotas.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -250,6 +256,11 @@ def reporte_exportar(request):
         return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
 
     tipo = request.query_params.get('tipo', 'mantencion')
+
+    # Cada exportación exige el permiso del módulo correspondiente.
+    _PERMISO_EXPORT = {'mantencion': 'mantenciones.ver', 'flota': 'flotas.ver'}
+    if _sin_permiso(user, _PERMISO_EXPORT.get(tipo, 'mantenciones.ver')):
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     if tipo == 'mantencion':
         qs = Mantencion.objects.filter(
@@ -378,7 +389,7 @@ def reporte_admin_empresas(request):
 @permission_classes([IsAuthenticated])
 def reporte_tco(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'finanzas.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -462,7 +473,7 @@ def reporte_tco(request):
 @permission_classes([IsAuthenticated])
 def reporte_conductores(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'conductores.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -531,7 +542,7 @@ def reporte_conductores(request):
 @permission_classes([IsAuthenticated])
 def reporte_presupuesto(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'finanzas.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -566,7 +577,7 @@ def reporte_presupuesto(request):
 @permission_classes([IsAuthenticated])
 def reporte_documentos(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'documentos.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -636,7 +647,7 @@ def reporte_documentos(request):
 @permission_classes([IsAuthenticated])
 def reporte_combustible(request):
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'finanzas.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -711,7 +722,7 @@ def reporte_combustible(request):
 def reporte_rutas(request):
     """Rutas completadas vs canceladas por mes (últimos 12 meses)."""
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'rutas.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)
@@ -786,7 +797,7 @@ def reporte_rutas(request):
 def reporte_solicitudes(request):
     """Solicitudes de conductores por tipo y mes (últimos 12 meses)."""
     user = request.user
-    if user.rol == Rol.CONDUCTOR:
+    if user.rol == Rol.CONDUCTOR or _sin_permiso(user, 'solicitudes.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
     empresa = _get_empresa(user, request.query_params)

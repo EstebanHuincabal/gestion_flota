@@ -27,10 +27,13 @@ from .views_gps import notificar_rutas_cambiadas
 # plan.modulos usa claves distintas ('trabajos_y_rutas', etc.) por eso
 # derivamos la visibilidad desde los permisos granulares, que son la
 # fuente de verdad que gestiona GestionPermisos.vue.
+# Cada módulo de la app se activa si el plan tiene AL MENOS UN permiso con
+# alguno de estos prefijos.
 _MODULO_A_PREFIJO = {
-    'rutas':        'rutas.',
-    'solicitudes':  'solicitudes.',
-    'mantenciones': 'mantenciones.',
+    'rutas':        ('rutas.',),
+    'solicitudes':  ('solicitudes.',),
+    'mantenciones': ('mantenciones.',),
+    'documentos':   ('documentos.',),
 }
 
 
@@ -43,8 +46,8 @@ def _modulos_desde_permisos(plan) -> list:
     codigos = set(plan.permisos.values_list('codigo', flat=True))
     return [
         modulo
-        for modulo, prefijo in _MODULO_A_PREFIJO.items()
-        if any(c.startswith(prefijo) for c in codigos)
+        for modulo, prefijos in _MODULO_A_PREFIJO.items()
+        if any(c.startswith(p) for c in codigos for p in prefijos)
     ]
 
 
@@ -1045,11 +1048,13 @@ def conductor_actualizar_perfil(request):
             campos_cambiados.append('teléfono')
 
     if 'licencia' in data:
+        from .serializers import LICENCIA_PATRON, LICENCIA_ERROR
         lic = str(data['licencia'] or '').strip().upper()
         if not lic:
             errores['licencia'] = 'El número de licencia no puede estar vacío.'
-        elif not re.match(r'^[A-Z]{1,3}[-\s]?\d{4,9}$', lic):
-            errores['licencia'] = 'Formato inválido. Ej: A-123456 o B1234567.'
+        # Licencia chilena: 3 letras + 10 dígitos (mismo patrón que el panel web).
+        elif not re.match(LICENCIA_PATRON, lic):
+            errores['licencia'] = LICENCIA_ERROR
         else:
             user.set_licencia(lic)
             if (user.extra or {}).get('requiere_licencia'):
@@ -1094,7 +1099,8 @@ def conductor_actualizar_perfil(request):
     return Response({
         'ok':               True,
         'nombre':           user.nombre or user.email,
-        'requiere_licencia': bool((user.extra or {}).get('requiere_licencia')),
+        # Coherente con el login: se pide la licencia mientras el conductor no la tenga.
+        'requiere_licencia': user.rol == Rol.CONDUCTOR and not user.licencia,
         'primer_login':     user.primer_login,
     })
 

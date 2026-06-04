@@ -284,11 +284,6 @@ async function eliminarTarjeta() {
             <span class="limite-val">{{ plan.max_usuarios }}</span>
             <span class="limite-lbl">Usuarios</span>
           </div>
-          <div class="limite-sep"/>
-          <div class="limite-item">
-            <span class="limite-val">{{ plan.max_flotas }}</span>
-            <span class="limite-lbl">Flotas</span>
-          </div>
         </div>
       </div>
 

@@ -348,6 +348,7 @@ onMounted(async () => {
             <th>KM</th>
             <th>Estado</th>
             <th>Conductor</th>
+            <th>GPS</th>
             <th class="th-acciones">Acciones</th>
           </tr>
         </thead>
@@ -371,6 +372,13 @@ onMounted(async () => {
                 {{ v.conductor_asignado.nombre }}
               </span>
               <span v-else class="texto-tenue">Sin conductor</span>
+            </td>
+            <td>
+              <span v-if="v.gps_asociado" class="gps-chip" :title="`${v.gps_asociado.modelo} · ${v.gps_asociado.imei}`">
+                {{ v.gps_asociado.modelo }}
+                <span class="gps-imei">{{ v.gps_asociado.imei }}</span>
+              </span>
+              <span v-else class="texto-tenue">Sin GPS</span>
             </td>
             <td class="td-acciones">
               <button class="btn-accion" title="Asignar conductor" @click="abrirAsignar(v)" :disabled="!v.activo">
@@ -478,6 +486,8 @@ onMounted(async () => {
 .badge-ok  { background: #DCFCE7; color: #15803D; }
 .badge-off { background: #FEE2E2; color: #B91C1C; }
 .conductor-chip { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8125rem; font-weight: 500; background: #EDE9FE; color: #6D28D9; }
+.gps-chip { display: inline-flex; align-items: baseline; gap: 0.35rem; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8125rem; font-weight: 600; background: #E0F2FE; color: #0369A1; }
+.gps-imei { font-family: ui-monospace, monospace; font-size: 0.6875rem; font-weight: 400; color: #0C4A6E; opacity: 0.7; }
 
 .btn-accion { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid #E5E7EB; background: #fff; border-radius: 8px; cursor: pointer; color: #6B7280; margin-left: 0.35rem; transition: background 0.15s, color 0.15s, border-color 0.15s; }
 .btn-accion svg { width: 16px; height: 16px; }

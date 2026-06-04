@@ -15,7 +15,7 @@ const items = [
   { to: '/rutas',        label: 'Rutas',        icon: 'rutas',        modulo: 'rutas'        },
   { to: '/solicitudes',  label: 'Solicitudes',  icon: 'solicitudes',  modulo: 'solicitudes'  },
   { to: '/mantencion',   label: 'Mantención',   icon: 'mantencion',   modulo: 'mantenciones' },
-  { to: '/documentos',   label: 'Documentos',   icon: 'documentos',   modulo: null           },
+  { to: '/documentos',   label: 'Documentos',   icon: 'documentos',   modulo: 'documentos'   },
   { to: '/ajustes',      label: 'Ajustes',      icon: 'ajustes',      modulo: null           },
 ]
 

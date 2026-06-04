@@ -34,7 +34,7 @@ const colorBarra = (pct) => {
 }
 
 const dimLabel = {
-  flotas: 'Flotas', vehiculos: 'Vehículos', conductores: 'Conductores', usuarios: 'Usuarios',
+  vehiculos: 'Vehículos', conductores: 'Conductores', usuarios: 'Usuarios',
 }
 
 const esPlanActual = (plan) =>
@@ -130,10 +130,6 @@ onMounted(cargar)
               <p class="option-precio">{{ plan.precio_display }}</p>
             </div>
             <ul class="option-limites">
-              <li>
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                {{ plan.max_flotas }} flotas
-              </li>
               <li>
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 {{ plan.max_vehiculos }} vehículos

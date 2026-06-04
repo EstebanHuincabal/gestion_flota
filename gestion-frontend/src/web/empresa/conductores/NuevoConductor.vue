@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
-import { validarPassword, validarTelefono, validarNombre, validarRut } from '../../../utils/validators.js'
+import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia } from '../../../utils/validators.js'
 import InputTelefono from '../../../components/InputTelefono.vue'
 
 const router    = useRouter()
@@ -121,6 +121,13 @@ const guardar = async () => {
   const telResult = validarTelefono(form.value.telefono)
   if (!telResult.valido) {
     errores.value = { telefono: [telResult.error] }
+    return
+  }
+
+  // Validar licencia (opcional, pero si se ingresa debe tener el formato correcto)
+  const licResult = validarLicencia(form.value.licencia)
+  if (!licResult.valido) {
+    errores.value = { licencia: [licResult.error] }
     return
   }
 
@@ -275,7 +282,9 @@ const guardar = async () => {
             <div class="form-group">
               <label class="label">N° Licencia <span class="opcional">(opcional)</span></label>
               <input v-model="form.licencia" type="text" class="input"
-                placeholder="Ej: 123456789" autocomplete="off" maxlength="50"/>
+                :class="{ 'input-error': errores.licencia }"
+                placeholder="Ej: ABC1234567890" autocomplete="off" maxlength="13"/>
+              <p v-if="errores.licencia" class="field-error">{{ errores.licencia[0] }}</p>
             </div>
           </div>
         </div>

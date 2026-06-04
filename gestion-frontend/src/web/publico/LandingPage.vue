@@ -203,12 +203,6 @@ function scrollAPrecios() {
               <svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
               </svg>
-              <strong>{{ plan.max_flotas }}</strong>&nbsp;flotas
-            </li>
-            <li class="flex items-center gap-2 text-sm text-gray-700">
-              <svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
-              </svg>
               <strong>{{ plan.max_usuarios }}</strong>&nbsp;usuarios admin
             </li>
             <li v-for="mod in plan.modulos" :key="mod" class="flex items-center gap-2 text-sm text-gray-700">

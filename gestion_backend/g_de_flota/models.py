@@ -127,7 +127,6 @@ class PlanSuscripcion(models.Model):
     descripcion     = models.CharField(max_length=100, blank=True, default='')
     precio_mensual  = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True,
                                           validators=[MinValueValidator(0)])
-    max_flotas      = models.PositiveIntegerField(default=1)
     max_vehiculos   = models.PositiveIntegerField(default=10)
     max_conductores = models.PositiveIntegerField(default=10)
     max_usuarios    = models.PositiveIntegerField(default=5)

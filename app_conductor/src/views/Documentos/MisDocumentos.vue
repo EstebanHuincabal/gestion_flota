@@ -141,6 +141,9 @@ async function enviarDocumento() {
   const usuario = auth.usuario
   if (!usuario) { errorForm.value = 'Sesión no disponible.'; return }
 
+  // El archivo adjunto es obligatorio (foto o PDF del documento).
+  if (!archivoBlob.value) { errorForm.value = 'Debes adjuntar el archivo del documento (foto o PDF).'; return }
+
   const fd = new FormData()
   fd.append('tipo',              form.value.tipo)
   fd.append('fecha_emision',     form.value.fechaEmision     || '')
@@ -639,7 +642,7 @@ onMounted(() => store.cargarDocumentos())
             <!-- Archivo adjunto -->
             <div class="mb-5">
               <label class="block text-xs font-semibold text-gray-600 mb-2">
-                Archivo adjunto <span class="text-gray-400">(opcional)</span>
+                Archivo adjunto <span class="text-red-500">*</span>
               </label>
 
               <div v-if="archivoBlob" class="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-100 mb-2">

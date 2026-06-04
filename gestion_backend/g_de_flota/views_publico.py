@@ -89,7 +89,6 @@ class PlanesPublicosView(APIView):
                 'nombre_display':  p.get_nombre_display(),
                 'descripcion':     p.descripcion,
                 'precio_mensual':  str(p.precio_mensual) if p.precio_mensual else None,
-                'max_flotas':      p.max_flotas,
                 'max_vehiculos':   p.max_vehiculos,
                 'max_conductores': p.max_conductores,
                 'max_usuarios':    p.max_usuarios,

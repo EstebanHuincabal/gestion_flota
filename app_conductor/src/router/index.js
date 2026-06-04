@@ -50,7 +50,7 @@ const routes = [
     path: '/documentos',
     name: 'documentos',
     component: () => import('@/views/Documentos/MisDocumentos.vue'),
-    meta: { requiereAuth: true },
+    meta: { requiereAuth: true, modulo: 'documentos' },
   },
   {
     path: '/ajustes',

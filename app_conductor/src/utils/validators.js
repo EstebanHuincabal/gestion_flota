@@ -171,3 +171,15 @@ export function validarLongitud(texto, min, max) {
   }
   return { valido: true, error: '' }
 }
+
+// ── Número de licencia de conducir (Chile) ────────────────────────────────────
+// Formato: 3 letras + 10 dígitos. Ej: ABC1234567890, MTT0001234567.
+// Debe coincidir con la validación del backend (views_conductor.py).
+export function validarLicencia(valor) {
+  const v = (valor || '').trim().toUpperCase()
+  if (!v) return { valido: false, error: 'Ingresa tu número de licencia.' }
+  if (!/^[A-Z]{3}\d{10}$/.test(v)) {
+    return { valido: false, error: 'Formato inválido. Debe ser 3 letras y 10 dígitos. Ej: ABC1234567890.' }
+  }
+  return { valido: true, error: '' }
+}

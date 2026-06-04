@@ -717,9 +717,15 @@ def login_view(request):
     plan_permisos = []
     if user.empresa and user.empresa.plan:
         plan = user.empresa.plan
-        plan_modulos  = plan.modulos or []
         plan_nombre   = plan.get_nombre_display()
         plan_permisos = list(plan.permisos.values_list('codigo', flat=True))
+        if user.rol == Rol.CONDUCTOR:
+            # La app deriva los módulos de los permisos del plan (misma fuente que
+            # /api/conductor/mi-plan/), no del JSONField plan.modulos del panel web.
+            from .views_conductor import _modulos_desde_permisos
+            plan_modulos = _modulos_desde_permisos(plan)
+        else:
+            plan_modulos = plan.modulos or []
 
     # Vehículo asignado (para la app de conductores)
     vehiculo_asignado = None
@@ -752,7 +758,9 @@ def login_view(request):
             "plan_modulos":       plan_modulos,
             "plan_nombre":        plan_nombre,
             "plan_permisos":      plan_permisos,
-            "requiere_licencia":  bool((user.extra or {}).get('requiere_licencia')),
+            # Se pide la licencia siempre que un conductor no la tenga registrada
+            # (no depende de un flag que pudo no setearse al crear la cuenta).
+            "requiere_licencia":  user.rol == Rol.CONDUCTOR and not user.licencia,
         },
     })
 
@@ -1425,7 +1433,7 @@ def vehiculos_lista_crear(request):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
         vehiculos = Vehiculo.objects.filter(
             empresa=empresa
-        ).prefetch_related(
+        ).select_related('dispositivo_gps').prefetch_related(
             'asignaciones__conductor'
         ).order_by('patente')
         return Response(VehiculoSerializer(vehiculos, many=True, context={'empresa': empresa}).data)

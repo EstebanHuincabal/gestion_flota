@@ -10,7 +10,6 @@ const usuario = JSON.parse(localStorage.getItem('usuario') || '{}')
 const esSuperadmin = usuario.rol === 'SUPERADMIN'
 
 const ETIQUETAS = {
-  flotas:      'Flotas',
   vehiculos:   'Vehículos',
   conductores: 'Conductores',
   usuarios:    'Usuarios',

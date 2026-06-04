@@ -7,6 +7,7 @@ import { usePermisos }   from '@/composables/usePermisos.js'
 import BottomNav from '@/components/BottomNav.vue'
 import { iniciales } from '@/utils/formato.js'
 import { apiFetch } from '@/services/api.js'
+import { validarLicencia } from '@/utils/validators.js'
 
 const auth       = useAuthStore()
 const themeStore = useThemeStore()
@@ -105,11 +106,6 @@ function abrirEditarPerfil() {
   editandoPerfil.value = true
 }
 
-// Validación local de licencia chilena: 1-3 letras + opcional guion/espacio + 4-9 dígitos
-function validarLicenciaChilena(lic) {
-  return /^[A-Za-z]{1,3}[-\s]?\d{4,9}$/.test(lic.trim())
-}
-
 async function guardarPerfil() {
   perfilErrores.value  = {}
   guardandoPerfil.value = true
@@ -120,8 +116,9 @@ async function guardarPerfil() {
   if (perfilForm.value.telefono && !/^\d{8}$/.test(perfilForm.value.telefono.replace(/\D/g, ''))) {
     errLocal.telefono = 'Ingresa los 8 dígitos después de +569.'
   }
-  if (perfilForm.value.licencia && !validarLicenciaChilena(perfilForm.value.licencia)) {
-    errLocal.licencia = 'Formato inválido. Ej: A-123456 o B1234567.'
+  if (perfilForm.value.licencia) {
+    const v = validarLicencia(perfilForm.value.licencia)
+    if (!v.valido) errLocal.licencia = v.error
   }
   if (Object.keys(errLocal).length) {
     perfilErrores.value  = errLocal
@@ -493,7 +490,7 @@ function mostrarPerfilToast(mensaje, error = false) {
             <!-- Licencia -->
             <div class="mb-5">
               <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">N° de licencia</label>
-              <input v-model="perfilForm.licencia" type="text" placeholder="Ej: A-123456"
+              <input v-model="perfilForm.licencia" type="text" placeholder="Ej: ABC1234567890" maxlength="13"
                 class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-mono uppercase focus:outline-none focus:border-[var(--color-acento)]"
                 :class="perfilErrores.licencia ? 'border-red-300' : ''"/>
               <p v-if="perfilErrores.licencia" class="text-xs text-red-500 mt-1">{{ perfilErrores.licencia }}</p>

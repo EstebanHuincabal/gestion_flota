@@ -16,7 +16,7 @@ const errores   = ref({})
 const fechaRegistro  = ref('')
 const planes         = ref([])
 const planOriginalId = ref(null)
-const usageData      = ref({ flotas: 0, vehiculos: 0, conductores: 0, usuarios: 0 })
+const usageData      = ref({ vehiculos: 0, conductores: 0, usuarios: 0 })
 
 function clp(val) {
   if (val == null) return '—'
@@ -93,7 +93,6 @@ const cargarEmpresa = async () => {
     form.value.plan_id   = data.plan_id   || null
     planOriginalId.value = data.plan_id   || null
     usageData.value = {
-      flotas:      data.cantidad_flotas      || 0,
       vehiculos:   data.cantidad_vehiculos   || 0,
       conductores: data.cantidad_conductores || 0,
       usuarios:    data.cantidad_usuarios    || (data.usuarios?.length ?? 0),
@@ -171,7 +170,6 @@ const comparacionPlan = computed(() => {
   const advertencias = []
   const uso = usageData.value
   const np  = planNuevoObj.value
-  if (uso.flotas      > np.max_flotas)      advertencias.push(`Flotas: tienes ${uso.flotas} (nuevo límite: ${np.max_flotas})`)
   if (uso.vehiculos   > np.max_vehiculos)    advertencias.push(`Vehículos: tienes ${uso.vehiculos} (nuevo límite: ${np.max_vehiculos})`)
   if (uso.conductores > np.max_conductores)  advertencias.push(`Conductores: tienes ${uso.conductores} (nuevo límite: ${np.max_conductores})`)
   if (uso.usuarios    > np.max_usuarios)     advertencias.push(`Usuarios: tienes ${uso.usuarios} (nuevo límite: ${np.max_usuarios})`)

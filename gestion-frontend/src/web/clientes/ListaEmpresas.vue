@@ -115,7 +115,7 @@ onMounted(cargarEmpresas)
             <th>Nombre</th>
             <th>RUT</th>
             <th>Plan</th>
-            <th>Flotas / Vehículos</th>
+            <th>Vehículos</th>
             <th>Conductores</th>
             <th>Última Actividad</th>
             <th>Estado</th>
@@ -135,7 +135,6 @@ onMounted(cargarEmpresas)
               </span>
             </td>
             <td class="td-metrics">
-              <span class="metric" title="Flotas">{{ e.cantidad_flotas || 0 }}</span> / 
               <span class="metric" title="Vehículos">{{ e.cantidad_vehiculos || 0 }}</span>
             </td>
             <td class="td-metrics">
