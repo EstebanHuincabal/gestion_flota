@@ -143,9 +143,11 @@ export async function apiFetch(url, options = {}) {
       )
     }
     if (e instanceof TypeError && e.message.toLowerCase().includes('fetch')) {
+      // 503 (no 0): el constructor de Response solo acepta 200-599. El "sin
+      // conexión" se identifica por el campo codigo, no por el status.
       return new Response(
         JSON.stringify({ error: 'Sin conexión al servidor.', codigo: 'SIN_CONEXION' }),
-        { status: 0, headers: { 'Content-Type': 'application/json' } }
+        { status: 503, headers: { 'Content-Type': 'application/json' } }
       )
     }
     throw e

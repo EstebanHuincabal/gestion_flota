@@ -426,6 +426,37 @@ class RegenerarClaveView(APIView):
 
 # ── Ingesta de posición (sin JWT) ─────────────────────────────────────────────
 
+# Retención del historial de ubicaciones GPS. Se purga en una fracción de las
+# inserciones (sin cron) para que la tabla no crezca indefinidamente.
+UBICACION_RETENCION_DIAS = 30
+_PURGA_PROBABILIDAD       = 0.01   # ~1 de cada 100 inserciones dispara la purga
+_PURGA_LOTE_MAX           = 2000   # borra como mucho N filas por pasada (no traba la ingesta)
+
+
+def _purgar_ubicaciones_antiguas():
+    """Borra, en un lote acotado, las ubicaciones más viejas que la retención.
+
+    Se ejecuta ocasionalmente desde la ingesta. Falla en silencio: nunca debe
+    interrumpir el registro de una posición.
+    """
+    try:
+        import random
+        if random.random() >= _PURGA_PROBABILIDAD:
+            return
+        from django.utils import timezone as _tz
+        from datetime import timedelta
+        corte = _tz.now() - timedelta(days=UBICACION_RETENCION_DIAS)
+        # Acotar con PKs para que el DELETE sea de tamaño limitado (no bloquea).
+        viejas = list(
+            Ubicacion.objects.filter(timestamp__lt=corte)
+            .values_list('pk', flat=True)[:_PURGA_LOTE_MAX]
+        )
+        if viejas:
+            Ubicacion.objects.filter(pk__in=viejas).delete()
+    except Exception:
+        pass
+
+
 def _registrar_posicion(dispositivo, lat, lng, vel):
     """Crea la Ubicacion del vehículo y emite la posición por WebSocket.
 
@@ -438,6 +469,8 @@ def _registrar_posicion(dispositivo, lat, lng, vel):
         longitud=lng,
         velocidad=vel,
     )
+    # Mantenimiento ocasional del historial (auto-purga, sin cron).
+    _purgar_ubicaciones_antiguas()
     # Conductor asignado (para que el mapa muestre el nombre aunque el marcador
     # se cree directamente desde el WebSocket, sin pasar por la carga REST).
     asig = (

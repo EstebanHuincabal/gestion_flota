@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
 import { Chart, registerables } from 'chart.js'
@@ -52,6 +52,11 @@ async function cargar() {
     cargando.value = false
     ultimaActualizacion.value = new Date()
     actualizarLabel()
+    // Render coordinado: ambos gráficos juntos tras montar todo el DOM. Evita que
+    // un re-render deje un canvas huérfano (el de "MRR y empresas por plan").
+    await nextTick()
+    crearChart()
+    crearChartPlanes()
   }
 }
 
@@ -195,7 +200,6 @@ function crearChart() {
   })
 }
 
-watch(historico, async () => { await nextTick(); crearChart() }, { deep: true })
 
 function crearChartPlanes() {
   if (!chartPlanesCanvas.value || !datos.value?.ingresos_por_plan?.length) return
@@ -255,7 +259,6 @@ function crearChartPlanes() {
     },
   })
 }
-watch(datos, async () => { await nextTick(); crearChartPlanes() }, { deep: true })
 
 onMounted(() => {
   cargar()

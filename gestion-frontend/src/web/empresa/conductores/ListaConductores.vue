@@ -55,6 +55,17 @@ const toast = useToast()
 const modalAsignar   = ref(false)
 const conductorActivo = ref(null)
 const vehiculoSeleccionado = ref(null)
+const guardandoAsig  = ref(false)
+
+// Detección de traspaso: el vehículo elegido ya tiene OTRO conductor distinto al
+// que estamos editando.
+const traspasoVehiculo = computed(() => {
+  const v = vehiculos.value.find(x => x.id === vehiculoSeleccionado.value)
+  const ca = v?.conductor_asignado
+  if (!ca) return null
+  if (ca.id === conductorActivo.value?.id) return null
+  return { patente: v.patente, conductor: ca.nombre }
+})
 
 const cargar = async () => {
   cargando.value   = true
@@ -76,22 +87,28 @@ const abrirAsignar = (c) => {
 }
 
 const guardarAsignacion = async () => {
+  if (guardandoAsig.value) return
   if (!vehiculoSeleccionado.value) {
     await desasignar(conductorActivo.value, true)
     return
   }
-  const res  = await apiFetchEmpresa(`/api/empresa/conductores/${conductorActivo.value.id}/asignar/`, {
-    method: 'POST',
-    body:   { vehiculo_id: vehiculoSeleccionado.value },
-  })
-  const data = await res.json()
-  if (res.ok) {
-    const idx  = conductores.value.findIndex(c => c.id === conductorActivo.value.id)
-    if (idx !== -1) conductores.value[idx] = data
-    modalAsignar.value = false
-    toast.agregar('Vehículo asignado correctamente', 'success')
-  } else {
-    toast.agregar(data.error || 'Error al asignar vehículo', 'error')
+  guardandoAsig.value = true
+  const eraTraspaso = !!traspasoVehiculo.value
+  try {
+    const res  = await apiFetchEmpresa(`/api/empresa/conductores/${conductorActivo.value.id}/asignar/`, {
+      method: 'POST',
+      body:   { vehiculo_id: vehiculoSeleccionado.value },
+    })
+    const data = await res.json()
+    if (res.ok) {
+      modalAsignar.value = false
+      await cargar()   // recarga conductores y vehículos (el traspaso afecta a otro conductor)
+      toast.agregar(eraTraspaso ? 'Vehículo traspasado correctamente' : 'Vehículo asignado correctamente', 'success')
+    } else {
+      toast.agregar(data.error || 'Error al asignar vehículo', 'error')
+    }
+  } finally {
+    guardandoAsig.value = false
   }
 }
 
@@ -356,14 +373,22 @@ onMounted(async () => {
             <select v-model="vehiculoSeleccionado" class="input select">
               <option :value="null">— Sin vehículo —</option>
               <option v-for="v in vehiculos" :key="v.id" :value="v.id">
-                {{ v.patente }} · {{ v.marca }} {{ v.modelo }}
+                {{ v.patente }} · {{ v.marca }} {{ v.modelo }}{{ v.conductor_asignado && v.conductor_asignado.id !== conductorActivo?.id ? ` — lo maneja ${v.conductor_asignado.nombre}` : '' }}
               </option>
             </select>
           </div>
 
+          <!-- Aviso de traspaso: el vehículo elegido ya tiene otro conductor -->
+          <div v-if="traspasoVehiculo" class="aviso-traspaso">
+            <strong>{{ traspasoVehiculo.patente }}</strong> lo maneja <strong>{{ traspasoVehiculo.conductor }}</strong>.
+            Al continuar, se le quitará y pasará a <strong>{{ conductorActivo?.nombre }}</strong>.
+          </div>
+
           <div class="modal-actions">
-            <button class="btn-secondary" @click="modalAsignar = false">Cancelar</button>
-            <button class="btn-primary" @click="guardarAsignacion">Guardar</button>
+            <button class="btn-secondary" @click="modalAsignar = false" :disabled="guardandoAsig">Cancelar</button>
+            <button class="btn-primary" @click="guardarAsignacion" :disabled="guardandoAsig">
+              {{ guardandoAsig ? 'Guardando...' : (traspasoVehiculo ? 'Traspasar' : 'Guardar') }}
+            </button>
           </div>
         </div>
       </div>
@@ -485,6 +510,7 @@ onMounted(async () => {
 .modal-title { font-size: 1.125rem; font-weight: 700; color: #1E1B4B; margin: 0 0 0.25rem; }
 .modal-sub   { font-size: 0.875rem; color: #6B7280; margin: 0 0 1.25rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; }
+.aviso-traspaso { margin-top: 0.75rem; padding: 0.65rem 0.85rem; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; font-size: 0.8125rem; color: #92400E; line-height: 1.4; }
 
 .form-group { display: flex; flex-direction: column; gap: 0.375rem; }
 .label { font-size: 0.875rem; font-weight: 600; color: #374151; }

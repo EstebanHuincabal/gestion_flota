@@ -116,10 +116,22 @@ const vehiculoSel   = ref(null)
 const conductorSel  = ref(null)
 const guardandoAsig = ref(false)
 
-// Conductores libres (sin vehículo) + el ya asignado a este vehículo (para reasignar).
-const conductoresDisponibles = computed(() => {
-  const actualId = vehiculoSel.value?.conductor_asignado?.id
-  return conductores.value.filter(c => c.is_active && (!c.vehiculo || c.id === actualId))
+// Todos los conductores activos; los que ya tienen vehículo se marcan en el
+// dropdown. Al elegir uno ocupado, se hace un traspaso (con aviso previo).
+const conductoresDisponibles = computed(() =>
+  conductores.value.filter(c => c.is_active)
+)
+
+// Conductor seleccionado (objeto) y detección de traspaso.
+const conductorSelObj = computed(() =>
+  conductores.value.find(c => c.id === conductorSel.value) || null
+)
+// Hay traspaso si el conductor elegido ya maneja OTRO vehículo distinto a este.
+const traspasoConductor = computed(() => {
+  const c = conductorSelObj.value
+  if (!c?.vehiculo) return null
+  if (c.vehiculo.id === vehiculoSel.value?.id) return null
+  return c.vehiculo   // { id, patente, ... }
 })
 
 const abrirAsignar = (v) => {
@@ -147,7 +159,7 @@ const guardarAsignacion = async () => {
         body:   { vehiculo_id: vehiculoSel.value.id },
       })
       if (!res.ok) { const d = await res.json().catch(() => ({})); toast.agregar(d.error || 'Error al asignar conductor', 'error'); return }
-      toast.agregar('Conductor asignado correctamente.', 'success')
+      toast.agregar(traspasoConductor.value ? 'Vehículo traspasado correctamente.' : 'Conductor asignado correctamente.', 'success')
     }
     modalAsignar.value = false
     await cargar()
@@ -418,16 +430,25 @@ onMounted(async () => {
         <label class="label">Conductor</label>
         <select v-model="conductorSel" class="input select">
           <option :value="null">— Sin conductor —</option>
-          <option v-for="c in conductoresDisponibles" :key="c.id" :value="c.id">{{ c.nombre }}</option>
+          <option v-for="c in conductoresDisponibles" :key="c.id" :value="c.id">
+            {{ c.nombre }}{{ c.vehiculo && c.vehiculo.id !== vehiculoSel?.id ? ` — maneja ${c.vehiculo.patente}` : '' }}
+          </option>
         </select>
         <p v-if="!conductoresDisponibles.length" class="modal-hint">
-          No hay conductores libres. Libera a un conductor de su vehículo actual para reasignarlo.
+          No hay conductores activos en esta empresa.
         </p>
+
+        <!-- Aviso de traspaso: el conductor elegido ya maneja otro vehículo -->
+        <div v-if="traspasoConductor" class="aviso-traspaso">
+          <strong>{{ conductorSelObj.nombre }}</strong> maneja <strong>{{ traspasoConductor.patente }}</strong>.
+          Al continuar, se le reasignará a <strong>{{ vehiculoSel?.patente }}</strong> y
+          {{ traspasoConductor.patente }} quedará sin conductor.
+        </div>
 
         <div class="modal-actions">
           <button class="btn-secondary" @click="modalAsignar = false" :disabled="guardandoAsig">Cancelar</button>
           <button class="btn-primary" @click="guardarAsignacion" :disabled="guardandoAsig">
-            {{ guardandoAsig ? 'Guardando...' : 'Guardar' }}
+            {{ guardandoAsig ? 'Guardando...' : (traspasoConductor ? 'Traspasar' : 'Guardar') }}
           </button>
         </div>
       </div>
@@ -514,6 +535,7 @@ onMounted(async () => {
 .input:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px rgba(124,58,237,0.1); }
 .select { cursor: pointer; }
 .modal-hint { font-size: 0.8125rem; color: #9CA3AF; margin: 0.5rem 0 0; }
+.aviso-traspaso { margin-top: 0.75rem; padding: 0.65rem 0.85rem; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; font-size: 0.8125rem; color: #92400E; line-height: 1.4; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; }
 
 @media (max-width: 1024px) {

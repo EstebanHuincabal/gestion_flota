@@ -4,8 +4,9 @@ from datetime import date as date_cls, timedelta
 
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
-from django.db.models import Sum
+from django.db.models import Sum, Count, Avg
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -15,6 +16,8 @@ from .models import (
     Empresa, Vehiculo, Mantencion, Rol,
     GastoOperativo, Documento, Usuario, PresupuestoMensual,
     Ruta, SolicitudConductor,
+    Suscripcion, PagoTransbank, CambioPlan, TarjetaGuardada,
+    PlanSuscripcion, LogAuditoria,
 )
 
 
@@ -850,4 +853,212 @@ def reporte_solicitudes(request):
             'por_estado': por_estado,
         },
         'por_mes': resultado,
+    })
+
+
+# ─────────────────────────────────────────
+# Reporte de negocio SaaS (SUPERADMIN)
+# ─────────────────────────────────────────
+
+_MESES_LBL = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+              'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+# Módulos cuya adopción interesa medir (clave en plan.modulos → etiqueta).
+_MODULOS_ADOPCION = {
+    'gps':                   'GPS',
+    'trabajos_y_rutas':      'Rutas',
+    'mantencion_predictiva': 'Predictivo',
+    'documentos':            'Documentos',
+    'finanzas':              'Finanzas',
+    'reportes':              'Reportes',
+}
+
+
+def _ultimos_meses(hoy, n=12):
+    """Lista de (año, mes) de los últimos n meses, del más antiguo al actual."""
+    meses, y, m = [], hoy.year, hoy.month
+    for _ in range(n):
+        meses.append((y, m))
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    meses.reverse()
+    return meses
+
+
+def _signo_cambio(c):
+    """+1 upgrade, -1 downgrade, 0 lateral, según el precio de los planes."""
+    pa = int(c.plan_antes.precio_mensual or 0) if c.plan_antes_id else 0
+    pd = int(c.plan_despues.precio_mensual or 0) if c.plan_despues_id else 0
+    return (pd > pa) - (pd < pa)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_admin_saas(request):
+    """Métricas del negocio SaaS para el super-admin: ingresos, pagos,
+    suscripciones, clientes y adopción del producto."""
+    if not _es_superadmin(request.user):
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+
+    hoy   = date_cls.today()
+    ahora = timezone.now()
+    meses = _ultimos_meses(hoy, 12)
+    labels_mes = [f"{_MESES_LBL[m - 1]} {str(y)[2:]}" for (y, m) in meses]
+
+    empresas_activas = Empresa.objects.filter(estado='activa').count()
+    pagos_aprob = PagoTransbank.objects.filter(estado='aprobado')
+
+    # ── 1. INGRESOS ───────────────────────────────────────────────────────
+    subs_activas = Suscripcion.objects.filter(estado='activa').select_related('plan')
+    mrr = sum(int(s.plan.precio_mensual or 0) for s in subs_activas if s.plan_id)
+    arpu = round(mrr / empresas_activas) if empresas_activas else 0
+    ingresos_mes = int(pagos_aprob.filter(
+        fecha_pago__year=hoy.year, fecha_pago__month=hoy.month
+    ).aggregate(t=Sum('monto'))['t'] or 0)
+    ticket = int(pagos_aprob.aggregate(a=Avg('monto'))['a'] or 0)
+    ingresos_por_mes = [
+        int(pagos_aprob.filter(fecha_pago__year=y, fecha_pago__month=m)
+            .aggregate(t=Sum('monto'))['t'] or 0)
+        for (y, m) in meses
+    ]
+    ingresos = {
+        'mrr':             mrr,
+        'arpu':            arpu,
+        'ingresos_mes':    ingresos_mes,
+        'ticket_promedio': ticket,
+        'por_mes':         {'labels': labels_mes, 'data': ingresos_por_mes},
+    }
+
+    # ── 2. PAGOS ──────────────────────────────────────────────────────────
+    total_pagos = PagoTransbank.objects.count()
+    aprob_count = pagos_aprob.count()
+    tasa_exito  = round(aprob_count / total_pagos * 100) if total_pagos else 0
+    por_estado_pago = {
+        lbl: PagoTransbank.objects.filter(estado=est).count()
+        for est, lbl in PagoTransbank.ESTADOS
+    }
+    monto_rechazado = int(PagoTransbank.objects.filter(
+        estado__in=['rechazado', 'fallido'],
+        created_at__year=hoy.year, created_at__month=hoy.month,
+    ).aggregate(t=Sum('monto'))['t'] or 0)
+    cobro_auto   = TarjetaGuardada.objects.count()
+    cobro_manual = max(0, empresas_activas - cobro_auto)
+    aprob_mes = [PagoTransbank.objects.filter(estado='aprobado', created_at__year=y, created_at__month=m).count() for (y, m) in meses]
+    rech_mes  = [PagoTransbank.objects.filter(estado__in=['rechazado', 'fallido'], created_at__year=y, created_at__month=m).count() for (y, m) in meses]
+    pagos = {
+        'tasa_exito':          tasa_exito,
+        'por_estado':          por_estado_pago,
+        'monto_rechazado_mes': monto_rechazado,
+        'cobro_automatico':    cobro_auto,
+        'cobro_manual':        cobro_manual,
+        'aprob_vs_rech':       {'labels': labels_mes, 'aprobados': aprob_mes, 'rechazados': rech_mes},
+    }
+
+    # ── 3. SUSCRIPCIONES ──────────────────────────────────────────────────
+    por_estado_sub = {
+        lbl: Suscripcion.objects.filter(estado=est).count()
+        for est, lbl in Suscripcion.ESTADOS
+    }
+    por_plan_sub, ingreso_potencial = {}, {}
+    for p in PlanSuscripcion.objects.all():
+        cnt = Suscripcion.objects.filter(plan=p, estado='activa').count()
+        if cnt:
+            por_plan_sub[p.get_nombre_display()]      = cnt
+            ingreso_potencial[p.get_nombre_display()] = cnt * int(p.precio_mensual or 0)
+    churn_mes = Suscripcion.objects.filter(
+        estado='cancelada', fecha_cancelacion__year=hoy.year, fecha_cancelacion__month=hoy.month,
+    ).count()
+    en_gracia  = Suscripcion.objects.filter(estado='gracia').count()
+    por_vencer = Suscripcion.objects.filter(
+        estado='activa',
+        fecha_fin_periodo__date__gte=hoy,
+        fecha_fin_periodo__date__lte=hoy + timedelta(days=7),
+    ).count()
+    altas_mes = [Suscripcion.objects.filter(fecha_inicio__year=y, fecha_inicio__month=m).count() for (y, m) in meses]
+    bajas_mes = [Suscripcion.objects.filter(fecha_cancelacion__year=y, fecha_cancelacion__month=m).count() for (y, m) in meses]
+    suscripciones = {
+        'por_estado':        por_estado_sub,
+        'por_plan':          por_plan_sub,
+        'churn_mes':         churn_mes,
+        'en_gracia':         en_gracia,
+        'por_vencer':        por_vencer,
+        'ingreso_potencial': ingreso_potencial,
+        'altas_vs_bajas':    {'labels': labels_mes, 'altas': altas_mes, 'bajas': bajas_mes},
+    }
+
+    # ── 4. CLIENTES ───────────────────────────────────────────────────────
+    total_emp   = Empresa.objects.count()
+    suspendidas = Empresa.objects.filter(estado='suspendida').count()
+    crecimiento = []
+    for (y, m) in meses:
+        fin = date_cls(y + 1, 1, 1) if m == 12 else date_cls(y, m + 1, 1)
+        crecimiento.append(Empresa.objects.filter(created_at__lt=fin).count())
+    por_region = {
+        r['region']: r['c']
+        for r in Empresa.objects.exclude(region='').values('region').annotate(c=Count('id'))
+    }
+    por_plan_emp = {}
+    for p in PlanSuscripcion.objects.all():
+        cnt = Empresa.objects.filter(plan=p).count()
+        if cnt:
+            por_plan_emp[p.get_nombre_display()] = cnt
+    tam = {'0': 0, '1-5': 0, '6-10': 0, '+10': 0}
+    for e in Empresa.objects.all():
+        nv = Vehiculo.objects.filter(empresa=e, activo=True).count()
+        if   nv == 0:  tam['0']    += 1
+        elif nv <= 5:  tam['1-5']  += 1
+        elif nv <= 10: tam['6-10'] += 1
+        else:          tam['+10']  += 1
+    hace30  = ahora - timedelta(days=30)
+    sin_act = (Empresa.objects.filter(estado='activa')
+               .exclude(usuarios__last_login__gte=hace30).distinct().count())
+    clientes = {
+        'total':            total_emp,
+        'activas':          empresas_activas,
+        'suspendidas':      suspendidas,
+        'sin_actividad':    sin_act,
+        'crecimiento':      {'labels': labels_mes, 'data': crecimiento},
+        'por_region':       por_region,
+        'por_plan':         por_plan_emp,
+        'por_tamano_flota': tam,
+    }
+
+    # ── 6. ADOPCIÓN ───────────────────────────────────────────────────────
+    planes_all = list(PlanSuscripcion.objects.all())
+    n_planes   = len(planes_all) or 1
+    adopcion_modulos = {
+        lbl: round(sum(1 for p in planes_all if key in (p.modulos or [])) / n_planes * 100)
+        for key, lbl in _MODULOS_ADOPCION.items()
+    }
+    login_labels, logins = [], []
+    for i in range(29, -1, -1):
+        d = hoy - timedelta(days=i)
+        login_labels.append(d.strftime('%d/%m'))
+        logins.append(LogAuditoria.objects.filter(accion='login_exitoso', fecha__date=d).count())
+    cambios_mes = (CambioPlan.objects
+                   .filter(fecha__year=hoy.year, fecha__month=hoy.month)
+                   .select_related('plan_antes', 'plan_despues'))
+    up_actual   = sum(1 for c in cambios_mes if _signo_cambio(c) > 0)
+    down_actual = sum(1 for c in cambios_mes if _signo_cambio(c) < 0)
+    up_serie, down_serie = [], []
+    for (y, m) in meses:
+        cs = (CambioPlan.objects.filter(fecha__year=y, fecha__month=m)
+              .select_related('plan_antes', 'plan_despues'))
+        up_serie.append(sum(1 for c in cs if _signo_cambio(c) > 0))
+        down_serie.append(sum(1 for c in cs if _signo_cambio(c) < 0))
+    adopcion = {
+        'modulos':        adopcion_modulos,
+        'logins_por_dia': {'labels': login_labels, 'data': logins},
+        'upgrades_mes':   up_actual,
+        'downgrades_mes': down_actual,
+        'movimientos':    {'labels': labels_mes, 'upgrades': up_serie, 'downgrades': down_serie},
+    }
+
+    return Response({
+        'ingresos':      ingresos,
+        'pagos':         pagos,
+        'suscripciones': suscripciones,
+        'clientes':      clientes,
+        'adopcion':      adopcion,
     })

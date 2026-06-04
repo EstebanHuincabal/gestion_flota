@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
 import { Chart, registerables } from 'chart.js'
@@ -13,6 +13,34 @@ const anioSel    = ref(new Date().getFullYear())
 const anios      = [anioSel.value, anioSel.value - 1, anioSel.value - 2]
 const planesCanvas = ref(null)
 let   planesChart  = null
+
+// ── Negocio SaaS ───────────────────────────────────────────────────────────
+const saas = ref(null)
+const saasCharts = {}
+// Canvas de cada gráfico SaaS
+const cIngresosMes = ref(null)
+const cSubEstado   = ref(null)
+const cSubPlan     = ref(null)
+const cPagoEstado  = ref(null)
+const cPagoMes     = ref(null)
+const cCrecimiento = ref(null)
+const cRegion      = ref(null)
+const cTamano      = ref(null)
+const cAdopcion    = ref(null)
+const cLogins      = ref(null)
+const cAltasBajas  = ref(null)
+const cMovimientos = ref(null)
+
+const PALETA = ['#4F46E5', '#7C3AED', '#059669', '#D97706', '#DC2626', '#0EA5E9', '#DB2777', '#65A30D']
+
+function _mk(key, canvas, config) {
+  if (!canvas) return
+  if (saasCharts[key]) { saasCharts[key].destroy() }
+  saasCharts[key] = new Chart(canvas, config)
+}
+const _ejeY = { beginAtZero: true, ticks: { precision: 0, font: { size: 10 }, color: '#9CA3AF' }, grid: { color: '#F3F4F6' } }
+const _ejeX = { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9CA3AF', maxRotation: 0, autoSkip: true } }
+const _legBottom = { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 10 } } }
 
 // Ordenación
 const ordenCampo = ref('costo_mantenciones_anio')
@@ -105,24 +133,127 @@ function crearChartPlanes() {
   })
 }
 
-watch(datos, async () => { await nextTick(); crearChartPlanes() }, { deep: true })
+// ── Render de todos los gráficos SaaS ───────────────────────────────────────
+function renderSaas() {
+  const s = saas.value
+  if (!s) return
+
+  // 1. Ingresos por mes (línea)
+  _mk('ingMes', cIngresosMes.value, {
+    type: 'line',
+    data: { labels: s.ingresos.por_mes.labels, datasets: [{ data: s.ingresos.por_mes.data, label: 'Ingresos', borderColor: '#4F46E5', backgroundColor: 'rgba(79,70,229,0.1)', fill: true, tension: 0.35, pointRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: _ejeY, x: _ejeX } },
+  })
+  // 2. Suscripciones por estado (dona)
+  _mk('subEst', cSubEstado.value, {
+    type: 'doughnut',
+    data: { labels: Object.keys(s.suscripciones.por_estado), datasets: [{ data: Object.values(s.suscripciones.por_estado), backgroundColor: PALETA, borderWidth: 0, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: _legBottom },
+  })
+  // 3. Ingreso potencial por plan (barra)
+  _mk('subPlan', cSubPlan.value, {
+    type: 'bar',
+    data: { labels: Object.keys(s.suscripciones.ingreso_potencial), datasets: [{ data: Object.values(s.suscripciones.ingreso_potencial), backgroundColor: '#7C3AED', borderRadius: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: _ejeY, x: _ejeX } },
+  })
+  // 4. Pagos por estado (dona)
+  _mk('pagoEst', cPagoEstado.value, {
+    type: 'doughnut',
+    data: { labels: Object.keys(s.pagos.por_estado), datasets: [{ data: Object.values(s.pagos.por_estado), backgroundColor: ['#9CA3AF', '#059669', '#DC2626', '#D97706', '#7C3AED'], borderWidth: 0, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: _legBottom },
+  })
+  // 5. Pagos aprobados vs rechazados por mes (barra agrupada)
+  _mk('pagoMes', cPagoMes.value, {
+    type: 'bar',
+    data: { labels: s.pagos.aprob_vs_rech.labels, datasets: [
+      { label: 'Aprobados', data: s.pagos.aprob_vs_rech.aprobados, backgroundColor: '#059669', borderRadius: 4 },
+      { label: 'Rechazados', data: s.pagos.aprob_vs_rech.rechazados, backgroundColor: '#DC2626', borderRadius: 4 },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: _legBottom, scales: { y: _ejeY, x: _ejeX } },
+  })
+  // 6. Crecimiento de empresas (línea acumulada)
+  _mk('crec', cCrecimiento.value, {
+    type: 'line',
+    data: { labels: s.clientes.crecimiento.labels, datasets: [{ data: s.clientes.crecimiento.data, label: 'Empresas', borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.1)', fill: true, tension: 0.35, pointRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: _ejeY, x: _ejeX } },
+  })
+  // 7. Empresas por región (barra)
+  _mk('region', cRegion.value, {
+    type: 'bar',
+    data: { labels: Object.keys(s.clientes.por_region), datasets: [{ data: Object.values(s.clientes.por_region), backgroundColor: '#0EA5E9', borderRadius: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: _ejeY, x: { ..._ejeX, ticks: { font: { size: 9 }, color: '#9CA3AF', maxRotation: 35 } } } },
+  })
+  // 8. Empresas por tamaño de flota (dona)
+  _mk('tamano', cTamano.value, {
+    type: 'doughnut',
+    data: { labels: Object.keys(s.clientes.por_tamano_flota).map(k => k + ' veh.'), datasets: [{ data: Object.values(s.clientes.por_tamano_flota), backgroundColor: PALETA, borderWidth: 0, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: _legBottom },
+  })
+  // 9. Adopción de módulos (barra horizontal)
+  _mk('adop', cAdopcion.value, {
+    type: 'bar',
+    data: { labels: Object.keys(s.adopcion.modulos), datasets: [{ data: Object.values(s.adopcion.modulos), backgroundColor: '#4F46E5', borderRadius: 6 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + '%' } } }, scales: { x: { ..._ejeX, max: 100, ticks: { callback: v => v + '%', font: { size: 10 }, color: '#9CA3AF' } }, y: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#374151' } } } },
+  })
+  // 10. Logins por día (línea)
+  _mk('logins', cLogins.value, {
+    type: 'line',
+    data: { labels: s.adopcion.logins_por_dia.labels, datasets: [{ data: s.adopcion.logins_por_dia.data, label: 'Logins', borderColor: '#DB2777', backgroundColor: 'rgba(219,39,119,0.08)', fill: true, tension: 0.3, pointRadius: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: _ejeY, x: { ..._ejeX, ticks: { font: { size: 8 }, color: '#9CA3AF', maxTicksLimit: 10 } } } },
+  })
+  // 11. Altas vs bajas de suscripciones (barra)
+  _mk('altas', cAltasBajas.value, {
+    type: 'bar',
+    data: { labels: s.suscripciones.altas_vs_bajas.labels, datasets: [
+      { label: 'Altas', data: s.suscripciones.altas_vs_bajas.altas, backgroundColor: '#059669', borderRadius: 4 },
+      { label: 'Bajas', data: s.suscripciones.altas_vs_bajas.bajas, backgroundColor: '#DC2626', borderRadius: 4 },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: _legBottom, scales: { y: _ejeY, x: _ejeX } },
+  })
+  // 12. Movimientos de plan: upgrades vs downgrades (barra)
+  _mk('mov', cMovimientos.value, {
+    type: 'bar',
+    data: { labels: s.adopcion.movimientos.labels, datasets: [
+      { label: 'Upgrades', data: s.adopcion.movimientos.upgrades, backgroundColor: '#059669', borderRadius: 4 },
+      { label: 'Downgrades', data: s.adopcion.movimientos.downgrades, backgroundColor: '#D97706', borderRadius: 4 },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: _legBottom, scales: { y: _ejeY, x: _ejeX } },
+  })
+}
+
+// Renderiza TODOS los gráficos juntos. Se llama una sola vez tras cargar ambos
+// conjuntos de datos, para evitar que un re-render del DOM (al insertar la
+// sección SaaS) deje el canvas de "Distribución por plan" huérfano.
+function renderTodo() {
+  crearChartPlanes()
+  renderSaas()
+}
 
 // Carga
 async function cargar() {
   cargando.value = true
   try {
-    const res = await apiFetch(`/api/admin/reportes/empresas/?anio=${anioSel.value}`)
-    if (res.ok) datos.value = await res.json()
+    const [rEmp, rSaas] = await Promise.all([
+      apiFetch(`/api/admin/reportes/empresas/?anio=${anioSel.value}`),
+      apiFetch('/api/admin/reportes/saas/'),
+    ])
+    if (rEmp.ok) datos.value = await rEmp.json()
     else toast.error('Error al cargar el reporte.')
+    if (rSaas.ok) saas.value = await rSaas.json()
   } catch {
     toast.error('Error de conexión.')
   } finally {
     cargando.value = false
+    await nextTick()   // el DOM ya tiene todas las secciones → render coherente
+    renderTodo()
   }
 }
 
 onMounted(cargar)
-onUnmounted(() => { if (planesChart) planesChart.destroy() })
+onUnmounted(() => {
+  if (planesChart) planesChart.destroy()
+  Object.values(saasCharts).forEach(c => { try { c.destroy() } catch {} })
+})
 </script>
 
 <template>
@@ -146,6 +277,46 @@ onUnmounted(() => { if (planesChart) planesChart.destroy() })
     </div>
 
     <template v-else-if="datos">
+
+      <!-- ═══════════════ NEGOCIO SaaS ═══════════════ -->
+      <template v-if="saas">
+        <h2 class="seccion-titulo">Negocio</h2>
+
+        <!-- KPIs SaaS -->
+        <div class="kpis-saas">
+          <div class="kpi-mini"><span class="km-tag">Ingresos</span><span class="km-val">{{ clp(saas.ingresos.mrr) }}</span><span class="km-lbl">MRR (recurrente/mes)</span></div>
+          <div class="kpi-mini"><span class="km-tag">Ingresos</span><span class="km-val">{{ clp(saas.ingresos.arpu) }}</span><span class="km-lbl">ARPU por empresa</span></div>
+          <div class="kpi-mini"><span class="km-tag">Ingresos</span><span class="km-val">{{ clp(saas.ingresos.ingresos_mes) }}</span><span class="km-lbl">Cobrado este mes</span></div>
+          <div class="kpi-mini"><span class="km-tag">Pagos</span><span class="km-val">{{ saas.pagos.tasa_exito }}%</span><span class="km-lbl">Tasa de éxito</span></div>
+          <div class="kpi-mini"><span class="km-tag">Pagos</span><span class="km-val" :style="saas.pagos.monto_rechazado_mes > 0 ? 'color:#DC2626' : ''">{{ clp(saas.pagos.monto_rechazado_mes) }}</span><span class="km-lbl">Rechazado este mes</span></div>
+          <div class="kpi-mini"><span class="km-tag">Suscripciones</span><span class="km-val" :style="saas.suscripciones.churn_mes > 0 ? 'color:#DC2626' : ''">{{ saas.suscripciones.churn_mes }}</span><span class="km-lbl">Churn este mes</span></div>
+          <div class="kpi-mini"><span class="km-tag">Suscripciones</span><span class="km-val" :style="saas.suscripciones.por_vencer > 0 ? 'color:#D97706' : ''">{{ saas.suscripciones.por_vencer }}</span><span class="km-lbl">Por vencer (7 días)</span></div>
+          <div class="kpi-mini"><span class="km-tag">Clientes</span><span class="km-val">{{ saas.clientes.activas }}<span class="km-sub">/{{ saas.clientes.total }}</span></span><span class="km-lbl">Empresas activas</span></div>
+          <div class="kpi-mini"><span class="km-tag">Clientes</span><span class="km-val" :style="saas.clientes.sin_actividad > 0 ? 'color:#D97706' : ''">{{ saas.clientes.sin_actividad }}</span><span class="km-lbl">Sin actividad (30 días)</span></div>
+          <div class="kpi-mini"><span class="km-tag">Adopción</span><span class="km-val" style="color:#059669">{{ saas.adopcion.upgrades_mes }}</span><span class="km-lbl">Upgrades este mes</span></div>
+          <div class="kpi-mini"><span class="km-tag">Adopción</span><span class="km-val" :style="saas.adopcion.downgrades_mes > 0 ? 'color:#D97706' : ''">{{ saas.adopcion.downgrades_mes }}</span><span class="km-lbl">Downgrades este mes</span></div>
+          <div class="kpi-mini"><span class="km-tag">Pagos</span><span class="km-val">{{ saas.pagos.cobro_automatico }}</span><span class="km-lbl">Con cobro automático</span></div>
+        </div>
+
+        <!-- Gráficos SaaS -->
+        <div class="grid-charts">
+          <div class="card"><div class="card-head"><h3 class="card-title">Ingresos cobrados por mes</h3></div><div class="chart-box"><canvas ref="cIngresosMes"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Crecimiento de empresas</h3></div><div class="chart-box"><canvas ref="cCrecimiento"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Suscripciones por estado</h3></div><div class="chart-box"><canvas ref="cSubEstado"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Ingreso potencial por plan</h3></div><div class="chart-box"><canvas ref="cSubPlan"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Pagos por estado</h3></div><div class="chart-box"><canvas ref="cPagoEstado"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Pagos aprobados vs rechazados</h3></div><div class="chart-box"><canvas ref="cPagoMes"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Altas vs bajas de suscripciones</h3></div><div class="chart-box"><canvas ref="cAltasBajas"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Movimientos de plan</h3></div><div class="chart-box"><canvas ref="cMovimientos"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Empresas por región</h3></div><div class="chart-box"><canvas ref="cRegion"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Empresas por tamaño de flota</h3></div><div class="chart-box"><canvas ref="cTamano"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Adopción de módulos</h3></div><div class="chart-box"><canvas ref="cAdopcion"/></div></div>
+          <div class="card"><div class="card-head"><h3 class="card-title">Logins por día (30 días)</h3></div><div class="chart-box"><canvas ref="cLogins"/></div></div>
+        </div>
+
+        <h2 class="seccion-titulo">Operación por empresa</h2>
+      </template>
+
       <!-- KPIs -->
       <div class="kpis">
         <div class="kpi-card">
@@ -333,4 +504,19 @@ onUnmounted(() => { if (planesChart) planesChart.destroy() })
 .font-medium { font-weight: 600; color: #111827; }
 .text-ok { color: #D1D5DB; }
 .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+
+/* ── Negocio SaaS ── */
+.seccion-titulo { font-size: 1.05rem; font-weight: 700; color: #1E1B4B; margin: 1.75rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #EDE9FE; }
+.seccion-titulo:first-child { margin-top: 0; }
+
+.kpis-saas { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+.kpi-mini { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 0.75rem 0.9rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.km-tag { font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #A78BFA; }
+.km-val { font-size: 1.25rem; font-weight: 800; color: #111827; line-height: 1.1; }
+.km-sub { font-size: 0.875rem; font-weight: 600; color: #9CA3AF; }
+.km-lbl { font-size: 0.75rem; color: #6B7280; }
+
+.grid-charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+.chart-box { padding: 1rem 1.25rem 1.25rem; height: 240px; }
+@media (max-width: 900px) { .grid-charts { grid-template-columns: 1fr; } }
 </style>

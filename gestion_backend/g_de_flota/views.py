@@ -5,6 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 from datetime import timedelta
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Count, Max, Subquery, OuterRef, IntegerField, Q, Sum
 from django.db.models.functions import TruncDay, TruncWeek, TruncMonth, Coalesce
 from django.contrib.auth import authenticate
@@ -1358,34 +1359,53 @@ def conductores_asignar(request, pk):
     except (Usuario.DoesNotExist, Vehiculo.DoesNotExist):
         return Response({"error": "Conductor o vehículo no encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
-    # 1. Desactivar cualquier asignación previa de ESTE conductor
-    Asignacion.objects.filter(conductor=conductor, activo=True).update(activo=False, hasta=timezone.now())
+    # Traspaso atómico: la nueva asignación "gana". Se liberan las asignaciones
+    # activas previas tanto del CONDUCTOR como del VEHÍCULO (puede que el vehículo
+    # estuviera con otro conductor) y se crea la nueva, todo en una transacción.
+    # Así nunca quedan dos activas (respeta la constraint 1:1) y permite reasignar.
+    ahora = timezone.now()
 
-    # 2. Verificar si el vehículo ya está asignado a OTRO conductor
-    asignacion_actual = Asignacion.objects.filter(vehiculo=vehiculo, activo=True).first()
-    if asignacion_actual:
-        return Response({
-            "error": "Este vehículo ya está asignado a otro usuario"
-        }, status=status.HTTP_400_BAD_REQUEST)
+    # Conductor al que se le quita el vehículo (para avisar y registrar el traspaso).
+    asig_vehiculo = (Asignacion.objects
+                     .filter(vehiculo=vehiculo, activo=True)
+                     .exclude(conductor=conductor)
+                     .select_related('conductor')
+                     .first())
+    conductor_anterior = asig_vehiculo.conductor if asig_vehiculo else None
 
-    # 3. Crear la nueva asignación
-    Asignacion.objects.create(
-        conductor=conductor,
-        vehiculo=vehiculo,
-        activo=True,
-        desde=timezone.now()
-    )
+    with transaction.atomic():
+        Asignacion.objects.filter(conductor=conductor, activo=True).update(activo=False, hasta=ahora)
+        Asignacion.objects.filter(vehiculo=vehiculo, activo=True).update(activo=False, hasta=ahora)
+        Asignacion.objects.create(conductor=conductor, vehiculo=vehiculo, activo=True, desde=ahora)
+
     conductor.refresh_from_db()
     registrar_log('ACTIVIDAD', 'conductor_asignado', request, detalle={
         'conductor': conductor.email,
         'vehiculo':  vehiculo.patente,
+        'reasignado_de': conductor_anterior.email if conductor_anterior else None,
     })
-    notificar_admins_empresa(
-        empresa, TipoNotificacion.ACTIVIDAD,
-        "Nueva asignación de vehículo",
-        f"El conductor {conductor.nombre or conductor.email} fue asignado al vehículo {vehiculo.patente}.",
-        url_accion='/empresa/conductores'
-    )
+
+    if conductor_anterior:
+        # Traspaso: avisar al conductor que perdió el vehículo y a los admins.
+        notificar(conductor_anterior, TipoNotificacion.ACTIVIDAD,
+                  "Vehículo reasignado",
+                  f"El vehículo {vehiculo.patente} fue reasignado a otro conductor.",
+                  url_accion='/rutas')
+        notificar_admins_empresa(
+            empresa, TipoNotificacion.ACTIVIDAD,
+            "Vehículo reasignado",
+            f"El vehículo {vehiculo.patente} pasó de {conductor_anterior.nombre or conductor_anterior.email} "
+            f"a {conductor.nombre or conductor.email}.",
+            url_accion='/empresa/conductores'
+        )
+    else:
+        notificar_admins_empresa(
+            empresa, TipoNotificacion.ACTIVIDAD,
+            "Nueva asignación de vehículo",
+            f"El conductor {conductor.nombre or conductor.email} fue asignado al vehículo {vehiculo.patente}.",
+            url_accion='/empresa/conductores'
+        )
+
     return Response(ConductorListSerializer(conductor).data)
 
 

@@ -790,6 +790,13 @@ class Ubicacion(models.Model):
     velocidad = EncryptedFloatField(default=0.0)
     timestamp = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            # Acelera "última posición por vehículo" (mapa en vivo) y la purga por fecha.
+            models.Index(fields=['vehiculo', '-timestamp'], name='ubicacion_veh_ts_idx'),
+            models.Index(fields=['timestamp'], name='ubicacion_ts_idx'),
+        ]
+
     def __str__(self):
         return f"{self.vehiculo.patente} - {self.timestamp}"
 

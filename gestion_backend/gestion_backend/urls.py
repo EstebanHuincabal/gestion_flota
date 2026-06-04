@@ -45,6 +45,7 @@ from g_de_flota.views_gastos import (
 )
 from g_de_flota.views_reportes import (
     reporte_mantencion, reporte_flota, reporte_exportar, reporte_admin_empresas,
+    reporte_admin_saas,
     reporte_tco, reporte_conductores,
     reporte_presupuesto, reporte_documentos, reporte_combustible,
     reporte_rutas, reporte_solicitudes,
@@ -177,6 +178,7 @@ urlpatterns = [
     path('api/empresa/reportes/rutas/',        reporte_rutas,         name='reporte-rutas'),
     path('api/empresa/reportes/solicitudes/',  reporte_solicitudes,   name='reporte-solicitudes'),
     path('api/admin/reportes/empresas/',       reporte_admin_empresas, name='reporte-admin-empresas'),
+    path('api/admin/reportes/saas/',           reporte_admin_saas,     name='reporte-admin-saas'),
 
     # App conductores — endpoints exclusivos para la app móvil
     path('api/conductor/rutas/',                                    conductor_rutas,              name='conductor-rutas'),

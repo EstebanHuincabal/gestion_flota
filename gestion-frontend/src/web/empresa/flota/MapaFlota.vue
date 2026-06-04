@@ -27,6 +27,10 @@ let ws          = null
 let reconnectTimer = null
 let reconnectDelay = 1000
 let desmontado  = false
+let estadoTimer = null   // reevalúa "sin señal" cuando dejan de llegar posiciones
+
+// Umbral de "sin señal": debe coincidir con el backend (UltimasPosicionesView).
+const SIN_SENAL_SEG = 300
 
 const COLORES = {
   movimiento: '#2563EB',   // azul
@@ -207,6 +211,21 @@ function pintarMarcador(v) {
   }
 }
 
+// Marca como "sin señal" a los vehículos cuya última posición superó el umbral.
+// El WebSocket solo reacciona a datos que llegan; este timer cubre la ausencia
+// de datos (p. ej. cuando un GPS deja de reportar).
+function revisarSinSenal() {
+  const ahora = Date.now()
+  for (const v of vehiculos.value) {
+    if (!v.timestamp || v.estado === 'sin_señal') continue
+    const antiguedadSeg = (ahora - new Date(v.timestamp).getTime()) / 1000
+    if (antiguedadSeg > SIN_SENAL_SEG) {
+      v.estado = 'sin_señal'
+      pintarMarcador(v)
+    }
+  }
+}
+
 // ── Carga inicial / refresco ──────────────────────────────────────────────────
 // `ajustar` solo en la carga inicial; en refrescos en vivo no movemos la vista.
 async function cargarPosiciones(ajustar = true) {
@@ -341,10 +360,16 @@ async function inicializarMapa() {
   setTimeout(() => { try { mapa?.invalidateSize() } catch { /* noop */ } }, 100)
 }
 
+function iniciarTimerEstado() {
+  clearInterval(estadoTimer)
+  estadoTimer = setInterval(revisarSinSenal, 30000)   // cada 30 s
+}
+
 async function onCambioEmpresa(empresa) {
   empresaActiva.value = empresa
   // Cerrar WS anterior y limpiar el mapa
   clearTimeout(reconnectTimer)
+  clearInterval(estadoTimer)
   reconnectDelay = 1000
   if (ws) { try { ws.close() } catch { /* noop */ } ; ws = null }
   conectado.value = false
@@ -357,6 +382,7 @@ async function onCambioEmpresa(empresa) {
   await cargarPosiciones()
   cargando.value = false
   conectarWS()
+  iniciarTimerEstado()
 }
 
 // ── Ciclo de vida ─────────────────────────────────────────────────────────────
@@ -370,11 +396,13 @@ onMounted(async () => {
   await cargarPosiciones()
   cargando.value = false
   conectarWS()
+  iniciarTimerEstado()
 })
 
 onUnmounted(() => {
   desmontado = true
   clearTimeout(reconnectTimer)
+  clearInterval(estadoTimer)
   if (ws) { try { ws.close() } catch { /* noop */ } ; ws = null }
   if (mapa) { mapa.remove(); mapa = null }
 })
