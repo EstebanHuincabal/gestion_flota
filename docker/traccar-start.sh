@@ -8,4 +8,4 @@ sed \
   -e "s|__DB_PASS__|${POSTGRES_PASSWORD}|g" \
   /traccar.xml.template > /opt/traccar/conf/traccar.xml
 
-exec java -jar /opt/traccar/tracker-server.jar conf/traccar.xml
+exec /opt/traccar/jre/bin/java -jar /opt/traccar/tracker-server.jar conf/traccar.xml
