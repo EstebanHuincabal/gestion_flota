@@ -17,6 +17,9 @@ __pycache__/
 # Claves Firebase (no subir credenciales)
 serviceAccountKey.json
 
+# Traccar — generado en tiempo de ejecución (puede contener credenciales)
+traccar.xml
+
 # Archivos generados en producción
 staticfiles/
 media/

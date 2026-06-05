@@ -57,9 +57,10 @@ pathlib.Path("g_de_flota/routing.py").write_text(textwrap.dedent("""\
 
 
     websocket_urlpatterns = [
-        re_path(r'^ws/notificaciones/$',                        _Lazy('NotificacionesConsumer')),
-        re_path(r'^ws/solicitudes/(?P<empresa_id>\\d+)/$',      _Lazy('SolicitudesConsumer')),
-        re_path(r'^ws/conductor/$',                             _Lazy('ConductorConsumer')),
+        re_path(r'^ws/notificaciones/$',                         _Lazy('NotificacionesConsumer')),
+        re_path(r'^ws/solicitudes/(?P<empresa_id>\\d+)/$',       _Lazy('SolicitudesConsumer')),
+        re_path(r'^ws/conductor/$',                              _Lazy('ConductorConsumer')),
+        re_path(r'^ws/gps/(?P<empresa_id>\\d+)/$',               _Lazy('GPSConsumer')),
     ]
 """))
 
