@@ -55,6 +55,9 @@ import Rutas from '../web/rutas/Rutas.vue'
 import SolicitudesConductores from '../web/solicitudes/SolicitudesConductores.vue'
 import SolicitudesAdmin       from '../web/solicitudes/SolicitudesAdmin.vue'
 
+// Avisos
+import Avisos from '../web/avisos/Avisos.vue'
+
 // Calendario global
 import CalendarioGlobal from '../web/calendario/CalendarioGlobal.vue'
 
@@ -169,6 +172,7 @@ const routes = [
       { path: 'mapa',         component: () => import('../web/empresa/flota/MapaFlota.vue') },
       { path: 'gps',          component: () => import('../web/empresa/flota/GestionGPS.vue') },
       { path: 'solicitudes',  component: SolicitudesAdmin },
+      { path: 'avisos',       component: Avisos },
       { path: 'calendario',   component: CalendarioGlobal },
       { path: 'pagos',        component: PagosSuperAdmin },
     ],
@@ -204,6 +208,7 @@ const routes = [
       { path: 'rutas',           component: Rutas,                   meta: { permiso: 'rutas.ver' } },
       { path: 'mapa',            component: () => import('../web/empresa/flota/MapaFlota.vue'),  meta: { permiso: 'gps.ver' } },
       { path: 'gps',             component: () => import('../web/empresa/flota/GestionGPS.vue'), meta: { permiso: 'gps.ver' } },
+      { path: 'avisos',          component: Avisos,                  meta: { permiso: 'avisos.ver' } },
       { path: 'solicitudes',     component: SolicitudesConductores },
       { path: 'solicitudes/:id', component: SolicitudesConductores },   // notificaciones que apuntan al detalle
       { path: 'calendario',      component: CalendarioGlobal,        meta: { permiso: 'calendario.ver' } },

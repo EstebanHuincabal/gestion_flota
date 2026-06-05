@@ -1049,6 +1049,45 @@ class ConfiguracionSistema(models.Model):
 
 
 # ─────────────────────────────────────────
+# Avisos internos
+# ─────────────────────────────────────────
+
+class Aviso(models.Model):
+    DESTINO_FLOTA     = 'flota'
+    DESTINO_CONDUCTOR = 'conductor'
+    DESTINO_ADMINS    = 'admins'
+    DESTINO_TODAS     = 'todas'
+    DESTINOS = [
+        (DESTINO_FLOTA,     'Toda la flota'),
+        (DESTINO_CONDUCTOR, 'Conductor específico'),
+        (DESTINO_ADMINS,    'Administradores'),
+        (DESTINO_TODAS,     'Todas las empresas'),
+    ]
+
+    empresa      = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='avisos')
+    emisor       = models.ForeignKey(
+        'Usuario', on_delete=models.SET_NULL, null=True, related_name='avisos_enviados',
+    )
+    destino      = models.CharField(max_length=20, choices=DESTINOS)
+    # Solo para destino='conductor'
+    destinatario = models.ForeignKey(
+        'Usuario', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='avisos_recibidos_directo',
+    )
+    asunto       = models.CharField(max_length=150)
+    mensaje      = models.TextField(max_length=2000)
+    fecha        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering     = ['-fecha']
+        verbose_name = 'Aviso'
+        verbose_name_plural = 'Avisos'
+
+    def __str__(self):
+        return f"[{self.get_destino_display()}] {self.asunto} — {self.empresa.nombre}"
+
+
+# ─────────────────────────────────────────
 # Suscripciones y pagos Transbank
 # ─────────────────────────────────────────
 

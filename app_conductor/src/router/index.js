@@ -58,6 +58,12 @@ const routes = [
     component: () => import('@/views/Ajustes/Ajustes.vue'),
     meta: { requiereAuth: true },
   },
+  {
+    path: '/avisos',
+    name: 'avisos',
+    component: () => import('@/views/Avisos/Avisos.vue'),
+    meta: { requiereAuth: true, modulo: 'avisos' },
+  },
 
   // ── Protegidas — módulo 'rutas' requerido ────────────────────────────────
   {

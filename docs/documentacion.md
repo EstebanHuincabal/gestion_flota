@@ -2004,3 +2004,29 @@ poblar su dict de errores). La razón social de empresa, marca y modelo de vehí
 siguen permitiendo números a propósito.
 
 ---
+
+## Módulo de Avisos internos
+
+Permite comunicación directa por correo + campanita in-app entre admins y conductores, sin abrir Gmail — el sistema envía solo vía el SMTP configurado en `ConfiguracionSistema`.
+
+### Permisos (migración 0092)
+- `avisos.ver` — ver la bandeja de avisos
+- `avisos.enviar` — redactar y enviar avisos
+
+Asignados a todos los planes por defecto. Aparecen en Gestión de Permisos bajo la categoría "avisos".
+
+### Flujos
+- **Admin → toda la flota**: POST `/api/empresa/avisos/` con `destino: "flota"`. Notifica a todos los conductores activos (campanita + correo).
+- **Admin → conductor específico**: POST `/api/empresa/avisos/` con `destino: "conductor"` y `destinatario_id`.
+- **Conductor → admins**: POST `/api/conductor/avisos/`. Notifica a todos los admins activos de su empresa.
+
+### Archivos
+- `g_de_flota/models.py` — modelo `Aviso`
+- `g_de_flota/migrations/0092_aviso_and_permisos.py` — migración
+- `g_de_flota/views_avisos.py` — endpoints
+- `g_de_flota/email_service.py` — función `email_aviso()`
+- `gestion-frontend/src/web/avisos/Avisos.vue` — panel web
+- `app_conductor/src/views/Avisos/Avisos.vue` — app conductor
+- `app_conductor/src/components/BottomNav.vue` — ítem "Avisos" en la nav
+
+---

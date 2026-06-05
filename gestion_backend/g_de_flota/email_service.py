@@ -527,6 +527,29 @@ def email_checklist_ok(email, nombre_admin, empresa_nombre, conductor_nombre,
     enviar_email(email, f'✓ Checklist en orden — {patente}', html)
 
 
+# ── Aviso interno (módulo de Avisos) ─────────────────────────────────────────
+
+def email_aviso(email, nombre_destinatario, empresa_nombre, nombre_emisor, asunto, mensaje):
+    """Aviso interno enviado desde el módulo de Avisos (admin → flota/conductor, conductor → admins)."""
+    html = _base_template(
+        asunto,
+        f"""
+        <p style="color:#444;font-size:15px;">
+          Hola <strong>{nombre_destinatario}</strong>,
+        </p>
+        <p style="color:#444;font-size:15px;">
+          Tienes un nuevo aviso de <strong>{nombre_emisor}</strong>:
+        </p>
+        <div style="background:#EFF6FF;border-left:4px solid #3B82F6;border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0 0 8px 0;color:#1E40AF;font-size:14px;font-weight:600;">{asunto}</p>
+          <p style="margin:0;color:#374151;font-size:14px;white-space:pre-wrap;">{mensaje}</p>
+        </div>
+        """,
+        empresa_nombre,
+    )
+    enviar_email(email, f'📢 {asunto}', html)
+
+
 # ── Acceso inicial conductor (creado sin contraseña) ─────────────────────────
 
 def email_acceso_conductor(email, nombre, empresa_nombre, rut, clave_temporal):

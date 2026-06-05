@@ -35,6 +35,7 @@ _MODULO_A_PREFIJO = {
     'solicitudes':  ('solicitudes.',),
     'mantenciones': ('mantenciones.',),
     'documentos':   ('documentos.',),
+    'avisos':       ('avisos.',),
 }
 
 

@@ -83,6 +83,7 @@ from g_de_flota.views_solicitudes import (
 from g_de_flota.views_calendario import calendario_eventos
 from g_de_flota import views_gps
 from g_de_flota.views_publico import PlanesPublicosView, AutoRegistroView, VerificarRutView
+from g_de_flota.views_avisos import empresa_avisos, empresa_avisos_conductores, conductor_avisos
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -209,6 +210,11 @@ urlpatterns = [
     path('api/conductor/recuperar-password/',                         conductor_recuperar_password,      name='conductor-recuperar-password'),
     path('api/conductor/vehiculo/foto/',                              conductor_subir_foto_vehiculo,     name='conductor-vehiculo-foto'),
     path('api/conductor/cambiar-password/',                           conductor_cambiar_password,        name='conductor-cambiar-password'),
+    path('api/conductor/avisos/',                                     conductor_avisos,                  name='conductor-avisos'),
+
+    # Panel web — avisos internos
+    path('api/empresa/avisos/',             empresa_avisos,             name='empresa-avisos'),
+    path('api/empresa/avisos/conductores/', empresa_avisos_conductores, name='empresa-avisos-conductores'),
 
     # Panel web — gestión de solicitudes de conductores (USUARIO/ADMIN)
     path('api/empresa/solicitudes/',                              SolicitudesListView.as_view(),    name='solicitudes-lista'),
