@@ -50,6 +50,7 @@ class Command(BaseCommand):
                     ),
                     url_accion='/empresa/documentos',
                     extra={'doc_key': doc_key, 'documento_id': doc.id, 'dias': dias},
+                    permiso='documentos.ver',
                 )
                 # Email documento vencido
                 try:
@@ -92,6 +93,7 @@ class Command(BaseCommand):
                     ),
                     url_accion='/empresa/documentos',
                     extra={'doc_key': doc_key, 'documento_id': doc.id, 'dias': dias, 'dias_umbral': dias},
+                    permiso='documentos.ver',
                 )
                 # Email documento por vencer
                 try:

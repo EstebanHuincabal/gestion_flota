@@ -1,6 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { Preferences } from '@capacitor/preferences'
+import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import { useAuthStore }  from '@/stores/auth.js'
 import { useThemeStore } from '@/stores/theme.js'
 import { usePermisos }   from '@/composables/usePermisos.js'
@@ -11,6 +12,61 @@ import { validarLicencia } from '@/utils/validators.js'
 
 const auth       = useAuthStore()
 const themeStore = useThemeStore()
+
+// ── Foto del vehículo ────────────────────────────────────────────────────────
+const subiendoFoto  = ref(false)
+const fotoVehiculo   = ref(auth.usuario?.vehiculo_asignado?.foto_url || null)
+const menuFotoAbierto = ref(false)
+
+async function fotoDesdeCamara() {
+  menuFotoAbierto.value = false
+  try {
+    const foto = await Camera.getPhoto({ quality: 85, allowEditing: false, resultType: CameraResultType.DataUrl, source: CameraSource.Camera })
+    await _subirFoto(foto.dataUrl)
+  } catch {}
+}
+async function fotoDesdeGaleria() {
+  menuFotoAbierto.value = false
+  try {
+    const foto = await Camera.getPhoto({ quality: 85, allowEditing: false, resultType: CameraResultType.DataUrl, source: CameraSource.Photos })
+    await _subirFoto(foto.dataUrl)
+  } catch {}
+}
+
+// Al abrir Ajustes, traer la foto actual del vehículo (la pudo subir el admin o
+// quedó guardada de antes; la sesión local podría no tenerla).
+onMounted(async () => {
+  if (!auth.usuario?.vehiculo_asignado) return
+  try {
+    const data = await apiFetch('/api/conductor/vehiculo/foto/')
+    if (data && 'foto_url' in data) {
+      fotoVehiculo.value = data.foto_url
+      auth.usuario.vehiculo_asignado.foto_url = data.foto_url
+    }
+  } catch { /* sin conexión: se queda con lo que haya */ }
+})
+
+async function _subirFoto(dataUrl) {
+  const b64   = dataUrl.split(',')[1]
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  const blob  = new Blob([bytes], { type: 'image/jpeg' })
+  const fd    = new FormData()
+  fd.append('foto', blob, `vehiculo_${Date.now()}.jpg`)
+
+  subiendoFoto.value = true
+  try {
+    const data = await apiFetch('/api/conductor/vehiculo/foto/', { method: 'PATCH', body: fd })
+    if (data?.foto_url) {
+      fotoVehiculo.value = data.foto_url
+      // Reflejar en el usuario guardado para que persista en la sesión.
+      if (auth.usuario?.vehiculo_asignado) auth.usuario.vehiculo_asignado.foto_url = data.foto_url
+    }
+  } catch (e) {
+    // apiFetch lanza Error con mensaje legible
+  } finally {
+    subiendoFoto.value = false
+  }
+}
 
 const { modulos, planNombre } = usePermisos()
 
@@ -224,12 +280,21 @@ function mostrarPerfilToast(mensaje, error = false) {
 
       <!-- ── Vehículo asignado ──────────────────────────────────────────────── -->
       <section v-if="auth.usuario?.vehiculo_asignado" class="aj-vehicle-card">
-        <div class="aj-vehicle-icon">
-          <svg class="w-6 h-6" style="color: var(--color-acento)" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
+        <!-- Foto del vehículo (toca para cambiar) -->
+        <button type="button" class="aj-vehicle-foto" @click="menuFotoAbierto = true" :disabled="subiendoFoto">
+          <img v-if="fotoVehiculo" :src="fotoVehiculo" alt="Foto del vehículo"/>
+          <svg v-else class="w-6 h-6" style="color: var(--color-acento)" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
           </svg>
-        </div>
+          <span class="aj-vehicle-foto-edit">
+            <svg v-if="!subiendoFoto" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            <span v-else class="aj-foto-spinner"/>
+          </span>
+        </button>
         <div class="flex-1 min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Vehículo asignado</p>
           <p class="text-xl font-black text-gray-800 font-mono tracking-wider leading-tight">
@@ -256,6 +321,24 @@ function mostrarPerfilToast(mensaje, error = false) {
           <p class="text-xs text-orange-600 mt-0.5">Contacta a tu administrador para que te asigne un vehículo.</p>
         </div>
       </section>
+
+      <!-- Sheet: elegir origen de la foto del vehículo -->
+      <Transition name="sheet">
+        <div v-if="menuFotoAbierto" class="fixed inset-0 z-[60] flex flex-col justify-end" @click.self="menuFotoAbierto = false">
+          <div class="absolute inset-0 bg-black/50"/>
+          <div class="relative bg-white rounded-t-3xl px-6 pt-5 pb-10" style="padding-bottom: calc(2.5rem + env(safe-area-inset-bottom))">
+            <div class="flex justify-center mb-4"><div class="w-10 h-1 rounded-full bg-gray-300"/></div>
+            <h2 class="text-base font-bold text-gray-800 mb-1">Foto del vehículo</h2>
+            <p class="text-sm text-gray-500 mb-4">Ayuda a identificar el vehículo. La verá el administrador.</p>
+            <button @click="fotoDesdeCamara" class="w-full py-3.5 mb-2 rounded-xl text-white font-semibold text-sm" style="background: var(--color-acento)">
+              <i class="ti ti-camera mr-1"/> Tomar foto
+            </button>
+            <button @click="fotoDesdeGaleria" class="w-full py-3.5 rounded-xl border border-gray-200 text-gray-700 font-semibold text-sm">
+              <i class="ti ti-photo mr-1"/> Elegir de la galería
+            </button>
+          </div>
+        </div>
+      </Transition>
 
       <!-- ── Plan de la empresa ───────────────────────────────────────────── -->
       <section class="aj-settings-group">
@@ -654,6 +737,27 @@ function mostrarPerfilToast(mensaje, error = false) {
   background: var(--color-acento-suave);
   display: flex; align-items: center; justify-content: center;
 }
+.aj-vehicle-foto {
+  position: relative;
+  width: 60px; height: 60px; flex-shrink: 0; border-radius: 0.875rem;
+  background: var(--color-acento-suave);
+  border: none; padding: 0; overflow: hidden; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.aj-vehicle-foto img { width: 100%; height: 100%; object-fit: cover; }
+.aj-vehicle-foto:disabled { opacity: 0.7; }
+.aj-vehicle-foto-edit {
+  position: absolute; bottom: 0; right: 0;
+  width: 20px; height: 20px; border-radius: 999px 0 0.875rem 0;
+  background: var(--color-acento); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.aj-foto-spinner {
+  width: 11px; height: 11px;
+  border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+  border-radius: 50%; animation: aj-spin 0.7s linear infinite;
+}
+@keyframes aj-spin { to { transform: rotate(360deg); } }
 .aj-vehicle-badge {
   flex-shrink: 0;
   display: inline-flex; align-items: center; gap: 0.3rem;

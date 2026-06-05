@@ -21,8 +21,10 @@ const anios   = Array.from({ length: 5 }, (_, i) => hoy.getFullYear() - i)
 const puedeCrear       = tienePermiso('finanzas.crear')
 const puedeEditar      = tienePermiso('finanzas.editar')
 const puedeEliminar    = tienePermiso('finanzas.eliminar')
-const puedeExportar    = tienePermiso('finanzas.exportar')
 const puedePresupuesto = tienePermiso('finanzas.presupuesto')
+// Pestañas que muestran datos de OTROS módulos: solo si el plan los incluye.
+const verMantencion    = tienePermiso('mantenciones.ver')
+const verFlota         = tienePermiso('flotas.ver')
 const router = useRouter()
 
 // ── Tabs ────────────────────────────────────────────────────
@@ -30,9 +32,9 @@ const tabActivo = ref('resumen')
 const tabs = computed(() => [
   { key: 'resumen',     label: 'Resumen' },
   { key: 'combustible', label: 'Combustible' },
-  { key: 'mantencion',  label: 'Mantención' },
-  { key: 'multas',      label: 'Multas y peajes' },
-  { key: 'vehiculo',    label: 'Por vehículo' },
+  ...(verMantencion ? [{ key: 'mantencion', label: 'Mantención' }] : []),
+  { key: 'multas',      label: 'Multas' },
+  ...(verFlota ? [{ key: 'vehiculo', label: 'Por vehículo' }] : []),
   { key: 'servicio',    label: 'Pago de servicio' },
   ...(puedePresupuesto ? [{ key: 'presupuesto', label: 'Presupuesto' }] : []),
 ])
@@ -334,21 +336,6 @@ async function eliminarGasto() {
     toast.error('Error de conexión.')
   } finally {
     eliminando.value = false
-  }
-}
-
-// ── Exportar ────────────────────────────────────────────────
-async function exportar() {
-  const url = `/api/empresa/gastos/exportar/?mes=${mesSel.value}&anio=${anioSel.value}&formato=csv`
-  const res = await apiFetch(url)
-  if (res.ok) {
-    const blob = await res.blob()
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `gastos_${anioSel.value}_${mesSel.value}.xlsx`
-    link.click()
-  } else {
-    toast.error('Error al exportar.')
   }
 }
 
@@ -654,8 +641,8 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
             </div>
           </div>
 
-          <!-- Top vehículos -->
-          <div class="card">
+          <!-- Top vehículos (solo si el plan incluye flota) -->
+          <div class="card" v-if="verFlota">
             <div class="card-head"><h3 class="card-title">Top vehículos por gasto</h3></div>
             <div v-if="!resumen?.por_vehiculo?.length" class="card-body">
               <p class="empty-msg">Sin datos.</p>

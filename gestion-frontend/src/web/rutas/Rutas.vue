@@ -176,6 +176,11 @@
                   <span v-if="ruta.estado === 'activo'" class="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1 animate-pulse"></span>
                   {{ labelEstado(ruta.estado) }}
                 </span>
+                <span v-if="ruta.atrasada"
+                      class="block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700"
+                      :title="`Debió iniciar hace ${formatAtraso(ruta.atraso_min)}`">
+                  ⚠ Atrasada · {{ formatAtraso(ruta.atraso_min) }}
+                </span>
               </td>
               <td class="px-4 py-3 text-center" @click.stop>
                 <div class="flex items-center justify-center gap-1">
@@ -270,6 +275,10 @@
                   <p class="text-xs text-gray-400 mb-0.5">Estado</p>
                   <span :class="['px-2.5 py-0.5 rounded-full text-xs font-semibold', badgeEstado(rutaDetalle?.estado)]">
                     {{ labelEstado(rutaDetalle?.estado) }}
+                  </span>
+                  <span v-if="rutaDetalle?.atrasada"
+                        class="ml-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                    ⚠ Atrasada · {{ formatAtraso(rutaDetalle.atraso_min) }}
                   </span>
                 </div>
                 <div>
@@ -396,7 +405,7 @@
     <Transition name="modal">
       <div v-if="modalCrear" class="fixed inset-0 z-40 flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/40" @click="cerrarModal"></div>
-        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col">
 
           <!-- Header modal -->
           <div class="flex items-center justify-between p-5 border-b border-gray-100">
@@ -472,15 +481,16 @@
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-xs font-semibold text-gray-600 mb-1">Fecha programada</label>
+                  <label class="block text-xs font-semibold text-gray-600 mb-1">
+                    Fecha programada <span class="text-red-500">*</span>
+                  </label>
                   <input v-model="form.fecha_programada" type="date"
                     @change="validacionResult = null; advertenciasAceptadas = false"
                     class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
                 </div>
                 <div>
                   <label class="block text-xs font-semibold text-gray-600 mb-1">
-                    Hora programada
-                    <span class="text-gray-400 font-normal">(opcional)</span>
+                    Hora programada <span class="text-red-500">*</span>
                   </label>
                   <input v-model="form.hora_programada" type="time"
                     @change="validacionResult = null; advertenciasAceptadas = false"
@@ -1220,8 +1230,17 @@ async function siguientePaso() {
   errorModal.value = ''
 
   if (paso.value === 1) {
+    // Fecha y hora son obligatorias
+    if (!form.value.fecha_programada) {
+      errorModal.value = 'La fecha programada es obligatoria.'
+      return
+    }
+    if (!form.value.hora_programada) {
+      errorModal.value = 'La hora programada es obligatoria.'
+      return
+    }
     // Validación de fecha
-    if (form.value.fecha_programada) {
+    {
       const hoy     = new Date(); hoy.setHours(0, 0, 0, 0)
       const elegida = new Date(form.value.fecha_programada + 'T00:00:00')
       if (elegida < hoy) {
@@ -1550,6 +1569,16 @@ function labelEstado(estado) {
     activo: 'Activo', pendiente: 'Pendiente',
     finalizado: 'Finalizado', cancelado: 'Cancelado', borrador: 'Borrador',
   }[estado] || estado
+}
+
+// Formatea el atraso (minutos) como "45 min" o "2 h 15 min".
+function formatAtraso(min) {
+  if (!min || min <= 0) return ''
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  if (h && m) return `${h} h ${m} min`
+  if (h)      return `${h} h`
+  return `${m} min`
 }
 
 function toast(tipo, mensaje) {

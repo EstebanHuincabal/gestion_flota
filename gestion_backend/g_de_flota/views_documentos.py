@@ -317,6 +317,7 @@ class DocumentosListView(APIView):
                 titulo='Conductor subió un documento',
                 mensaje=f'El conductor {user.nombre} subió "{doc.get_tipo_display()}".',
                 url_accion='/empresa/documentos',
+                permiso='documentos.ver',
             )
 
         return Response(_doc_dict(doc), status=status.HTTP_201_CREATED)

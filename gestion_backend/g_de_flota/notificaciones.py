@@ -14,14 +14,33 @@ def _prefs(usuario):
     }
 
 
+def _plan_incluye_permiso(usuario, codigo: str) -> bool:
+    """True si el plan de la empresa del usuario incluye `codigo`. SUPERADMIN siempre."""
+    from .models import Rol
+    if getattr(usuario, 'rol', None) == Rol.SUPERADMIN:
+        return True
+    plan = getattr(getattr(usuario, 'empresa', None), 'plan', None)
+    if not plan:
+        return False
+    return plan.permisos.filter(codigo=codigo).exists()
+
+
 def notificar(usuario, tipo: str, titulo: str, mensaje: str,
-              url_accion: str = '', extra: dict = None, forzar: bool = False):
+              url_accion: str = '', extra: dict = None, forzar: bool = False,
+              permiso: str = None):
     """
     Crea una notificación in-app y/o envía email según las preferencias del usuario.
     forzar=True omite el filtro de preferencias (útil para alertas críticas).
+    permiso='codigo' la asocia a un permiso del plan: si la empresa no lo tiene
+    (p. ej. tras un downgrade), la notificación no se envía. Centraliza el filtro
+    para que cada módulo no tenga que comprobarlo por su cuenta.
     Nunca lanza excepción — falla silenciosamente para no interrumpir el flujo principal.
     """
     try:
+        # Filtro por permiso del plan: no notificar de módulos que la empresa no tiene.
+        if permiso and not _plan_incluye_permiso(usuario, permiso):
+            return
+
         prefs = _prefs(usuario)
         categoria = TIPO_NOTIF_CATEGORIA.get(tipo, "actividad")
 
@@ -68,12 +87,17 @@ def notificar(usuario, tipo: str, titulo: str, mensaje: str,
 
 
 def notificar_admins_empresa(empresa, tipo: str, titulo: str, mensaje: str,
-                             url_accion: str = '', extra: dict = None):
-    """Notifica a todos los usuarios USUARIO activos de una empresa."""
+                             url_accion: str = '', extra: dict = None,
+                             permiso: str = None):
+    """Notifica a todos los usuarios USUARIO activos de una empresa.
+
+    Si se pasa `permiso`, solo se notifica cuando el plan de la empresa lo
+    incluye (se evalúa una vez, ya que el plan es por empresa).
+    """
     from .models import Usuario, Rol
     admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
     for admin in admins:
-        notificar(admin, tipo, titulo, mensaje, url_accion, extra)
+        notificar(admin, tipo, titulo, mensaje, url_accion, extra, permiso=permiso)
 
 
 def notificar_superadmins(tipo: str, titulo: str, mensaje: str,

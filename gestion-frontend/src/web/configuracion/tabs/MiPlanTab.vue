@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
 
@@ -10,9 +10,11 @@ const historial = ref([])
 const planes    = ref([])
 const cargando  = ref(true)
 
-// Modal solicitud
-const modalPlan    = ref(null)
-const solicitando  = ref(false)
+const modalPlan   = ref(null)
+const procesando  = ref(false)
+const cancelando  = ref(false)
+
+const DIAS_CICLO = 30
 
 const cargar = async () => {
   cargando.value = true
@@ -37,27 +39,96 @@ const dimLabel = {
   vehiculos: 'Vehículos', conductores: 'Conductores', usuarios: 'Usuarios',
 }
 
+function clp(v) { return '$' + Number(v || 0).toLocaleString('es-CL') }
+
 const esPlanActual = (plan) =>
   planUso.value?.plan && planUso.value.plan.id === plan.id
 
-const abrirModal = (plan) => { modalPlan.value = plan }
+// Tipo de cambio respecto al plan actual: 'actual' | 'upgrade' | 'downgrade' | 'lateral'
+function tipoCambio(plan) {
+  const actual = planUso.value?.plan
+  if (!actual) return 'lateral'
+  if (actual.id === plan.id) return 'actual'
+  const pa = Number(actual.precio_mensual || 0)
+  const pn = Number(plan.precio_mensual || 0)
+  if (pn > pa) return 'upgrade'
+  if (pn < pa) return 'downgrade'
+  return 'lateral'
+}
+
+// Estimación de la diferencia prorrateada a cobrar al subir de plan.
+function proracionEstimada(plan) {
+  const sus    = planUso.value?.suscripcion
+  const actual = planUso.value?.plan
+  if (!sus || !sus.dias_restantes || sus.dias_restantes <= 0 || !actual) return 0
+  const dif = Math.max(0, Number(plan.precio_mensual || 0) - Number(actual.precio_mensual || 0))
+  return Math.round(dif * sus.dias_restantes / DIAS_CICLO)
+}
+
+const suscripcionVigente = computed(() => planUso.value?.suscripcion?.vigente === true)
+
+const modalTipo      = computed(() => modalPlan.value ? tipoCambio(modalPlan.value) : null)
+const modalProracion = computed(() => modalPlan.value ? proracionEstimada(modalPlan.value) : 0)
+
+const abrirModal  = (plan) => { modalPlan.value = plan }
 const cerrarModal = () => { modalPlan.value = null }
 
-const confirmarSolicitud = async () => {
+const confirmarCambio = async () => {
   if (!modalPlan.value) return
-  solicitando.value = true
-  const res = await apiFetch('/api/empresa/solicitar-cambio-plan/', {
+  procesando.value = true
+  const res  = await apiFetch('/api/empresa/cambiar-plan/', {
     method: 'POST',
     body: { plan_id: modalPlan.value.id },
   })
+  const data = await res.json().catch(() => ({}))
   if (res.ok) {
-    toast.success('Solicitud enviada. El administrador recibirá una notificación.')
+    // Upgrade sin tarjeta guardada → redirigir a Webpay para pagar la diferencia.
+    // Webpay Plus exige un POST con token_ws (no un GET): se arma un form y se envía.
+    if (data.tipo === 'upgrade_webpay' && data.url && data.token) {
+      const form  = document.createElement('form')
+      form.method = 'POST'
+      form.action = data.url
+      const input = document.createElement('input')
+      input.type  = 'hidden'
+      input.name  = 'token_ws'
+      input.value = data.token
+      form.appendChild(input)
+      document.body.appendChild(form)
+      form.submit()
+      return
+    }
+    if (data.tipo === 'upgrade') {
+      toast.success(data.cobrado > 0
+        ? `Plan mejorado. Se cobró ${clp(data.cobrado)} por los días restantes.`
+        : 'Plan mejorado correctamente.')
+    } else if (data.tipo === 'downgrade') {
+      toast.success(`Cambio programado para el ${data.aplica}.`)
+    } else {
+      toast.success('Plan actualizado.')
+    }
     cerrarModal()
+    await cargar()
   } else {
-    const err = await res.json()
-    toast.error(err.error || 'Error al enviar la solicitud.')
+    if (data.codigo === 'SIN_SUSCRIPCION_ACTIVA') {
+      toast.error('Tu suscripción no está activa. Actívala en Suscripción y pagos.')
+    } else {
+      toast.error(data.error || 'No se pudo cambiar el plan.')
+    }
   }
-  solicitando.value = false
+  procesando.value = false
+}
+
+const cancelarProgramado = async () => {
+  cancelando.value = true
+  const res = await apiFetch('/api/empresa/cancelar-cambio-plan/', { method: 'POST' })
+  if (res.ok) {
+    toast.success('Se canceló el cambio de plan programado.')
+    await cargar()
+  } else {
+    const e = await res.json().catch(() => ({}))
+    toast.error(e.error || 'No se pudo cancelar el cambio.')
+  }
+  cancelando.value = false
 }
 
 onMounted(cargar)
@@ -91,6 +162,25 @@ onMounted(cargar)
           <p v-if="planUso.plan.descripcion" class="plan-desc">{{ planUso.plan.descripcion }}</p>
         </div>
 
+        <!-- Banner de cambio de plan programado (downgrade diferido) -->
+        <div v-if="planUso.cambio_programado" class="banner-prog">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="banner-prog-icon">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <div class="banner-prog-text">
+            <strong>Cambio de plan programado</strong>
+            <span>
+              Cambiarás al plan <b>{{ planUso.cambio_programado.plan_nombre }}</b>
+              el <b>{{ planUso.cambio_programado.aplica }}</b>.
+              Conservas tu plan actual y sus beneficios hasta esa fecha.
+            </span>
+          </div>
+          <button class="btn-cancelar-prog" @click="cancelarProgramado" :disabled="cancelando">
+            {{ cancelando ? 'Cancelando...' : 'Cancelar' }}
+          </button>
+        </div>
+
         <!-- Uso de recursos -->
         <div class="card" v-if="planUso.uso">
           <div class="card-header">
@@ -116,7 +206,7 @@ onMounted(cargar)
       <div class="card" v-if="planes.length">
         <div class="card-header">
           <h2 class="card-title">Planes disponibles</h2>
-          <p class="card-desc">Compara los planes y solicita un cambio a tu administrador</p>
+          <p class="card-desc">Sube de plan al instante o programa una baja para el fin de tu período</p>
         </div>
         <div class="card-body planes-grid">
           <div
@@ -143,13 +233,22 @@ onMounted(cargar)
                 {{ plan.max_usuarios }} usuarios
               </li>
             </ul>
-            <button
-              v-if="!esPlanActual(plan)"
-              class="btn-solicitar"
-              @click="abrirModal(plan)"
-            >
-              Solicitar cambio
-            </button>
+            <template v-if="!esPlanActual(plan)">
+              <button
+                v-if="tipoCambio(plan) === 'upgrade'"
+                class="btn-solicitar"
+                @click="abrirModal(plan)"
+              >
+                Mejorar a este plan
+              </button>
+              <button
+                v-else
+                class="btn-bajar"
+                @click="abrirModal(plan)"
+              >
+                Cambiar a este plan
+              </button>
+            </template>
             <div v-else class="btn-actual-label">Plan activo</div>
           </div>
         </div>
@@ -191,7 +290,11 @@ onMounted(cargar)
       <div v-if="modalPlan" class="modal-overlay" @click.self="cerrarModal">
         <div class="modal">
           <div class="modal-header">
-            <h3 class="modal-title">Solicitar cambio de plan</h3>
+            <h3 class="modal-title">
+              {{ modalTipo === 'upgrade' ? 'Mejorar de plan'
+                 : modalTipo === 'downgrade' ? 'Cambiar a un plan inferior'
+                 : 'Cambiar de plan' }}
+            </h3>
             <button class="modal-close" @click="cerrarModal">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -200,22 +303,55 @@ onMounted(cargar)
           </div>
           <div class="modal-body">
             <p class="modal-text">
-              Estás por solicitar cambio al plan
+              Cambiarás al plan
               <strong>{{ modalPlan.nombre_display }}</strong>
               ({{ modalPlan.precio_display }}).
             </p>
-            <div class="modal-info">
+
+            <!-- UPGRADE: proración -->
+            <div v-if="modalTipo === 'upgrade'" class="modal-info modal-info--ok">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="info-icon">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M5 13l4 4L19 7"/>
+              </svg>
+              <p>
+                El cambio es <b>inmediato</b>. Se cobrará solo la diferencia prorrateada
+                <b v-if="modalProracion > 0">(aprox. {{ clp(modalProracion) }})</b>
+                por los {{ planUso?.suscripcion?.dias_restantes }} días que quedan del período
+                —con tu tarjeta guardada o, si no tienes, por Webpay.
+                El precio completo del nuevo plan recién se cobra en la próxima renovación.
+              </p>
+            </div>
+
+            <!-- DOWNGRADE: diferido -->
+            <div v-else-if="modalTipo === 'downgrade'" class="modal-info modal-info--warn">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="info-icon">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <p>
+                El cambio se aplicará el <b>{{ planUso?.suscripcion?.fecha_fin }}</b>
+                (fin de tu período actual). Hasta entonces conservas tu plan actual y sus beneficios,
+                sin perder nada de lo que ya pagaste.
+              </p>
+            </div>
+
+            <!-- LATERAL -->
+            <div v-else class="modal-info">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="info-icon">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
                   d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
-              <p>Se enviará una notificación al administrador del sistema. El cambio efectivo lo realizará él.</p>
+              <p>El cambio se aplica de inmediato. Ambos planes tienen el mismo precio.</p>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn-cancel" @click="cerrarModal">Cancelar</button>
-            <button class="btn-confirm" @click="confirmarSolicitud" :disabled="solicitando">
-              {{ solicitando ? 'Enviando...' : 'Enviar solicitud' }}
+            <button class="btn-confirm" @click="confirmarCambio" :disabled="procesando">
+              {{ procesando ? 'Procesando...'
+                 : modalTipo === 'upgrade' ? 'Pagar diferencia y mejorar'
+                 : modalTipo === 'downgrade' ? 'Programar cambio'
+                 : 'Cambiar plan' }}
             </button>
           </div>
         </div>
@@ -320,11 +456,48 @@ onMounted(cargar)
   cursor: pointer; transition: opacity 0.15s;
 }
 .btn-solicitar:hover { opacity: 0.88; }
+.btn-bajar {
+  margin-top: auto;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  color: #B45309; border: 1.5px solid #FCD34D;
+  border-radius: var(--radius-btn, 8px);
+  font-size: 0.8125rem; font-weight: 500;
+  cursor: pointer; transition: background 0.15s;
+}
+.btn-bajar:hover { background: #FFFBEB; }
 .btn-actual-label {
   margin-top: auto;
   text-align: center; font-size: 0.8125rem;
   color: var(--color-accent, #4F46E5); font-weight: 500;
 }
+
+/* ── Banner de cambio programado ── */
+.banner-prog {
+  display: flex; align-items: center; gap: 0.875rem;
+  background: #FFFBEB; border: 1px solid #FDE68A;
+  border-radius: var(--radius-card, 12px); padding: 1rem 1.25rem;
+}
+.banner-prog-icon { width: 24px; height: 24px; color: #D97706; flex-shrink: 0; }
+.banner-prog-text { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 0; }
+.banner-prog-text strong { font-size: 0.875rem; color: #92400E; }
+.banner-prog-text span   { font-size: 0.8125rem; color: #B45309; line-height: 1.4; }
+.btn-cancelar-prog {
+  flex-shrink: 0; padding: 0.45rem 0.875rem;
+  background: #fff; border: 1.5px solid #FCD34D; border-radius: var(--radius-btn, 8px);
+  font-size: 0.8125rem; font-weight: 600; color: #B45309; cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-cancelar-prog:hover    { background: #FEF3C7; }
+.btn-cancelar-prog:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Variantes del recuadro informativo del modal */
+.modal-info--ok   { background: #ECFDF5; border-color: #A7F3D0; }
+.modal-info--ok .info-icon { color: #059669; }
+.modal-info--ok p { color: #065F46; }
+.modal-info--warn { background: #FFFBEB; border-color: #FDE68A; }
+.modal-info--warn .info-icon { color: #D97706; }
+.modal-info--warn p { color: #92400E; }
 
 /* ── Historial ── */
 .table-wrap { overflow-x: auto; }

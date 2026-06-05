@@ -404,10 +404,31 @@ def plan_uso(request):
         if val["pct"] >= 80
     ]
 
+    # ── Estado de la suscripción y cambio de plan programado (downgrade diferido) ──
+    sus = Suscripcion.objects.select_related('plan_programado').filter(empresa=empresa).first()
+    suscripcion_info = None
+    cambio_programado = None
+    if sus:
+        suscripcion_info = {
+            "estado":         sus.estado,
+            "vigente":        sus.estado == 'activa' and bool(sus.fecha_fin_periodo)
+                              and sus.fecha_fin_periodo > timezone.now(),
+            "fecha_fin":      sus.fecha_fin_periodo.strftime('%d/%m/%Y') if sus.fecha_fin_periodo else None,
+            "dias_restantes": sus.dias_para_vencer,
+        }
+        if sus.plan_programado:
+            cambio_programado = {
+                "plan_nombre": sus.plan_programado.get_nombre_display(),
+                "plan_id":     sus.plan_programado.id,
+                "aplica":      sus.fecha_cambio_programado.strftime('%d/%m/%Y') if sus.fecha_cambio_programado else None,
+            }
+
     return Response({
-        "plan":    PlanSuscripcionSerializer(plan).data,
-        "uso":     uso,
-        "alertas": alertas,
+        "plan":              PlanSuscripcionSerializer(plan).data,
+        "uso":               uso,
+        "alertas":           alertas,
+        "suscripcion":       suscripcion_info,
+        "cambio_programado": cambio_programado,
     })
 
 
@@ -456,6 +477,330 @@ def solicitar_cambio_plan(request):
                   detalle={'empresa': empresa.nombre, 'plan_solicitado': plan.nombre})
 
     return Response({"message": "Solicitud enviada. El administrador recibirá una notificación."})
+
+
+# ─────────────────────────────────────────
+# Cambio de plan self-service (USUARIO)
+#   - Upgrade: proración inmediata cobrada con OneClick.
+#   - Downgrade: diferido al final del período vigente.
+#   - Lateral / mismo precio: cambio directo.
+# ─────────────────────────────────────────
+
+DIAS_CICLO = 30
+
+
+def _proracion_upgrade(sus, plan_nuevo):
+    """Monto prorrateado a cobrar al subir de plan (diferencia × días restantes).
+
+    Devuelve (monto_clp, dias_restantes). El período ya está pagado, así que solo
+    se cobra la diferencia de precio por los días que faltan hasta el vencimiento.
+    """
+    if not sus or not sus.fecha_fin_periodo:
+        return 0, 0
+    dias_restantes = (sus.fecha_fin_periodo - timezone.now()).days
+    if dias_restantes <= 0:
+        return 0, 0
+    p_act = int((sus.plan.precio_mensual if sus.plan else 0) or 0)
+    p_nvo = int(plan_nuevo.precio_mensual or 0)
+    diferencia_mensual = max(0, p_nvo - p_act)
+    monto = round(diferencia_mensual * dias_restantes / DIAS_CICLO)
+    return monto, dias_restantes
+
+
+def _cobrar_oneclick(empresa, sus, plan, monto, via='oneclick', usuario=None):
+    """Cobra `monto` CLP con la tarjeta OneClick guardada de la empresa.
+
+    Devuelve (True, '') si se aprobó (y registra un PagoTransbank aprobado), o
+    (False, mensaje) si falló. Reutiliza el mismo patrón que PagoIniciarView.
+    """
+    try:
+        tarjeta = empresa.tarjeta_guardada
+    except TarjetaGuardada.DoesNotExist:
+        return False, 'No hay una tarjeta guardada para el cobro.'
+
+    orden_compra = f"PRO-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
+    child_order  = f"CHD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
+    try:
+        tx = _get_oneclick_transaction()
+        oc_resp = tx.authorize(
+            user_name=tarjeta.username_tb,
+            tbk_user=tarjeta.tbk_user,
+            parent_buy_order=orden_compra,
+            details=[{
+                'commerce_code':       django_settings.ONECLICK_CHILD_CODE,
+                'buy_order':           child_order,
+                'amount':              int(monto),
+                'installments_number': 1,
+            }],
+        )
+    except Exception as e:
+        import traceback
+        print(f"[ONECLICK PRORACION ERROR] {traceback.format_exc()}")
+        return False, f'Error al cobrar con la tarjeta guardada: {e}'
+
+    details = oc_resp.get('details', []) if isinstance(oc_resp, dict) else getattr(oc_resp, 'details', [])
+    if details:
+        det = details[0]
+        resp_code = det.get('response_code', -1) if isinstance(det, dict) else getattr(det, 'response_code', -1)
+        auth_code = det.get('authorization_code', '') if isinstance(det, dict) else getattr(det, 'authorization_code', '')
+    else:
+        resp_code, auth_code = -1, ''
+
+    if resp_code != 0:
+        return False, 'El cobro de la diferencia fue rechazado por Transbank.'
+
+    PagoTransbank.objects.create(
+        empresa=empresa, suscripcion=sus,
+        token=f"PRO-{orden_compra}",
+        orden_compra=orden_compra,
+        monto=int(monto), ciclo=(sus.ciclo if sus else 'mensual'),
+        plan_nombre=plan.get_nombre_display(),
+        estado='aprobado',
+        fecha_pago=timezone.now(),
+        iniciado_por=usuario,
+        respuesta_tb={'auth_code': auth_code, 'response_code': resp_code, 'via': via},
+    )
+    return True, ''
+
+
+def _aplicar_cambio_plan(empresa, plan, usuario=None, motivo=''):
+    """Aplica el cambio de plan de inmediato y deja registro en CambioPlan."""
+    CambioPlan.objects.create(
+        empresa=empresa, plan_antes=empresa.plan, plan_despues=plan,
+        cambiado_por=usuario, motivo=motivo,
+    )
+    empresa.plan = plan
+    empresa.save(update_fields=['plan'])
+
+
+def aplicar_downgrade_programado(sus, usuario=None):
+    """Aplica el plan programado de una suscripción (downgrade diferido vencido).
+
+    Reutilizable desde el cron `verificar_suscripciones`. Devuelve el plan
+    aplicado, o None si no había nada programado.
+    """
+    if not sus.plan_programado:
+        return None
+    empresa    = sus.empresa
+    plan_nuevo = sus.plan_programado
+    _aplicar_cambio_plan(
+        empresa, plan_nuevo, usuario,
+        motivo='Downgrade programado aplicado al vencer el período',
+    )
+    sus.plan = plan_nuevo
+    sus.plan_programado = None
+    sus.fecha_cambio_programado = None
+    sus.save(update_fields=['plan', 'plan_programado', 'fecha_cambio_programado'])
+    return plan_nuevo
+
+
+def _finalizar_upgrade(empresa, sus, plan, usuario, monto, dias):
+    """Aplica el upgrade ya pagado (cambia el plan sin tocar el período) y notifica."""
+    _aplicar_cambio_plan(empresa, plan, usuario, motivo='Upgrade self-service (proración)')
+    if sus:
+        sus.plan = plan
+        sus.plan_programado = None
+        sus.fecha_cambio_programado = None
+        sus.save(update_fields=['plan', 'plan_programado', 'fecha_cambio_programado'])
+    notificar_admins_empresa(
+        empresa, TipoNotificacion.ACTIVIDAD, '📈 Plan mejorado',
+        f'Subiste al plan {plan.get_nombre_display()}. '
+        + (f'Se cobró la diferencia prorrateada de {monto:,} CLP por los {dias} días restantes del período.'
+           if monto > 0 else 'Sin costo adicional este período.'),
+        url_accion='/empresa/configuracion',
+    )
+
+
+def _iniciar_webpay_proracion(request, empresa, sus, plan, monto):
+    """Crea una transacción Webpay Plus por la diferencia prorrateada del upgrade.
+
+    Devuelve {'url', 'token'} para redirigir, o {'error'}. El plan NO se cambia
+    aquí: se aplica en PagoRetornoView al confirmarse el pago (marcado con
+    'proracion_upgrade' en respuesta_tb, e 'iniciado_por' para saber quién fue).
+    Sirve cuando la empresa no tiene tarjeta OneClick guardada.
+    """
+    orden_compra = f"PRORWP-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
+    session_id   = f"SES-{request.user.id}-{uuid.uuid4().hex[:6]}"
+    return_url   = request.build_absolute_uri('/api/pago/retorno/')
+    try:
+        tx = _get_webpay_transaction()
+        response = tx.create(
+            buy_order=orden_compra, session_id=session_id,
+            amount=int(monto), return_url=return_url,
+        )
+    except Exception as e:
+        import traceback
+        print(f"[WEBPAY PRORACION ERROR] {traceback.format_exc()}")
+        return {'error': f'Error al conectar con Transbank: {e}'}
+
+    token_tb = response.get('token') if isinstance(response, dict) else getattr(response, 'token', None)
+    url_tb   = response.get('url')   if isinstance(response, dict) else getattr(response, 'url', None)
+    if not token_tb or not url_tb:
+        return {'error': 'Transbank no devolvió token/url válidos.'}
+
+    PagoTransbank.objects.create(
+        empresa=empresa, suscripcion=sus, token=token_tb, orden_compra=orden_compra,
+        monto=int(monto), ciclo=(sus.ciclo if sus else 'mensual'),
+        plan_nombre=plan.get_nombre_display(),
+        iniciado_por=request.user,
+        respuesta_tb={'proracion_upgrade': True, 'plan_id': plan.id},
+    )
+    return {'url': url_tb, 'token': token_tb}
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cambiar_plan_self_service(request):
+    # NOTA: sin @transaction.atomic a propósito. Esta vista hace llamadas HTTP a
+    # Transbank (~2-3 s) que NO deben ejecutarse dentro de una transacción: con
+    # SQLite, mantener el lock de escritura durante esa espera causa "database is
+    # locked" frente al polling concurrente del frontend. Las escrituras locales
+    # (CambioPlan, empresa.save, sus.save) son rápidas y atómicas por sí mismas.
+    user = request.user
+    if user.rol != Rol.USUARIO:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+    if not user.empresa_id:
+        return Response({'error': 'Sin empresa asignada.'}, status=status.HTTP_403_FORBIDDEN)
+
+    plan_id = request.data.get('plan_id')
+    if not plan_id:
+        return Response({'error': 'Se requiere plan_id.'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        plan = PlanSuscripcion.objects.get(pk=plan_id, activo=True)
+    except PlanSuscripcion.DoesNotExist:
+        return Response({'error': 'Plan no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    empresa     = Empresa.objects.select_related('plan').get(pk=user.empresa_id)
+    sus         = Suscripcion.objects.filter(empresa=empresa).first()
+    plan_actual = empresa.plan
+
+    tiene_programado = bool(sus and sus.plan_programado)
+    if plan_actual and plan_actual.pk == plan.pk and not tiene_programado:
+        return Response({'error': 'Tu empresa ya tiene este plan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # El cambio prorrateado solo aplica con una suscripción activa y vigente.
+    suscripcion_vigente = (
+        sus and sus.estado == 'activa' and sus.fecha_fin_periodo
+        and sus.fecha_fin_periodo > timezone.now()
+    )
+    if not suscripcion_vigente:
+        return Response({
+            'error':  'Tu suscripción no está activa. Actívala desde Suscripción y pagos.',
+            'codigo': 'SIN_SUSCRIPCION_ACTIVA',
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    p_act = int((plan_actual.precio_mensual if plan_actual else 0) or 0)
+    p_nvo = int(plan.precio_mensual or 0)
+    if p_nvo > p_act:
+        tipo = 'upgrade'
+    elif p_nvo < p_act:
+        tipo = 'downgrade'
+    else:
+        tipo = 'lateral'
+
+    # ── UPGRADE: proración inmediata ─────────────────────────────────────────
+    #   - Con tarjeta guardada → cobro OneClick al instante.
+    #   - Sin tarjeta          → redirección a Webpay Plus por la diferencia.
+    if tipo == 'upgrade':
+        monto, dias = _proracion_upgrade(sus, plan)
+
+        # Sin diferencia que cobrar (p. ej. último día) → aplicar directo.
+        if monto <= 0:
+            _finalizar_upgrade(empresa, sus, plan, user, monto=0, dias=dias)
+            registrar_log('ACTIVIDAD', 'upgrade_self_service', request, detalle={
+                'empresa': empresa.nombre, 'plan_nuevo': plan.nombre, 'proracion': 0,
+            })
+            return Response({
+                'ok': True, 'tipo': 'upgrade', 'plan': plan.get_nombre_display(),
+                'cobrado': 0, 'dias_restantes': dias,
+            })
+
+        tiene_tarjeta = TarjetaGuardada.objects.filter(empresa=empresa).exists()
+
+        # Con tarjeta → cobro inmediato OneClick.
+        if tiene_tarjeta:
+            ok, detalle = _cobrar_oneclick(empresa, sus, plan, monto, via='proracion_upgrade', usuario=user)
+            if not ok:
+                return Response({'error': detalle, 'codigo': 'COBRO_RECHAZADO'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            _finalizar_upgrade(empresa, sus, plan, user, monto=monto, dias=dias)
+            registrar_log('ACTIVIDAD', 'upgrade_self_service', request, detalle={
+                'empresa': empresa.nombre, 'plan_nuevo': plan.nombre,
+                'proracion': monto, 'dias_restantes': dias, 'via': 'oneclick',
+            })
+            return Response({
+                'ok': True, 'tipo': 'upgrade', 'plan': plan.get_nombre_display(),
+                'cobrado': monto, 'dias_restantes': dias,
+            })
+
+        # Sin tarjeta → redirigir a Webpay Plus por la diferencia prorrateada.
+        resultado = _iniciar_webpay_proracion(request, empresa, sus, plan, monto)
+        if 'error' in resultado:
+            return Response({'error': resultado['error']}, status=status.HTTP_502_BAD_GATEWAY)
+        registrar_log('ACTIVIDAD', 'upgrade_self_service', request, detalle={
+            'empresa': empresa.nombre, 'plan_nuevo': plan.nombre,
+            'proracion': monto, 'dias_restantes': dias, 'via': 'webpay',
+        })
+        return Response({
+            'ok': True, 'tipo': 'upgrade_webpay', 'redirect': True,
+            'url': resultado['url'], 'token': resultado['token'],
+            'plan': plan.get_nombre_display(), 'monto': monto,
+        })
+
+    # ── DOWNGRADE: diferido al fin del período ────────────────────────────────
+    if tipo == 'downgrade':
+        sus.plan_programado = plan
+        sus.fecha_cambio_programado = sus.fecha_fin_periodo
+        sus.save(update_fields=['plan_programado', 'fecha_cambio_programado'])
+        registrar_log('ACTIVIDAD', 'downgrade_programado', request, detalle={
+            'empresa': empresa.nombre, 'plan_actual': plan_actual.nombre if plan_actual else None,
+            'plan_nuevo': plan.nombre, 'aplica': sus.fecha_fin_periodo.isoformat(),
+        })
+        notificar_admins_empresa(
+            empresa, TipoNotificacion.ACTIVIDAD, '📉 Cambio de plan programado',
+            f'Bajarás al plan {plan.get_nombre_display()} el '
+            f'{sus.fecha_fin_periodo.strftime("%d/%m/%Y")}. '
+            f'Hasta entonces conservas tu plan actual y sus beneficios.',
+            url_accion='/empresa/configuracion',
+        )
+        return Response({
+            'ok': True, 'tipo': 'downgrade', 'plan': plan.get_nombre_display(),
+            'aplica': sus.fecha_fin_periodo.strftime('%d/%m/%Y'),
+        })
+
+    # ── LATERAL: mismo precio, cambio directo ─────────────────────────────────
+    _aplicar_cambio_plan(empresa, plan, user, motivo='Cambio lateral self-service')
+    sus.plan = plan
+    sus.plan_programado = None
+    sus.fecha_cambio_programado = None
+    sus.save(update_fields=['plan', 'plan_programado', 'fecha_cambio_programado'])
+    notificar_admins_empresa(
+        empresa, TipoNotificacion.ACTIVIDAD, 'Plan actualizado',
+        f'Tu plan cambió a {plan.get_nombre_display()}.',
+        url_accion='/empresa/configuracion',
+    )
+    return Response({'ok': True, 'tipo': 'lateral', 'plan': plan.get_nombre_display()})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancelar_cambio_programado(request):
+    """Cancela un downgrade que aún no se ha aplicado."""
+    user = request.user
+    if user.rol != Rol.USUARIO or not user.empresa_id:
+        return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
+    sus = Suscripcion.objects.filter(empresa_id=user.empresa_id).first()
+    if not sus or not sus.plan_programado:
+        return Response({'error': 'No hay un cambio de plan programado.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    plan_cancelado = sus.plan_programado
+    sus.plan_programado = None
+    sus.fecha_cambio_programado = None
+    sus.save(update_fields=['plan_programado', 'fecha_cambio_programado'])
+    registrar_log('ACTIVIDAD', 'downgrade_cancelado', request, detalle={
+        'empresa_id': user.empresa_id, 'plan_cancelado': plan_cancelado.nombre,
+    })
+    return Response({'ok': True, 'message': 'Se canceló el cambio de plan programado.'})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -640,6 +985,7 @@ class PagoIniciarView(APIView):
                 plan_nombre=plan.get_nombre_display(),
                 estado='aprobado',
                 fecha_pago=timezone.now(),
+                iniciado_por=request.user,
                 respuesta_tb={'auth_code': auth_code, 'response_code': resp_code, 'via': 'oneclick'},
             )
             sus.ciclo  = ciclo
@@ -706,6 +1052,7 @@ class PagoIniciarView(APIView):
             token=token_tb, orden_compra=orden_compra,
             monto=monto, ciclo=ciclo,
             plan_nombre=plan.get_nombre_display(),
+            iniciado_por=request.user,
         )
 
         registrar_log('ACTIVIDAD', 'pago_iniciado', request, detalle={
@@ -758,6 +1105,12 @@ class PagoRetornoView(View):
             response = tx.commit(token_ws)
 
             resp_dict = response if isinstance(response, dict) else vars(response)
+
+            # Marcadores de proración de upgrade (guardados al iniciar el pago).
+            marca_prev      = pago.respuesta_tb if isinstance(pago.respuesta_tb, dict) else {}
+            es_proracion    = bool(marca_prev.get('proracion_upgrade'))
+            plan_destino_id = marca_prev.get('plan_id')
+
             pago.respuesta_tb = resp_dict
             pago.fecha_pago   = timezone.now()
 
@@ -778,9 +1131,39 @@ class PagoRetornoView(View):
 
             if resp_code == 0:
                 pago.estado = 'aprobado'
+                sus         = pago.suscripcion
+
+                # ── Proración de upgrade: cambia el plan SIN reiniciar el período ──
+                if es_proracion and plan_destino_id:
+                    pago.respuesta_tb = {**resp_dict, 'via': 'proracion_upgrade', 'plan_id': plan_destino_id}
+                    pago.save()
+                    plan_nuevo = PlanSuscripcion.objects.filter(pk=plan_destino_id).first()
+                    if plan_nuevo:
+                        _aplicar_cambio_plan(
+                            sus.empresa, plan_nuevo, pago.iniciado_por,
+                            motivo='Upgrade self-service (proración vía Webpay)',
+                        )
+                        sus.plan = plan_nuevo
+                        sus.plan_programado = None
+                        sus.fecha_cambio_programado = None
+                        sus.save(update_fields=['plan', 'plan_programado', 'fecha_cambio_programado'])
+                        notificar_admins_empresa(
+                            empresa=pago.empresa, tipo='actividad',
+                            titulo='📈 Plan mejorado',
+                            mensaje=(
+                                f'Subiste al plan {plan_nuevo.get_nombre_display()}. '
+                                f'Se cobró la diferencia de {pago.monto:,} CLP.'
+                            ),
+                            extra={'pago_id': pago.id},
+                        )
+                    registrar_log('ACTIVIDAD', 'upgrade_webpay_aprobado', request,
+                                  usuario=pago.iniciado_por, detalle={
+                        'empresa_id': pago.empresa.id, 'monto': pago.monto, 'plan_id': plan_destino_id,
+                    })
+                    return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/exitoso?orden={pago.orden_compra}")
+
                 pago.save()
 
-                sus        = pago.suscripcion
                 sus.ciclo  = 'mensual'
                 sus.estado = 'activa'
                 sus.fecha_inicio      = timezone.now()
@@ -822,7 +1205,8 @@ class PagoRetornoView(View):
                 except Exception as e_email:
                     logger.error('Email pago aprobado falló para empresa %s: %s', pago.empresa.nombre, e_email)
 
-                registrar_log('ACTIVIDAD', 'pago_aprobado', request, detalle={
+                registrar_log('ACTIVIDAD', 'pago_aprobado', request,
+                              usuario=pago.iniciado_por, detalle={
                     'empresa_id': pago.empresa.id,
                     'monto':      pago.monto,
                     'plan':       pago.plan_nombre,

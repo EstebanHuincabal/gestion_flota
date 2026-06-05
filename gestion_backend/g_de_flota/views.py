@@ -12,8 +12,9 @@ from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django_ratelimit.decorators import ratelimit
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.core.paginator import Paginator
@@ -352,6 +353,10 @@ def empresa_dashboard_view(request):
     if request.user.rol == Rol.CONDUCTOR:
         return Response({"detail": "Sin permisos."}, status=403)
 
+    # El dashboard puede no estar incluido en el plan (SUPERADMIN siempre pasa).
+    if not tiene_permiso(request.user, 'dashboard.ver'):
+        return Response({"detail": "El dashboard no está incluido en tu plan."}, status=403)
+
     try:
         empresa = get_empresa(request)
     except PermissionError:
@@ -365,13 +370,15 @@ def empresa_dashboard_view(request):
     MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
                 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
-    # ── Permisos de dashboard por categoría ──────────────────────
-    p_flota       = tiene_permiso(request.user, 'dashboard.flota')
-    p_mant        = tiene_permiso(request.user, 'dashboard.mantenimiento')
-    p_finanzas    = tiene_permiso(request.user, 'dashboard.finanzas')
-    p_docs        = tiene_permiso(request.user, 'dashboard.documentos')
-    p_rutas       = tiene_permiso(request.user, 'dashboard.rutas')
-    p_conductores = tiene_permiso(request.user, 'dashboard.conductores')
+    # ── Permisos de dashboard ligados al permiso del módulo ──────
+    # Cada gráfico del dashboard se muestra solo si el plan incluye el módulo
+    # correspondiente (no un permiso 'dashboard.*' aparte): sin módulo, sin gráfico.
+    p_flota       = tiene_permiso(request.user, 'flotas.ver')
+    p_mant        = tiene_permiso(request.user, 'mantenciones.ver')
+    p_finanzas    = tiene_permiso(request.user, 'finanzas.ver')
+    p_docs        = tiene_permiso(request.user, 'documentos.ver')
+    p_rutas       = tiene_permiso(request.user, 'rutas.ver')
+    p_conductores = tiene_permiso(request.user, 'conductores.ver')
 
     # Sin ningún permiso → panel vacío con indicador
     if not any([p_flota, p_mant, p_finanzas, p_docs, p_rutas, p_conductores]):
@@ -654,9 +661,18 @@ def home_view(request):
 
 
 @csrf_exempt
+@ratelimit(key='ip', rate='10/m', method='POST', block=False)
 def login_view(request):
     if request.method != "POST":
         return JsonResponse({"error": "Método no permitido"}, status=405)
+
+    # Rate limit por IP: corta la fuerza bruta automatizada (complementa el bloqueo
+    # por cuenta de 5 intentos). 10/min permite reintentos legítimos de una persona.
+    if getattr(request, 'limited', False):
+        return JsonResponse({
+            "error":  "Demasiados intentos. Espera un momento antes de volver a intentar.",
+            "codigo": "RATE_LIMIT",
+        }, status=429)
 
     try:
         data = json.loads(request.body)
@@ -676,6 +692,17 @@ def login_view(request):
     if user_obj and user_obj.is_blocked:
         return JsonResponse({
             "error": "Cuenta bloqueada por seguridad debido a demasiados intentos fallidos. Contacta a un administrador."
+        }, status=403)
+
+    # 1.5 Cuenta desactivada: authenticate() devolvería None y se confundiría con
+    # "credenciales inválidas". Se distingue solo si la contraseña es correcta
+    # (no revelar a quien no la sabe que la cuenta existe/está desactivada).
+    if user_obj and not user_obj.is_active and user_obj.check_password(password):
+        registrar_log('SEGURIDAD', 'login_fallido', request, usuario=user_obj,
+                      detalle={'motivo': 'cuenta_desactivada'})
+        return JsonResponse({
+            "error":  "Tu cuenta está desactivada. Contacta al administrador.",
+            "codigo": "CUENTA_DESACTIVADA",
         }, status=403)
 
     # 2. Intentar autenticar
@@ -706,9 +733,23 @@ def login_view(request):
 
         return JsonResponse({"error": "Credenciales inválidas"}, status=401)
 
-    # 3. Éxito: Resetear intentos y registrar acceso
+    # 2.5 Empresa desactivada: USUARIO y CONDUCTOR no pueden acceder (SUPERADMIN sí).
+    if user.rol in (Rol.USUARIO, Rol.CONDUCTOR):
+        emp = getattr(user, 'empresa', None)
+        if emp and emp.estado == 'suspendida':
+            registrar_log('SEGURIDAD', 'login_fallido', request, usuario=user,
+                          detalle={'motivo': 'empresa_desactivada'})
+            return JsonResponse({
+                "error": "Tu empresa está desactivada. Contacta al administrador del sistema.",
+                "codigo": "EMPRESA_DESACTIVADA",
+            }, status=403)
+
+    # 3. Éxito: Resetear intentos y registrar acceso. Se actualiza last_login
+    # manualmente porque el login es JWT (RefreshToken.for_user no lo setea) y
+    # de él depende el KPI "Activos hoy" del dashboard.
     user.intentos_fallidos = 0
-    user.save()
+    user.last_login        = timezone.now()
+    user.save(update_fields=['intentos_fallidos', 'last_login'])
     registrar_log('SEGURIDAD', 'login_exitoso', request, usuario=user)
 
     refresh = RefreshToken.for_user(user)
@@ -740,6 +781,7 @@ def login_view(request):
                 'patente': v.patente,
                 'marca':   v.marca,
                 'modelo':  v.modelo,
+                'foto_url': request.build_absolute_uri(v.foto.url) if v.foto else None,
             }
 
     return JsonResponse({
@@ -764,6 +806,59 @@ def login_view(request):
             "requiere_licencia":  user.rol == Rol.CONDUCTOR and not user.licencia,
         },
     })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@ratelimit(key='ip', rate='5/m', method='POST', block=False)
+def usuario_recuperar_password(request):
+    """
+    Recuperación de contraseña del panel web (rol USUARIO / SUPERADMIN).
+    Genera una contraseña temporal y la envía por email. Mismo flujo que el de
+    conductores. Endpoint público: responde siempre 200 para no filtrar si el RUT
+    existe. Body: { "rut": "12345678-9" }
+    """
+    import secrets
+    import hashlib
+    from .models import normalizar_rut
+
+    # Rate limit: endpoint público → evita spam de correos y enumeración de RUTs.
+    if getattr(request, 'limited', False):
+        return Response({'ok': True})   # respuesta genérica, no revela el límite
+
+    rut_raw = str(request.data.get('rut', '')).strip()
+    if not rut_raw:
+        return Response({'ok': True})
+
+    rut_hash = hashlib.sha256(normalizar_rut(rut_raw).encode()).hexdigest()
+    usuario = Usuario.objects.filter(
+        rut_hash=rut_hash, rol__in=[Rol.USUARIO, Rol.SUPERADMIN], is_active=True,
+    ).first()
+    if not usuario:
+        return Response({'ok': True})  # no filtrar existencia
+
+    clave_temp = secrets.token_urlsafe(10)
+    usuario.set_password(clave_temp)
+    usuario.intentos_fallidos = 0
+    usuario.is_blocked        = False
+    usuario.save(update_fields=['password', 'intentos_fallidos', 'is_blocked'])
+
+    try:
+        from .email_service import email_reset_password
+        email_reset_password(
+            email          = usuario.email,
+            nombre         = usuario.nombre or usuario.email,
+            empresa_nombre = usuario.empresa.nombre if usuario.empresa else 'FlotaSystem',
+            clave_temporal = clave_temp,
+            url_login      = '',
+        )
+    except Exception:
+        pass  # fail-silent
+
+    registrar_log('SEGURIDAD', 'recuperar_password', request, usuario=usuario,
+                  detalle={'rut_hash': rut_hash[:8] + '...'})
+
+    return Response({'ok': True})
 
 
 # ─────────────────────────────────────────
@@ -1396,14 +1491,16 @@ def conductores_asignar(request, pk):
             "Vehículo reasignado",
             f"El vehículo {vehiculo.patente} pasó de {conductor_anterior.nombre or conductor_anterior.email} "
             f"a {conductor.nombre or conductor.email}.",
-            url_accion='/empresa/conductores'
+            url_accion='/empresa/conductores',
+            permiso='conductores.ver'
         )
     else:
         notificar_admins_empresa(
             empresa, TipoNotificacion.ACTIVIDAD,
             "Nueva asignación de vehículo",
             f"El conductor {conductor.nombre or conductor.email} fue asignado al vehículo {vehiculo.patente}.",
-            url_accion='/empresa/conductores'
+            url_accion='/empresa/conductores',
+            permiso='conductores.ver'
         )
 
     return Response(ConductorListSerializer(conductor).data)
@@ -1431,7 +1528,8 @@ def conductores_desasignar(request, pk):
         empresa, TipoNotificacion.ACTIVIDAD,
         "Conductor desasignado",
         f"El conductor {conductor.nombre or conductor.email} fue desasignado de su vehículo.",
-        url_accion='/empresa/conductores'
+        url_accion='/empresa/conductores',
+        permiso='conductores.ver'
     )
     return Response(ConductorListSerializer(conductor).data)
 
@@ -1456,7 +1554,7 @@ def vehiculos_lista_crear(request):
         ).select_related('dispositivo_gps').prefetch_related(
             'asignaciones__conductor'
         ).order_by('patente')
-        return Response(VehiculoSerializer(vehiculos, many=True, context={'empresa': empresa}).data)
+        return Response(VehiculoSerializer(vehiculos, many=True, context={'empresa': empresa, 'request': request}).data)
 
     if not tiene_permiso(request.user, 'vehiculos.crear'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
@@ -1465,7 +1563,7 @@ def vehiculos_lista_crear(request):
     if not puede:
         return error_resp
 
-    serializer = VehiculoSerializer(data=request.data, context={'empresa': empresa})
+    serializer = VehiculoSerializer(data=request.data, context={'empresa': empresa, 'request': request})
     if serializer.is_valid():
         vehiculo = serializer.save(empresa=empresa)
         registrar_log('ACTIVIDAD', 'vehiculo_creado', request, detalle={
@@ -1491,12 +1589,12 @@ def vehiculos_detalle(request, pk):
     if request.method == 'GET':
         if not tiene_permiso(request.user, 'vehiculos.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        return Response(VehiculoSerializer(vehiculo, context={'empresa': empresa}).data)
+        return Response(VehiculoSerializer(vehiculo, context={'empresa': empresa, 'request': request}).data)
 
     if request.method == 'PUT':
         if not tiene_permiso(request.user, 'vehiculos.editar'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        serializer = VehiculoSerializer(vehiculo, data=request.data, partial=True, context={'empresa': empresa})
+        serializer = VehiculoSerializer(vehiculo, data=request.data, partial=True, context={'empresa': empresa, 'request': request})
         if serializer.is_valid():
             _campos_veh = ['patente', 'marca', 'modelo', 'anio', 'color', 'km_actuales']
             _antes = _snap(vehiculo, _campos_veh)
@@ -2315,6 +2413,7 @@ def predictivo_generar_alertas(request):
                     f"El vehículo {prog.vehiculo.patente} requiere '{tipo_amigable}'. Días restantes: {dias_restantes}.",
                     url_accion='/empresa/predictivo',
                     extra={'vehiculo_id': prog.vehiculo.id},
+                    permiso='mantenciones.ver',
                 )
             else:
                 if existente.nivel != nivel or existente.dias_restantes != dias_restantes:

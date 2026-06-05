@@ -27,8 +27,9 @@ const ACCESOS_EMPRESA = [
 ]
 const accesosEmpresa = computed(() => ACCESOS_EMPRESA.filter(a => tienePermiso(a.permiso)))
 
-// Permisos de dashboard por categoría
-const permisosDash = ref({ flota: true, mantenimiento: true, finanzas: true, documentos: true, rutas: true, conductores: true })
+// Permisos de dashboard por categoría. Arrancan en false (fail-closed): cada
+// sección solo se muestra cuando el backend confirma el permiso del módulo.
+const permisosDash = ref({ flota: false, mantenimiento: false, finanzas: false, documentos: false, rutas: false, conductores: false })
 const sinAcceso    = ref(false)
 
 const cargando         = ref(true)

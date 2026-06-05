@@ -449,7 +449,7 @@ Ejemplo de códigos de permiso:
 flota.ver            flota.crear          flota.editar         flota.eliminar
 mantencion.ver       mantencion.crear     mantencion.editar
 conductores.ver      conductores.asignar
-finanzas.ver         finanzas.crear       finanzas.exportar
+finanzas.ver         finanzas.crear       finanzas.editar      finanzas.eliminar      finanzas.presupuesto
 reportes.ver         reportes.exportar
 documentos.ver       documentos.subir
 ```
@@ -1286,7 +1286,6 @@ Authorization: Bearer <access_token>
 |---|---|---|
 | `GET/POST` | `/api/empresa/gastos/` | Listar / registrar gastos |
 | `GET/PUT/DELETE` | `/api/empresa/gastos/<id>/` | Detalle, editar, eliminar |
-| `GET` | `/api/empresa/gastos/exportar/` | Exportar a XLSX |
 | `GET/POST` | `/api/empresa/presupuesto/` | Listar / crear presupuestos |
 | `GET/PUT/DELETE` | `/api/empresa/presupuesto/<id>/` | Detalle de presupuesto |
 | `GET` | `/api/admin/finanzas/` | Dashboard SaaS (SUPERADMIN) |
@@ -1318,6 +1317,13 @@ Authorization: Bearer <access_token>
 | `POST` | `/api/empresa/rutas/calcular/` | Calcular trayecto OSRM — devuelve solo `distancia_km`, `duracion_min`, `polyline` |
 | `GET/POST` | `/api/empresa/rutas/<id>/comentarios/` | GET lista eventos de la ruta; POST crea comentario manual del admin |
 
+**Validación de atraso:** `_ruta_dict` calcula `atrasada` (bool) y `atraso_min`
+(minutos) para rutas en estado **pendiente** cuya hora programada
+(`fecha_programada` + `hora_programada`, interpretada en hora local) ya pasó sin
+iniciarse. El frontend (`Rutas.vue`) muestra un badge rojo "⚠ Atrasada · 2 h 15 min"
+en la lista y en el detalle. Es solo informativo (no notifica). Las rutas activas no
+cuentan (ya arrancaron).
+
 ### App conductores (endpoints exclusivos)
 
 > Requieren `rol = CONDUCTOR`. Usan el mismo JWT que el resto de la API.
@@ -1332,8 +1338,20 @@ Authorization: Bearer <access_token>
 | `POST` | `/api/conductor/rutas/<id>/comentario/` | Agrega comentario manual. Body: `{ texto }` |
 | `GET` | `/api/conductor/solicitudes/` | Lista solicitudes del conductor, ordenadas por fecha desc |
 | `POST` | `/api/conductor/solicitudes/` | Crea solicitud — `multipart/form-data` si incluye foto, JSON si no |
+| `PATCH` | `/api/conductor/vehiculo/foto/` | Sube/actualiza la foto de su vehículo asignado (`multipart`, campo `foto`, máx 8 MB, solo imágenes) |
 
 **Backend:** `views_conductor.py`
+
+#### Foto del vehículo
+
+`Vehiculo.foto` (ImageField, `upload_to='vehiculos/fotos/'`). El serializer expone
+`foto_url` (solo lectura) y acepta `foto` (write-only). Sirve para **identificar el
+vehículo de un vistazo**: en el form de mantención, la tarjeta de confirmación
+muestra la foto si existe, o el ícono de camión como fallback. La pueden subir:
+- **Admin** (panel web): campo de foto en `FormVehiculo.vue` (multipart al
+  crear/editar vehículo).
+- **Conductor** (app móvil): desde Ajustes → tarjeta de vehículo asignado, toca la
+  foto → cámara o galería → `PATCH /api/conductor/vehiculo/foto/`.
 
 ### Solicitudes de Conductores (panel web — USUARIO)
 
@@ -1366,8 +1384,44 @@ Authorization: Bearer <access_token>
 | `GET/PUT/DELETE` | `/api/configuracion/planes/<id>/` | Detalle, editar, eliminar |
 | `POST` | `/api/configuracion/planes/<id>/asignar/` | Asignar plan a empresa |
 | `GET/PUT` | `/api/configuracion/planes/<id>/permisos/` | Permisos por defecto del plan |
-| `GET` | `/api/empresa/plan-uso/` | Uso actual del plan (USUARIO) |
-| `POST` | `/api/empresa/solicitar-cambio-plan/` | Solicitar cambio de plan |
+| `GET` | `/api/empresa/plan-uso/` | Uso actual del plan + estado de suscripción y cambio programado (USUARIO) |
+| `POST` | `/api/empresa/solicitar-cambio-plan/` | Solicitar cambio de plan al SUPERADMIN (legacy) |
+| `POST` | `/api/empresa/cambiar-plan/` | Cambio de plan **self-service** (USUARIO) |
+| `POST` | `/api/empresa/cancelar-cambio-plan/` | Cancelar un downgrade programado |
+
+#### Cambio de plan self-service (upgrade/downgrade)
+
+El usuario (rol USUARIO) cambia de plan sin intervención del SUPERADMIN vía
+`POST /api/empresa/cambiar-plan/` (`{plan_id}`). Requiere suscripción **activa y
+vigente**. El backend detecta el tipo por precio:
+
+- **Upgrade** (plan más caro): cambio **inmediato**. Se cobra solo la diferencia
+  **prorrateada** por los días restantes del período (`diferencia × días / 30`).
+  **No requiere tarjeta guardada**: si la empresa tiene tarjeta OneClick se cobra
+  al instante; si no, el backend devuelve `{tipo:'upgrade_webpay', url}` y el
+  frontend redirige a **Webpay Plus** por la diferencia. El upgrade se aplica al
+  confirmarse el pago en `PagoRetornoView` (marcado con `proracion_upgrade` en
+  `respuesta_tb`, **sin reiniciar** el período). El precio completo del nuevo plan
+  aplica en la próxima renovación.
+- **Downgrade** (plan más barato): **diferido**. Se guarda en
+  `Suscripcion.plan_programado` + `fecha_cambio_programado = fecha_fin_periodo`;
+  el cliente conserva su plan hasta vencer. Se puede revertir con
+  `/cancelar-cambio-plan/`. El cron `verificar_suscripciones` lo aplica al vencer
+  (o el autocobro renueva ya en el plan nuevo). Helper reutilizable:
+  `aplicar_downgrade_programado(sus)`.
+- **Lateral** (mismo precio): cambio directo inmediato.
+- **Límites**: al bajar, el exceso queda en solo-lectura — `verificar_limite_plan`
+  bloquea **crear** nuevos recursos hasta volver bajo el límite (no se borra nada).
+
+Frontend: `MiPlanTab.vue` (botón "Mejorar"/"Cambiar" por plan, modal con la
+proración o la fecha de aplicación, y banner para cancelar un cambio programado).
+
+**Autoría de pagos confirmados en el retorno de Transbank:** el retorno de Webpay
+(`PagoRetornoView`) es un request **sin sesión** (lo llama Transbank), por lo que no
+hay usuario autenticado. Para no perder quién originó la operación,
+`PagoTransbank.iniciado_por` guarda el usuario que **inició** el pago; al confirmarse,
+ese usuario se usa como `CambioPlan.cambiado_por` y en `registrar_log(usuario=...)`.
+El autocobro automático (cron) deja `iniciado_por = null` = realizado por el sistema.
 
 ### Configuración
 
@@ -1375,6 +1429,7 @@ Authorization: Bearer <access_token>
 |---|---|---|
 | `GET/PUT` | `/api/usuario/perfil/` | Perfil del usuario autenticado |
 | `POST` | `/api/usuario/cambiar-password/` | Cambio de contraseña |
+| `POST` | `/api/recuperar-password/` | Recuperar contraseña del panel web (público) |
 | `GET` | `/api/empresa/plan-historial/` | Historial de cambios de plan |
 | `GET` | `/api/permisos/` | Catálogo de permisos disponibles |
 | `GET` | `/api/logs/` | Logs de auditoría (SUPERADMIN) |
@@ -1467,6 +1522,34 @@ Usuario (CONDUCTOR) ──< Documento (docs_c)
 - Barra de progreso: cumplimiento predictivo (al día vs. vencidas)
 - Widget: próximas mantenciones (7 días)
 
+**Gráficos ligados a permisos de módulo:** cada sección del dashboard de empresa
+(flota, mantenimiento, finanzas, documentos, rutas, conductores) se muestra solo si
+el plan incluye el permiso del **módulo** correspondiente (`flotas.ver`,
+`mantenciones.ver`, `finanzas.ver`, `documentos.ver`, `rutas.ver`,
+`conductores.ver`). El endpoint del dashboard (`views.py`) no computa ni envía los
+KPIs/gráficos de un módulo sin permiso, y el front (`permisosDash`) arranca en
+`false` (fail-closed). Los antiguos permisos por categoría
+`dashboard.flota/mantenimiento/...` se **eliminaron** (migración
+`0086_eliminar_permisos_dashboard`): cada gráfico depende ahora del permiso de su
+módulo, no de un `dashboard.*` aparte.
+
+**Acceso al dashboard completo (`dashboard.ver`):** permiso único que controla si el
+plan incluye el panel. Sin él, no aparece el ítem "Dashboard" en el menú, la ruta
+`/empresa/dashboard` se redirige y el endpoint responde 403. Permite vender planes
+**sin dashboard**. Se creó en `0088_permiso_dashboard_ver` asignado a todos los
+planes existentes (no cambia el comportamiento actual). El router usa
+`primeraRutaEmpresa()` para aterrizar al usuario en su primera vista accesible
+(dashboard → finanzas → flota → … → configuración), evitando bucles de redirección
+cuando el plan no tiene dashboard.
+
+**Pestañas de Finanzas ligadas a módulos:** `FinanzasEmpresa.vue` gatea las pestañas
+que muestran datos de otros módulos — **Mantención** solo con `mantenciones.ver` y
+**Por vehículo** solo con `flotas.ver` (también se oculta la tarjeta "Top vehículos"
+del Resumen). Las categorías propias de finanzas (Combustible, Multas, Pago de
+servicio, Resumen) y la pestaña Presupuesto (`finanzas.presupuesto`) se mantienen
+como antes. El total de gastos sí incluye todos los costos reales (el gating es de
+navegación, no oculta dinero efectivamente gastado).
+
 **Dashboard SUPERADMIN:**
 - KPIs: empresas activas, total vehículos, MRR, suscripciones activas
 - Gráfico de línea: crecimiento de empresas
@@ -1506,6 +1589,29 @@ Cada usuario configura desde su perfil qué tipos de notificaciones recibe por c
 ```
 
 Las categorías de notificación son: `mantencion`, `documentos`, `seguridad`, `actividad`.
+
+### Filtro por permiso del plan
+
+Además de las preferencias de canal, `notificar()` y `notificar_admins_empresa()` aceptan
+un parámetro opcional **`permiso`**. Si se indica, la notificación solo se envía cuando el
+plan de la empresa incluye ese permiso (SUPERADMIN siempre pasa). Esto centraliza la regla
+"no notificar de módulos que la empresa no tiene": p. ej. tras un downgrade que quita GPS,
+deja de recibir alertas de salida de ruta sin que cada módulo lo verifique por su cuenta.
+
+Asociaciones aplicadas (notificación → permiso):
+
+| Notificación | `permiso` |
+|---|---|
+| Vehículo fuera de ruta (GPS) | `gps.ver` |
+| Ruta iniciada / finalizada | `rutas.ver` |
+| Mantención (predictiva / iniciada / completada) | `mantenciones.ver` |
+| Documento por vencer / vencido / subido | `documentos.ver` |
+| Gasto correctivo registrado | `correctivos.ver` |
+| Asignación / reasignación / perfil de conductor | `conductores.ver` |
+
+Las notificaciones **transversales** (pagos, cambios de plan, suscripción, solicitudes,
+seguridad) **no** llevan `permiso`: deben llegar siempre, independientemente de los módulos
+contratados.
 
 ### Tipos de notificación
 
@@ -1610,6 +1716,31 @@ En desarrollo, el backend acepta peticiones desde:
 
 En producción, configurar `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` en `settings.py` con los dominios reales.
 
+### Hardening de seguridad
+
+A raíz de una auditoría externa se aplicaron tres medidas (todas en `settings.py` /
+vistas):
+
+1. **Headers de seguridad HTTP** — `SECURE_CONTENT_TYPE_NOSNIFF` y
+   `X_FRAME_OPTIONS='DENY'` siempre; y solo con `DEBUG=False`:
+   `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS` (1 año) + subdominios + preload,
+   `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, y
+   `SECURE_PROXY_SSL_HEADER` (Django reconoce HTTPS detrás de Nginx). En dev no
+   aplican para no romper el trabajo local sin HTTPS.
+2. **Limpieza de `FERNET_KEY`** — se eliminó `FERNET_KEYS = [os.environ['FERNET_KEY']]`,
+   una variable **muerta** (el cifrado usa solo `ENCRYPTION_KEY`) que además
+   obligaba a definir una env var inexistente y **rompía el arranque** si faltaba.
+3. **Rate limiting** (`django-ratelimit`, cache Redis en prod / memoria en dev):
+   - `POST /api/login/` → **10/min por IP** (complementa el bloqueo por cuenta de
+     5 intentos), responde `429 RATE_LIMIT`.
+   - `POST /api/recuperar-password/` y `/api/conductor/recuperar-password/` →
+     **5/min por IP** (evita spam de correos y enumeración de RUTs); responde la
+     misma respuesta genérica para no revelar el límite.
+   - Se puede desactivar globalmente con `RATELIMIT_ENABLE=False` en env.
+
+**Nota operativa pendiente (no es código):** rotar la contraseña de PostgreSQL que
+quedó en el historial de Git y limpiar el historial (BFG / git-filter-repo).
+
 ---
 
 ## 16. Manejo de errores (v2.5)
@@ -1639,7 +1770,28 @@ Ubicación: `gestion_backend/g_de_flota/error_helpers.py`
 | `LIMITE_PLAN` | 403 | Límite del plan alcanzado |
 | `MODULO_NO_INCLUIDO` | 403 | Módulo no disponible en el plan |
 | `SUSCRIPCION_BLOQUEADA` | 402 | Empresa sin suscripción activa |
+| `EMPRESA_DESACTIVADA` | 403 | Empresa suspendida por el SUPERADMIN |
 | `ERROR_INTERNO` | 500 | Error no controlado del servidor |
+
+#### Desactivación de empresa (SUPERADMIN)
+
+El botón "Desactivar" de la lista de empresas hace `DELETE /api/empresas/<id>/`, que
+marca `empresa.estado = 'suspendida'`. El acceso se controla **por el estado de la
+empresa**, sin tocar el `is_active` individual de cada usuario:
+
+- **Login** (`login_view`): USUARIO y CONDUCTOR de una empresa suspendida no pueden
+  iniciar sesión (403 `EMPRESA_DESACTIVADA`). SUPERADMIN nunca se ve afectado.
+- **Middleware** (`BloqueoSuscripcionMiddleware`): corta también las sesiones ya
+  abiertas (token vigente) con el mismo código. **Importante:** el JWT se valida en
+  la capa de DRF (vista), no en el middleware de Django, por lo que el middleware
+  resuelve el token él mismo (`_resolver_usuario` → `JWTAuthentication`). Sin esto
+  `request.user` sería anónimo y el bloqueo (empresa **y** suscripción) no se
+  aplicaría a las peticiones a la API. **Antes de expulsar se avisa**: el
+  panel web (`api.js`) muestra el mensaje y cierra sesión; la app del conductor
+  muestra su pantalla de bloqueo (evento `empresa-desactivada`) con el motivo y un
+  botón para cerrar sesión, en vez de sacarlo de golpe.
+- **Reactivar** la empresa (`PUT estado='activa'`) restaura el acceso de todos
+  automáticamente, tal como estaban (no se modificaron sus flags individuales).
 
 #### `ErrorHandlerMiddleware` — Captura global Django
 

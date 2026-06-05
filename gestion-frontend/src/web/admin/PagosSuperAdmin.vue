@@ -145,7 +145,8 @@ function imprimirComprobante(p, empresaNombre) {
     .total   .valor { font-size: 1.25rem; font-weight: 800; color: #4F46E5; }
     .nota    { margin-top: 28px; padding: 12px 16px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; font-size: .75rem; color: #9CA3AF; line-height: 1.5; }
     .footer  { margin-top: 36px; font-size: .75rem; color: #D1D5DB; text-align: center; }
-    @media print { body { padding: 20px; } }
+    .btn-print { display: block; margin: 28px auto 0; padding: 10px 24px; background: #4F46E5; color: #fff; border: none; border-radius: 8px; font-size: .875rem; font-weight: 600; cursor: pointer; }
+    @media print { body { padding: 20px; } .btn-print { display: none; } }
   </style>
 </head>
 <body>
@@ -163,7 +164,7 @@ function imprimirComprobante(p, empresaNombre) {
   <div class="fila total"><span class="label">Total pagado</span><span class="valor">$${parseInt(p.monto).toLocaleString('es-CL')}</span></div>
   <div class="nota">⚠ Comprobante interno. <strong>No constituye un DTE válido para el SII.</strong></div>
   <div class="footer">Generado el ${new Date().toLocaleDateString('es-CL', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
-  <script>window.onload=function(){setTimeout(function(){window.print();},400);}<\/script>
+  <button class="btn-print" onclick="window.print()">🖨 Imprimir</button>
 </body>
 </html>`
 

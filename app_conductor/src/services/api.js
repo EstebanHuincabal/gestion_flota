@@ -37,7 +37,9 @@ export async function apiFetch(url, options = {}) {
       err.isNetworkError = true
       throw err
     }
-    const err = new Error(`Sin conexión. Verifica tu red. [${fetchErr.name}: ${fetchErr.message}]`)
+    // El fetch falla tanto sin internet del dispositivo como con el servidor caído:
+    // no se distinguen desde el cliente, así que el mensaje no culpa solo a la red.
+    const err = new Error('No se pudo conectar con el servidor. Verifica tu conexión o intenta más tarde.')
     err.isNetworkError = true
     throw err
   }
@@ -75,11 +77,11 @@ export async function apiFetch(url, options = {}) {
     throw new Error('SESION_EXPIRADA')
   }
 
-  // Suscripción bloqueada → emitir evento global
+  // Suscripción bloqueada → emitir evento global (no durante el login)
   if (res.status === 402) {
     let errData = {}
     try { errData = await res.json() } catch {}
-    if (errData.codigo === 'SUSCRIPCION_BLOQUEADA') {
+    if (errData.codigo === 'SUSCRIPCION_BLOQUEADA' && !url.includes('/api/login/')) {
       window.dispatchEvent(new CustomEvent('suscripcion-bloqueada', {
         detail: { mensaje: errData.error, estado: errData.estado },
       }))
@@ -89,6 +91,15 @@ export async function apiFetch(url, options = {}) {
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}))
+    // Empresa desactivada por el SUPERADMIN → mostrar pantalla de bloqueo con el
+    // motivo (mismo mecanismo que la suscripción bloqueada). No se expulsa de
+    // golpe: el conductor lee el mensaje y cierra sesión desde ahí.
+    // En el login NO se dispara el sheet: el error se muestra en el formulario.
+    if (res.status === 403 && errData.codigo === 'EMPRESA_DESACTIVADA' && !url.includes('/api/login/')) {
+      window.dispatchEvent(new CustomEvent('empresa-desactivada', {
+        detail: { mensaje: errData.error },
+      }))
+    }
     const err = new Error(errData.error || errData.detail || `Error ${res.status}`)
     err.status = res.status
     err.codigo = errData.codigo || null

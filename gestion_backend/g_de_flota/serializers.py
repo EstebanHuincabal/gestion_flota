@@ -810,13 +810,23 @@ class ConductorEditarSerializer(serializers.Serializer):
 class VehiculoSerializer(serializers.ModelSerializer):
     conductor_asignado = serializers.SerializerMethodField()
     gps_asociado       = serializers.SerializerMethodField()
+    foto_url           = serializers.SerializerMethodField()
 
     class Meta:
         model  = Vehiculo
         fields = ['id', 'patente', 'marca', 'modelo',
                   'anio', 'tipo_combustible', 'km_actuales',
-                  'conductor_asignado', 'gps_asociado', 'activo']
+                  'conductor_asignado', 'gps_asociado', 'foto', 'foto_url', 'activo']
         read_only_fields = ['id']
+        extra_kwargs = {'foto': {'write_only': True, 'required': False}}
+
+    def get_foto_url(self, obj):
+        if not obj.foto:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.foto.url)
+        return obj.foto.url
 
     def get_conductor_asignado(self, obj):
         asig = obj.asignaciones.filter(activo=True).select_related('conductor').first()
@@ -947,6 +957,10 @@ def _generar_descripcion(accion, detalle, nombre):
         'plan_asignado':          lambda: f'{u} asignó el plan "{d.get("plan_nuevo", d.get("plan",""))}" a {d.get("empresa", "")}.',
         'plan_permisos_editados': lambda: f'{u} editó los permisos del plan "{d.get("plan", "")}" ({d.get("total", 0)} permisos).',
         'solicitud_cambio_plan':  lambda: f'{u} solicitó cambiar al plan "{d.get("plan_solicitado", "")}".',
+        'upgrade_self_service':   lambda: f'{u} mejoró su plan a "{d.get("plan_nuevo", "")}" (proración ${d.get("proracion", 0)}).',
+        'upgrade_webpay_aprobado':lambda: f'{u} confirmó la mejora de plan por Webpay (${d.get("monto", "")}).',
+        'downgrade_programado':   lambda: f'{u} programó el cambio al plan "{d.get("plan_nuevo", "")}" para el fin del período.',
+        'downgrade_cancelado':    lambda: f'{u} canceló el cambio de plan programado ("{d.get("plan_cancelado", "")}").',
         # Flotas
         'flota_creada':           lambda: f'{u} creó la flota "{_flota()}".',
         'flota_editada':          lambda: f'{u} editó la flota "{_flota()}".',
@@ -955,6 +969,7 @@ def _generar_descripcion(accion, detalle, nombre):
         'vehiculo_creado':        lambda: f'{u} registró el vehículo {_veh()} ({d.get("marca","")} {d.get("modelo","")}).',
         'vehiculo_editado':       lambda: f'{u} modificó el vehículo {_veh()}.',
         'vehiculo_desactivado':   lambda: f'{u} desactivó el vehículo {_veh()}.',
+        'vehiculo_foto_conductor': lambda: f'{u} actualizó la foto del vehículo {d.get("patente","")} desde la app.',
         # Conductores
         'conductor_creado':       lambda: f'{u} registró al conductor {d.get("nombre", d.get("email", ""))}.',
         'conductor_editado':      lambda: f'{u} editó al conductor {d.get("email", "")}.',
@@ -982,6 +997,9 @@ def _generar_descripcion(accion, detalle, nombre):
         'gasto_creado':           lambda: f'{u} registró un gasto de ${d.get("monto","")} en {d.get("categoria","")}.',
         'gasto_editado':          lambda: f'{u} editó el gasto #{d.get("gasto_id","")}.',
         'gasto_eliminado':        lambda: f'{u} eliminó un gasto de ${d.get("monto","")} en {d.get("categoria","")}.',
+        'gasto_correctivo_registrado': lambda: f'{u} registró un gasto correctivo de ${d.get("monto","")} ({d.get("patente","")}).',
+        'gasto_correctivo_editado':    lambda: f'{u} editó el gasto correctivo #{d.get("gasto_id","")}.',
+        'gasto_correctivo_eliminado':  lambda: f'{u} eliminó el gasto correctivo #{d.get("gasto_id","")}.',
         'presupuesto_creado':     lambda: f'{u} creó un presupuesto de ${d.get("monto","")} para {d.get("mes","")}/{d.get("anio","")}.',
         'presupuesto_editado':    lambda: f'{u} editó el presupuesto de {d.get("mes","")}/{d.get("anio","")} a ${d.get("monto","")}.',
         # Predictivo
@@ -994,7 +1012,7 @@ def _generar_descripcion(accion, detalle, nombre):
         'generar_alertas_predictivas':   lambda: f'{u} generó alertas predictivas.',
         # Pagos y suscripción
         'pago_iniciado':          lambda: f'{u} inició un pago del plan "{d.get("plan","")}" por ${d.get("monto","")}.',
-        'pago_aprobado':          lambda: f'Pago aprobado del plan "{d.get("plan","")}" por ${d.get("monto","")}.',
+        'pago_aprobado':          lambda: f'{u} confirmó el pago del plan "{d.get("plan","")}" por ${d.get("monto","")}.',
         'pago_oneclick':          lambda: f'{u} pagó el plan "{d.get("plan","")}" por ${d.get("monto","")} con tarjeta guardada.',
         'pago_manual_registrado': lambda: f'{u} registró un pago manual de ${d.get("monto","")} ({d.get("metodo","")}) para "{d.get("empresa","")}".',
         'pago_error_crear':       lambda: f'Error al iniciar un pago con Transbank: {d.get("error","")}.',
@@ -1026,6 +1044,8 @@ def _generar_descripcion(accion, detalle, nombre):
         'gps_config_guardada':       lambda: f'{u} actualizó la configuración del servidor GPS.',
         # Cuenta / sistema
         'password_cambiado':      lambda: f'{u} cambió su contraseña.',
+        'recuperar_password':           lambda: f'{u} solicitó recuperar su contraseña (se envió clave temporal).',
+        'recuperar_password_conductor': lambda: f'{u} solicitó recuperar su contraseña (conductor).',
         'excepcion_no_manejada':  lambda: f'Error interno del servidor: {d.get("error","")}.',
     }
 

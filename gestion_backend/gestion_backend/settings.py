@@ -12,8 +12,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / '.env', override=False)
 
 SECRET_KEY = os.environ['SECRET_KEY']
+# Clave maestra del cifrado Fernet (RUTs, teléfonos, etc.). NO cambiar en
+# producción: los datos ya cifrados quedarían ilegibles.
 ENCRYPTION_KEY = os.environ['ENCRYPTION_KEY']
-FERNET_KEYS = [os.environ['FERNET_KEY']]
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else []
 
@@ -143,6 +144,21 @@ _extra_csrf = os.getenv('CSRF_TRUSTED_ORIGINS_EXTRA', '')
 if _extra_csrf:
     CSRF_TRUSTED_ORIGINS += [o.strip() for o in _extra_csrf.split(',') if o.strip()]
 
+# ── Headers de seguridad HTTP (solo producción) ────────────────────────────────
+# Se aplican únicamente con DEBUG=False para no entorpecer el desarrollo local
+# (el SSL redirect y HSTS requieren HTTPS, que no hay en dev). Detrás de un proxy
+# (Nginx) Django reconoce HTTPS por la cabecera X-Forwarded-Proto.
+SECURE_CONTENT_TYPE_NOSNIFF = True          # bloquea MIME sniffing
+X_FRAME_OPTIONS             = 'DENY'        # anti-clickjacking (refuerza el middleware)
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER     = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT         = True
+    SESSION_COOKIE_SECURE       = True
+    CSRF_COOKIE_SECURE          = True
+    SECURE_HSTS_SECONDS         = 31536000   # 1 año
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD         = True
+
 AUTH_USER_MODEL = 'g_de_flota.Usuario'
 
 # ── Email ──────────────────────────────────────────────────────────────────────
@@ -187,16 +203,18 @@ SIMPLE_JWT = {
 ASGI_APPLICATION = 'gestion_backend.asgi.application'
 
 # ── Transbank Webpay Plus ──────────────────────────────────────────────────────
-TRANSBANK_ENVIRONMENT  = os.environ.get('TRANSBANK_ENVIRONMENT', 'integration')  # 'integration' | 'production'
-TRANSBANK_COMMERCE_CODE = os.environ.get('TRANSBANK_COMMERCE_CODE', '597055555532')
-TRANSBANK_API_KEY       = os.environ.get('TRANSBANK_API_KEY', '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C')
+# Credenciales fuera del código: vienen del .env (dev usa las de integración
+# pública; producción, las reales). 'integration' es el fallback seguro de ambiente.
+TRANSBANK_ENVIRONMENT   = os.environ.get('TRANSBANK_ENVIRONMENT', 'integration')  # 'integration' | 'production'
+TRANSBANK_COMMERCE_CODE = os.environ.get('TRANSBANK_COMMERCE_CODE', '')
+TRANSBANK_API_KEY       = os.environ.get('TRANSBANK_API_KEY', '')
 
 # URL base del frontend (para redirects de retorno Transbank)
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:7183')
 
 # OneClick Mall (tarjeta guardada / cobros automáticos)
-ONECLICK_COMMERCE_CODE = os.environ.get('ONECLICK_COMMERCE_CODE', '597055555541')
-ONECLICK_CHILD_CODE    = os.environ.get('ONECLICK_CHILD_CODE',    '597055555542')
+ONECLICK_COMMERCE_CODE = os.environ.get('ONECLICK_COMMERCE_CODE', '')
+ONECLICK_CHILD_CODE    = os.environ.get('ONECLICK_CHILD_CODE',    '')
 
 # Clave del webhook de Traccar (gateway GPS). Si está vacía, el endpoint no
 # exige autenticación (útil en desarrollo). En producción definir un valor y
@@ -218,7 +236,21 @@ if REDIS_URL:
             'CONFIG': {'hosts': [REDIS_URL]},
         }
     }
+    # Cache compartida entre workers → el rate limiting cuenta bien en producción.
+    CACHES = {
+        'default': {
+            'BACKEND':  'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        }
+    }
 else:
     CHANNEL_LAYERS = {
         'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
     }
+    # En dev, cache en memoria del proceso (suficiente para probar el rate limiting).
+    CACHES = {
+        'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}
+    }
+
+# ── Rate limiting (django-ratelimit) ───────────────────────────────────────────
+RATELIMIT_ENABLE = os.getenv('RATELIMIT_ENABLE', 'True') == 'True'

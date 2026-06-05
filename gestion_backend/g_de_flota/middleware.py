@@ -24,10 +24,31 @@ _RUTAS_LIBRES = [
 ]
 
 
+def _resolver_usuario(request):
+    """Devuelve el usuario autenticado por sesión Django o, en su defecto, por JWT.
+
+    El proyecto autentica con JWT en la capa de DRF (a nivel de vista), no en el
+    middleware de Django, por lo que aquí `request.user` suele ser AnonymousUser.
+    Se valida el token manualmente para que el bloqueo (empresa desactivada /
+    suscripción) funcione también en las peticiones a la API.
+    """
+    u = getattr(request, 'user', None)
+    if u is not None and u.is_authenticated:
+        return u
+    try:
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        resultado = JWTAuthentication().authenticate(request)
+        if resultado is not None:
+            return resultado[0]
+    except Exception:
+        pass
+    return None
+
+
 class BloqueoSuscripcionMiddleware:
     """
-    Bloquea el acceso a la API (402) si la empresa tiene suscripción suspendida.
-    Solo aplica a usuarios con rol USUARIO. SUPERADMIN y CONDUCTOR nunca son bloqueados.
+    Bloquea el acceso a la API si la empresa está desactivada (403) o su suscripción
+    está bloqueada (402). Solo aplica a USUARIO y CONDUCTOR; SUPERADMIN nunca.
     """
 
     def __init__(self, get_response):
@@ -37,18 +58,27 @@ class BloqueoSuscripcionMiddleware:
         if any(request.path.startswith(r) for r in _RUTAS_LIBRES):
             return self.get_response(request)
 
-        if not hasattr(request, 'user') or not request.user.is_authenticated:
+        user = _resolver_usuario(request)
+        if user is None:
             return self.get_response(request)
 
-        rol = getattr(request.user, 'rol', None)
+        rol = getattr(user, 'rol', None)
 
         # SUPERADMIN nunca es bloqueado
         if rol not in ('USUARIO', 'CONDUCTOR'):
             return self.get_response(request)
 
-        empresa = getattr(request.user, 'empresa', None)
+        empresa = getattr(user, 'empresa', None)
         if not empresa:
             return self.get_response(request)
+
+        # Empresa desactivada por el SUPERADMIN: ni USUARIO ni CONDUCTOR pueden operar.
+        if getattr(empresa, 'estado', None) == 'suspendida':
+            return JsonResponse({
+                'error':  'Tu empresa fue desactivada. Contacta al administrador del sistema.',
+                'codigo': 'EMPRESA_DESACTIVADA',
+                'estado': 'suspendida',
+            }, status=403)
 
         try:
             sus = empresa.suscripcion

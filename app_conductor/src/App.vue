@@ -19,6 +19,12 @@ function onBloqueada(e) {
   bloqueado.value = true
 }
 
+// Empresa desactivada por el SUPERADMIN → misma pantalla de bloqueo con su mensaje.
+function onEmpresaDesactivada(e) {
+  mensajeBloqueo.value = e.detail?.mensaje || 'Tu empresa fue desactivada. Contacta al administrador del sistema.'
+  bloqueado.value = true
+}
+
 async function cerrarSesionBloqueo() {
   await auth.logout()
   bloqueado.value = false
@@ -188,6 +194,7 @@ onMounted(async () => {
   await inicializarPush()
   await inicializarPermisos()
   window.addEventListener('suscripcion-bloqueada', onBloqueada)
+  window.addEventListener('empresa-desactivada', onEmpresaDesactivada)
   window.addEventListener('sesion-expirada', onSesionExpirada)
 
   // Al volver del segundo plano, el SO suele matar el rastreo GPS → reanudarlo.
@@ -195,6 +202,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('suscripcion-bloqueada', onBloqueada)
+  window.removeEventListener('empresa-desactivada', onEmpresaDesactivada)
   window.removeEventListener('sesion-expirada', onSesionExpirada)
 })
 </script>

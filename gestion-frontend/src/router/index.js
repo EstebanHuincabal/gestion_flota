@@ -69,9 +69,32 @@ const Pendiente = (titulo) => ({
   template: `<div style="padding:2rem 2.5rem"><h1 style="font-size:1.5rem;font-weight:700;color:#1E1B4B">${titulo}</h1><p style="color:#6B7280">Próximamente</p></div>`
 })
 
+// Rutas de empresa por prioridad para el aterrizaje y los redirects de fallback.
+// La última (Configuración) no requiere permiso → siempre hay un destino válido.
+const RUTAS_EMPRESA_PRIORIDAD = [
+  { path: '/empresa/dashboard',     permiso: 'dashboard.ver' },
+  { path: '/empresa/finanzas',      permiso: 'finanzas.ver' },
+  { path: '/empresa/flota',         permiso: 'flotas.ver' },
+  { path: '/empresa/mantenciones',  permiso: 'mantenciones.ver' },
+  { path: '/empresa/conductores',   permiso: 'conductores.ver' },
+  { path: '/empresa/rutas',         permiso: 'rutas.ver' },
+  { path: '/empresa/documentos',    permiso: 'documentos.ver' },
+  { path: '/empresa/configuracion', permiso: null },
+]
+
+// Primera ruta de empresa que el usuario puede ver según los permisos de su plan.
+const primeraRutaEmpresa = () => {
+  const permisos = safeJsonParse(sessionStorage.getItem('plan_permisos'), [])
+  const lista = Array.isArray(permisos) ? permisos : []
+  for (const r of RUTAS_EMPRESA_PRIORIDAD) {
+    if (!r.permiso || lista.includes(r.permiso)) return r.path
+  }
+  return '/empresa/configuracion'
+}
+
 const homePorRol = (rol) => {
   if (rol === 'SUPERADMIN') return '/dashboard'
-  if (rol === 'USUARIO')    return '/empresa/dashboard'
+  if (rol === 'USUARIO')    return primeraRutaEmpresa()
   return '/login'
 }
 
@@ -157,7 +180,7 @@ const routes = [
     component: EmpresaLayout,
     meta: { requiresAuth: true, roles: ['USUARIO'] },
     children: [
-      { path: 'dashboard',                            component: Dashboard },
+      { path: 'dashboard',                            component: Dashboard,        meta: { permiso: 'dashboard.ver' } },
       { path: 'flota',                                component: ListaFlota,       meta: { permiso: 'flotas.ver' } },
       { path: 'vehiculos/nuevo',                       component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'nuevo' } },
       { path: 'vehiculos/:id/editar',                  component: FormVehiculo,     meta: { permiso: 'flotas.ver' }, props: { modo: 'editar' } },
@@ -257,8 +280,11 @@ router.beforeEach((to, _from, next) => {
   // Guard de permisos de plan: solo aplica a rutas de empresa (USUARIO)
   if (to.meta.permiso && usuario?.rol === 'USUARIO') {
     const planPermisos = safeJsonParse(sessionStorage.getItem('plan_permisos'), [])
-    if (!planPermisos.includes(to.meta.permiso)) {
-      return next('/empresa/dashboard')
+    const lista = Array.isArray(planPermisos) ? planPermisos : []
+    if (!lista.includes(to.meta.permiso)) {
+      // Redirige a la primera ruta accesible (evita loop si no tiene dashboard).
+      const destino = primeraRutaEmpresa()
+      return next(destino === to.path ? '/empresa/configuracion' : destino)
     }
   }
 

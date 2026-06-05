@@ -179,7 +179,7 @@ const navCuenta = [
 // Grupo colapsable
 const groupsOpen = ref({})
 function toggleGroup(label) { groupsOpen.value[label] = !groupsOpen.value[label] }
-function isGroupActive(item) { return item.children?.some(c => route.path.startsWith(c.path)) }
+function isGroupActive(item) { return item.children?.some(c => c.path && route.path.startsWith(c.path)) }
 
 watch(route, () => {
   navOperaciones.forEach(item => {

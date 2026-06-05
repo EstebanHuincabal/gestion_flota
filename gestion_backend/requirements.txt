@@ -42,3 +42,4 @@ firebase-admin==7.4.0
 
 # ── HTTP externo (OSRM rutas, Nominatim geocodificación) ──────────────────────
 requests==2.31.0
+django-ratelimit==4.1.0

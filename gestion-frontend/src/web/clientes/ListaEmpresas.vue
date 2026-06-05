@@ -109,6 +109,7 @@ onMounted(cargarEmpresas)
 
     <!-- Tabla -->
     <div v-else class="card">
+      <div class="tabla-wrap">
       <table class="tabla">
         <thead>
           <tr>
@@ -189,6 +190,7 @@ onMounted(cargarEmpresas)
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </template>
@@ -275,6 +277,19 @@ onMounted(cargarEmpresas)
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
 }
+
+/* Contenedor con scroll horizontal solo cuando la tabla no cabe. Nunca vertical.
+   Scrollbar fino y discreto, mismo patrón que el sidebar de Base.vue. */
+.tabla-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124,58,237,0.25) transparent;
+}
+.tabla-wrap::-webkit-scrollbar { height: 6px; }
+.tabla-wrap::-webkit-scrollbar-track { background: transparent; }
+.tabla-wrap::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.25); border-radius: 999px; }
+.tabla-wrap::-webkit-scrollbar-thumb:hover { background: rgba(124,58,237,0.45); }
 
 .tabla {
   width: 100%;
@@ -367,39 +382,9 @@ onMounted(cargarEmpresas)
   .header-actions { flex-direction: column; align-items: stretch; }
   .btn-primary { justify-content: center; }
 
-  /* Tabla de 8 cols → mostrar solo Nombre(1), Plan(3), Estado(7), Acciones(8)
-     Ocultar: RUT(2), Flotas/Vehículos(4), Conductores(5), Última Actividad(6) */
-  /* Scroll horizontal con thumb visible */
-  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
-    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
-    overflow-y: hidden !important;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    scrollbar-color: #A78BFA #EDE9FE;
-  }
-  .tabla-wrap::-webkit-scrollbar,
-  .tabla-card::-webkit-scrollbar,
-  .sc-table-wrap::-webkit-scrollbar,
-  .card::-webkit-scrollbar,
-  .table-wrap::-webkit-scrollbar { height: 8px; }
-  .tabla-wrap::-webkit-scrollbar-track,
-  .tabla-card::-webkit-scrollbar-track,
-  .sc-table-wrap::-webkit-scrollbar-track,
-  .card::-webkit-scrollbar-track,
-  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
-  .tabla-wrap::-webkit-scrollbar-thumb,
-  .tabla-card::-webkit-scrollbar-thumb,
-  .sc-table-wrap::-webkit-scrollbar-thumb,
-  .card::-webkit-scrollbar-thumb,
-  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
-  .tabla-wrap::-webkit-scrollbar-thumb:hover,
-  .tabla-card::-webkit-scrollbar-thumb:hover,
-  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
-  .card::-webkit-scrollbar-thumb:hover,
-  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
-  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
-  .card table, .table-wrap table,
-  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
-
+  /* La tabla no cabe en pantallas angostas: fuerza el ancho mínimo para activar
+     el scroll horizontal del .tabla-wrap (el estilo del scrollbar es global). */
+  .tabla-wrap { -webkit-overflow-scrolling: touch; }
+  .tabla { min-width: 640px; }
 }
 </style>

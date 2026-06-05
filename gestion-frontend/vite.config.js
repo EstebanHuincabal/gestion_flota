@@ -16,6 +16,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      // Archivos subidos (fotos de vehículos, comprobantes, documentos) los
+      // sirve Django en dev; sin este proxy darían 404 desde el puerto de Vite.
+      '/media': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
       '/ws': {
         target: 'ws://127.0.0.1:8000',
         ws: true,

@@ -27,6 +27,50 @@ const kmFin          = ref('')
 const procesando     = ref(false)
 const errorModal     = ref('')
 
+// ── Navegación externa (Google Maps / Waze) ──────────────────────────────────
+const menuNavegar = ref(false)
+
+// Paradas con coordenadas, ordenadas (origen → intermedias → destino).
+const paradasOrdenadas = computed(() =>
+  (ruta.value?.paradas || [])
+    .filter(p => p.latitud != null && p.longitud != null)
+    .slice()
+    .sort((a, b) => a.orden - b.orden)
+)
+const tieneCoordsNavegacion = computed(() => paradasOrdenadas.value.length >= 1)
+
+// Abre una URL en la app externa del sistema (no in-app browser).
+function abrirExterno(url) {
+  window.open(url, '_system')
+}
+
+// Google Maps: ruta completa con paradas. Origen = 1ª, destino = última,
+// intermedias como waypoints.
+function navegarGoogleMaps() {
+  menuNavegar.value = false
+  const ps = paradasOrdenadas.value
+  if (!ps.length) return
+  const destino = ps[ps.length - 1]
+  let url = `https://www.google.com/maps/dir/?api=1&destination=${destino.latitud},${destino.longitud}&travelmode=driving`
+  if (ps.length >= 2) {
+    url += `&origin=${ps[0].latitud},${ps[0].longitud}`
+    const waypoints = ps.slice(1, -1)
+    if (waypoints.length) {
+      url += '&waypoints=' + waypoints.map(p => `${p.latitud},${p.longitud}`).join('|')
+    }
+  }
+  abrirExterno(url)
+}
+
+// Waze: solo soporta un destino → navega al destino final.
+function navegarWaze() {
+  menuNavegar.value = false
+  const ps = paradasOrdenadas.value
+  if (!ps.length) return
+  const destino = ps[ps.length - 1]
+  abrirExterno(`https://waze.com/ul?ll=${destino.latitud},${destino.longitud}&navigate=yes`)
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 const toast = ref({ visible: false, mensaje: '', ok: true })
 let   toastTimer = null
@@ -582,19 +626,30 @@ const COMBUSTIBLE = {
           </button>
         </template>
 
-        <!-- [activo] → Finalizar ruta -->
-        <button
-          v-else-if="ruta.estado === 'activo'"
-          @click="abrirFinalizar"
-          class="w-full py-4 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[54px]"
-          style="background:linear-gradient(135deg,var(--color-acento),#7C3AED);
-                 box-shadow:0 4px 16px rgba(83,74,183,.4)"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          Finalizar ruta
-        </button>
+        <!-- [activo] → Navegar + Finalizar -->
+        <template v-else-if="ruta.estado === 'activo'">
+          <button
+            v-if="tieneCoordsNavegacion"
+            @click="menuNavegar = true"
+            class="w-full mb-4 py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 min-h-[54px] text-gray-700 bg-white border-2 border-gray-200"
+          >
+            <svg class="w-5 h-5" style="color: var(--color-acento)" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+            </svg>
+            Navegar con GPS
+          </button>
+          <button
+            @click="abrirFinalizar"
+            class="w-full py-4 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 min-h-[54px]"
+            style="background:linear-gradient(135deg,var(--color-acento),#7C3AED);
+                   box-shadow:0 4px 16px rgba(83,74,183,.4)"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Finalizar ruta
+          </button>
+        </template>
 
         <!-- [finalizado / cancelado] → Banner informativo -->
         <div
@@ -610,6 +665,33 @@ const COMBUSTIBLE = {
       </div>
 
     </template><!-- fin vista principal -->
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         SHEET: Elegir app de navegación
+    ───────────────────────────────────────────────────────────────────────── -->
+    <Transition name="sheet">
+      <div v-if="menuNavegar" class="fixed inset-0 z-[2000]">
+        <div class="absolute inset-0 bg-black/40" @click="menuNavegar = false"/>
+        <div class="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl px-6 pt-5 pb-10"
+             style="padding-bottom: calc(2.5rem + env(safe-area-inset-bottom))">
+          <div class="flex justify-center mb-4"><div class="w-10 h-1 rounded-full bg-gray-300"/></div>
+          <h2 class="text-base font-bold text-gray-800 mb-1">Navegar con GPS</h2>
+          <p class="text-sm text-gray-500 mb-4">Abre la ruta en tu app de mapas.</p>
+          <button @click="navegarGoogleMaps"
+            class="w-full py-3.5 mb-2 rounded-xl border border-gray-200 text-gray-800 font-semibold text-sm flex items-center justify-center gap-2">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="#4285F4"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+            Google Maps
+            <span class="text-[11px] text-gray-400 font-normal">(ruta completa)</span>
+          </button>
+          <button @click="navegarWaze"
+            class="w-full py-3.5 rounded-xl border border-gray-200 text-gray-800 font-semibold text-sm flex items-center justify-center gap-2">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="#33CCFF"><circle cx="12" cy="12" r="10"/></svg>
+            Waze
+            <span class="text-[11px] text-gray-400 font-normal">(al destino)</span>
+          </button>
+        </div>
+      </div>
+    </Transition>
 
     <!-- ─────────────────────────────────────────────────────────────────────
          MODAL: Iniciar ruta

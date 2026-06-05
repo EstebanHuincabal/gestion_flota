@@ -74,6 +74,25 @@ class Command(BaseCommand):
             if not sus.fecha_fin_periodo:
                 continue
 
+            # ── Downgrade programado vencido sin autocobro → aplicarlo ────────
+            if (sus.plan_programado and sus.fecha_cambio_programado
+                    and sus.fecha_cambio_programado <= ahora):
+                from g_de_flota.views_planes import aplicar_downgrade_programado
+                plan_aplicado = aplicar_downgrade_programado(sus)
+                if plan_aplicado:
+                    notificar_admins_empresa(
+                        empresa=sus.empresa, tipo='actividad',
+                        titulo='Cambio de plan aplicado',
+                        mensaje=(
+                            f'Tu plan cambió a {plan_aplicado.get_nombre_display()} '
+                            f'según el cambio que programaste.'
+                        ),
+                    )
+                    self.stdout.write(
+                        f'  [DOWNGRADE] {sus.empresa.nombre} → {plan_aplicado.get_nombre_display()} (programado).'
+                    )
+                    procesadas += 1
+
             dias = (sus.fecha_fin_periodo - ahora).days
 
             # ── Activa y vencida → período de gracia ─────────────────────────
@@ -214,13 +233,19 @@ class Command(BaseCommand):
         )
 
     def _cobrar_automatico(self, sus, tarjeta, ahora):
-        """Intenta cobrar la renovación con OneClick Mall."""
+        """Intenta cobrar la renovación con OneClick Mall.
+
+        Si hay un downgrade programado, cobra el plan nuevo (más barato) y aplica
+        el cambio tras la aprobación: el cliente renueva ya en su plan ajustado.
+        """
         from g_de_flota.models import PagoTransbank
         from g_de_flota.notificaciones import notificar_admins_empresa
         from g_de_flota.views_planes import _get_oneclick_transaction
+
         import uuid
 
-        plan  = sus.plan
+        # Si hay downgrade programado, la renovación se cobra al plan nuevo.
+        plan  = sus.plan_programado or sus.plan
         monto = int(plan.precio_mensual or 0)
         if not monto:
             self.stdout.write(f'  [AUTOCOBRO SKIP] {sus.empresa.nombre} — sin monto configurado.')
@@ -291,6 +316,11 @@ class Command(BaseCommand):
             fecha_pago=ahora,
             respuesta_tb={'auth_code': auth_code, 'response_code': resp_code, 'via': 'autocobro'},
         )
+
+        # Si había downgrade programado, aplicar el cambio al plan nuevo.
+        if sus.plan_programado:
+            from g_de_flota.views_planes import aplicar_downgrade_programado
+            aplicar_downgrade_programado(sus)
 
         sus.estado = 'activa'
         sus.fecha_inicio      = ahora

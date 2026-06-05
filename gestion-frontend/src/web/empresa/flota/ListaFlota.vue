@@ -13,6 +13,10 @@ const { ruta } = useEmpresaNav()
 const usuario      = computed(() => safeJsonParse(localStorage.getItem('usuario'), {}))
 const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 
+// Columnas de módulos opcionales: solo se muestran si el plan incluye el permiso.
+const verGps         = computed(() => tienePermiso('gps.ver'))
+const verConductores = computed(() => tienePermiso('conductores.ver'))
+
 // ── Datos ───────────────────────────────────────────────
 const vehiculos    = ref([])
 const conductores  = ref([])
@@ -357,35 +361,46 @@ onMounted(async () => {
             <th>Vehículo</th>
             <th>Año</th>
             <th>Combustible</th>
-            <th>KM</th>
             <th>Estado</th>
-            <th>Conductor</th>
-            <th>GPS</th>
+            <th v-if="verConductores">Conductor</th>
+            <th v-if="verGps">GPS</th>
             <th class="th-acciones">Acciones</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="v in vehiculos" :key="v.id" :class="{ inactivo: !v.activo }">
-            <td class="td-patente">{{ v.patente }}</td>
+            <td class="td-patente">
+              <div class="patente-cell">
+                <div class="veh-thumb">
+                  <img v-if="v.foto_url" :src="v.foto_url" :alt="v.patente"/>
+                  <svg v-else fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                      d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                      d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
+                  </svg>
+                </div>
+                <span>{{ v.patente }}</span>
+              </div>
+            </td>
             <td>
               <span v-if="v.marca || v.modelo">{{ [v.marca, v.modelo].filter(Boolean).join(' ') }}</span>
               <span v-else class="texto-tenue">—</span>
             </td>
             <td>{{ v.anio || '—' }}</td>
             <td>{{ COMBUSTIBLE_LABEL[v.tipo_combustible] || v.tipo_combustible }}</td>
-            <td>{{ (v.km_actuales ?? 0).toLocaleString('es-CL') }}</td>
             <td>
               <span :class="['badge', v.activo ? 'badge-ok' : 'badge-off']">
                 {{ v.activo ? 'Activo' : 'Inactivo' }}
               </span>
             </td>
-            <td>
+            <td v-if="verConductores">
               <span v-if="v.conductor_asignado" class="conductor-chip">
                 {{ v.conductor_asignado.nombre }}
               </span>
               <span v-else class="texto-tenue">Sin conductor</span>
             </td>
-            <td>
+            <td v-if="verGps">
               <span v-if="v.gps_asociado" class="gps-chip" :title="`${v.gps_asociado.modelo} · ${v.gps_asociado.imei}`">
                 {{ v.gps_asociado.modelo }}
                 <span class="gps-imei">{{ v.gps_asociado.imei }}</span>
@@ -393,7 +408,7 @@ onMounted(async () => {
               <span v-else class="texto-tenue">Sin GPS</span>
             </td>
             <td class="td-acciones">
-              <button class="btn-accion" title="Asignar conductor" @click="abrirAsignar(v)" :disabled="!v.activo">
+              <button v-if="verConductores" class="btn-accion" title="Asignar conductor" @click="abrirAsignar(v)" :disabled="!v.activo">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
@@ -500,6 +515,18 @@ onMounted(async () => {
 .tabla-vehiculos tbody tr:last-child td { border-bottom: none; }
 .tabla-vehiculos tbody tr.inactivo { opacity: 0.55; }
 .td-patente { font-weight: 700; color: #1E1B4B; font-family: ui-monospace, monospace; }
+.patente-cell { display: flex; align-items: center; gap: 0.625rem; }
+.veh-thumb {
+  flex-shrink: 0;
+  width: 44px; height: 32px;
+  border-radius: 7px;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.veh-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.veh-thumb svg { width: 18px; height: 18px; color: #C7CDD6; }
 .texto-tenue { color: #9CA3AF; }
 .th-acciones, .td-acciones { text-align: right; white-space: nowrap; }
 

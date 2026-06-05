@@ -68,7 +68,8 @@ class Command(BaseCommand):
                             f"El vehículo {prog.vehiculo.patente} requiere '{prog.regla.tipo}'. "
                             f"Días restantes: {dias_restantes}.",
                             url_accion='/empresa/predictivo',
-                            extra={'vehiculo_id': prog.vehiculo.id}
+                            extra={'vehiculo_id': prog.vehiculo.id},
+                            permiso='mantenciones.ver',
                         )
                         
                     elif alerta_existente.nivel != nivel:
@@ -96,7 +97,8 @@ class Command(BaseCommand):
                                     f"La alerta de '{prog.regla.tipo}' para el vehículo {prog.vehiculo.patente} "
                                     f"lleva {dias_desde_alerta} días sin ser atendida.",
                                     url_accion='/empresa/predictivo',
-                                    extra={'vehiculo_id': prog.vehiculo.id, 'alerta_id': alerta_existente.id}
+                                    extra={'vehiculo_id': prog.vehiculo.id, 'alerta_id': alerta_existente.id},
+                                    permiso='mantenciones.ver',
                                 )
 
         self.stdout.write(self.style.SUCCESS(f'Evaluación completada. Alertas creadas: {alertas_creadas}'))

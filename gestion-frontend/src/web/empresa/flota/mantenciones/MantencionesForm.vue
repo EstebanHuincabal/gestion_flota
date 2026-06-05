@@ -43,6 +43,11 @@ const TIPOS_MANTENCION = [
   { key: 'otro',               label: 'Otro' },
 ]
 
+// Vehículo elegido (objeto completo) para la tarjeta de confirmación.
+const vehiculoSel = computed(() =>
+  vehiculos.value.find(v => v.id === form.value.vehiculo_id) || null
+)
+
 const tipoSeleccionado = ref('')
 const tipoOtro         = ref('')
 const tipoMantencion   = computed(() => {
@@ -330,6 +335,34 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- Tarjeta de confirmación del vehículo elegido -->
+          <div v-if="vehiculoSel" class="veh-confirm">
+            <div class="veh-confirm-icon" :class="{ 'veh-confirm-icon--foto': vehiculoSel.foto_url }">
+              <img v-if="vehiculoSel.foto_url" :src="vehiculoSel.foto_url" alt="Foto del vehículo"/>
+              <svg v-else fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                  d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
+              </svg>
+            </div>
+            <div class="veh-confirm-body">
+              <div class="veh-confirm-top">
+                <span class="veh-confirm-patente">{{ vehiculoSel.patente }}</span>
+                <span class="veh-confirm-modelo">{{ [vehiculoSel.marca, vehiculoSel.modelo].filter(Boolean).join(' ') || 'Sin marca/modelo' }}</span>
+                <span v-if="vehiculoSel.anio" class="veh-confirm-anio">· {{ vehiculoSel.anio }}</span>
+              </div>
+              <div class="veh-confirm-sub">
+                <span>{{ vehiculoSel.conductor_asignado ? 'Conductor: ' + vehiculoSel.conductor_asignado.nombre : 'Sin conductor asignado' }}</span>
+              </div>
+            </div>
+            <span class="veh-confirm-check">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+              </svg>
+            </span>
+          </div>
+
           <div class="form-group">
             <label class="label">Tipo de Mantención <span class="req">*</span></label>
             <select v-model="tipoSeleccionado" class="input">
@@ -518,4 +551,54 @@ onMounted(async () => {
   .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
 
 }
+
+/* ── Tarjeta de confirmación del vehículo ── */
+.veh-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  margin: -0.25rem 0 1.25rem;
+  padding: 0.75rem 1rem;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 12px;
+}
+.veh-confirm-icon {
+  flex-shrink: 0;
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #C7D2FE;
+  display: flex; align-items: center; justify-content: center;
+  color: #4F46E5;
+}
+.veh-confirm-icon svg { width: 20px; height: 20px; }
+.veh-confirm-icon--foto { width: 56px; height: 42px; padding: 0; overflow: hidden; }
+.veh-confirm-icon--foto img { width: 100%; height: 100%; object-fit: cover; }
+.veh-confirm-body { flex: 1; min-width: 0; }
+.veh-confirm-top {
+  display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+}
+.veh-confirm-patente {
+  font-family: ui-monospace, 'Courier New', monospace;
+  font-weight: 800; font-size: 0.95rem; color: #1E1B4B;
+  background: #fff; border: 1px solid #C7D2FE;
+  padding: 0.05rem 0.4rem; border-radius: 5px;
+}
+.veh-confirm-modelo { font-weight: 600; font-size: 0.875rem; color: #374151; }
+.veh-confirm-anio   { font-size: 0.8125rem; color: #6B7280; }
+.veh-confirm-sub {
+  margin-top: 0.15rem;
+  font-size: 0.8125rem; color: #6B7280;
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+}
+.veh-confirm-check {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: #4F46E5;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+}
+.veh-confirm-check svg { width: 15px; height: 15px; }
 </style>

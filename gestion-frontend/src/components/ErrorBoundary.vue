@@ -20,9 +20,12 @@ const tieneError   = ref(false)
 const mensajeError = ref('')
 const intentos     = ref(0)
 
-onErrorCaptured((error) => {
+onErrorCaptured((error, instance, info) => {
   tieneError.value   = true
   mensajeError.value = error.message || 'Error inesperado en la interfaz.'
+  // Dejar rastro para diagnosticar el origen exacto (componente + hook + stack).
+  const nombre = instance?.$options?.__name || instance?.$options?.name || '¿desconocido?'
+  console.error(`[ErrorBoundary] Error en <${nombre}> (${info}):`, error)
   return false
 })
 

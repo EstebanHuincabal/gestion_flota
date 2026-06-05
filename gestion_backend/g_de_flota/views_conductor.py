@@ -6,6 +6,7 @@ Todos los endpoints verifican que el usuario autenticado tenga rol=CONDUCTOR.
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django_ratelimit.decorators import ratelimit
 from django.utils import timezone
 
 from datetime import datetime, timedelta
@@ -423,7 +424,7 @@ def conductor_iniciar_ruta(request, ruta_id):
         notificar_admins_empresa(_empresa_ri, 'actividad',
                                  f"Ruta iniciada por {_nombre_c}",
                                  f"{_nombre_c} inició la ruta '{ruta.nombre}'.",
-                                 url_accion='/empresa/rutas')
+                                 url_accion='/empresa/rutas', permiso='rutas.ver')
 
     # Avisar al mapa de flota para que dibuje el trazado en tiempo real
     notificar_rutas_cambiadas(ruta.empresa_id)
@@ -479,7 +480,7 @@ def conductor_finalizar_ruta(request, ruta_id):
         notificar_admins_empresa(_empresa_rf, 'actividad',
                                  f"Ruta finalizada por {_nombre_cf}",
                                  f"{_nombre_cf} finalizó la ruta '{ruta.nombre}'{_km_txt}.",
-                                 url_accion='/empresa/rutas')
+                                 url_accion='/empresa/rutas', permiso='rutas.ver')
 
     # Avisar al mapa de flota para que quite el trazado en tiempo real
     notificar_rutas_cambiadas(ruta.empresa_id)
@@ -907,7 +908,7 @@ def conductor_iniciar_mantencion(request, mantencion_id):
         notificar_admins_empresa(_empresa_mi, 'actividad',
                                  f"Mantención iniciada por {_nombre_mi}",
                                  f"{_nombre_mi} inició '{mantencion.tipo_mantencion}' del vehículo {vehiculo.patente}.",
-                                 url_accion='/empresa/mantenciones')
+                                 url_accion='/empresa/mantenciones', permiso='mantenciones.ver')
 
     return Response({'ok': True, 'mantencion': _serializar_mantencion(mantencion, request)})
 
@@ -1009,7 +1010,7 @@ def conductor_completar_mantencion(request, mantencion_id):
         notificar_admins_empresa(empresa, 'actividad',
                                  f"Mantención completada por {_nombre_mc}",
                                  f"{_nombre_mc} completó '{mantencion.tipo_mantencion}' del vehículo {vehiculo.patente}. Costo: ${int(costo):,}.",
-                                 url_accion='/empresa/mantenciones')
+                                 url_accion='/empresa/mantenciones', permiso='mantenciones.ver')
 
     return Response({
         'ok':         True,
@@ -1094,6 +1095,7 @@ def conductor_actualizar_perfil(request):
             titulo     = f'Conductor actualizó su perfil',
             mensaje    = f'{user.nombre or user.email} actualizó su información: {detalle_txt}.',
             url_accion = f'/empresa/conductores',
+            permiso    = 'conductores.ver',
         )
 
     return Response({
@@ -1110,6 +1112,7 @@ def conductor_actualizar_perfil(request):
 
 @api_view(['POST'])
 @permission_classes([])
+@ratelimit(key='ip', rate='5/m', method='POST', block=False)
 def conductor_recuperar_password(request):
     """
     Genera una contraseña temporal y la envía por email al conductor.
@@ -1119,6 +1122,10 @@ def conductor_recuperar_password(request):
     import secrets
     import hashlib
     from .models import normalizar_rut
+
+    # Rate limit: endpoint público → evita spam de correos y enumeración de RUTs.
+    if getattr(request, 'limited', False):
+        return Response({'ok': True})
 
     rut_raw = str(request.data.get('rut', '')).strip()
     if not rut_raw:
@@ -1514,3 +1521,39 @@ def conductor_agregar_comentario(request, ruta_id):
         'autor':      request.user.nombre,
         'created_at': evento.created_at.isoformat(),
     }, status=201)
+
+
+# GET/PATCH /api/conductor/vehiculo/foto/
+# GET: foto actual del vehículo asignado. PATCH: subir/actualizar la foto.
+@api_view(['GET', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def conductor_subir_foto_vehiculo(request):
+    if request.user.rol != Rol.CONDUCTOR:
+        return Response({'error': 'Solo conductores.'}, status=403)
+
+    asignacion = Asignacion.objects.filter(
+        conductor=request.user, activo=True
+    ).select_related('vehiculo').first()
+    if not asignacion or not asignacion.vehiculo:
+        return Response({'error': 'No tienes un vehiculo asignado.'}, status=404)
+
+    vehiculo = asignacion.vehiculo
+
+    # GET: devuelve la foto actual (para refrescar la app al abrir Ajustes).
+    if request.method == 'GET':
+        return Response({
+            'foto_url': request.build_absolute_uri(vehiculo.foto.url) if vehiculo.foto else None,
+        })
+
+    foto = request.FILES.get('foto')
+    if not foto:
+        return Response({'error': 'No se envio ninguna imagen.'}, status=400)
+    if foto.size > 8 * 1024 * 1024:
+        return Response({'error': 'La imagen no puede superar 8 MB.'}, status=400)
+    if not (foto.content_type or '').startswith('image/'):
+        return Response({'error': 'El archivo debe ser una imagen.'}, status=400)
+
+    vehiculo.foto = foto
+    vehiculo.save(update_fields=['foto'])
+    registrar_log('ACTIVIDAD', 'vehiculo_foto_conductor', request, detalle={'patente': vehiculo.patente})
+    return Response({'ok': True, 'foto_url': request.build_absolute_uri(vehiculo.foto.url)})

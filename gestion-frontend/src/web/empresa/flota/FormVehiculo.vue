@@ -26,6 +26,23 @@ const form = ref({
   km_actuales: 0,
 })
 
+// Foto del vehículo
+const fotoFile    = ref(null)      // File nuevo elegido (si lo hay)
+const fotoPreview = ref(null)      // URL para previsualizar (existente o nueva)
+
+function onFotoChange(e) {
+  const f = e.target.files?.[0]
+  if (!f) return
+  if (f.size > 8 * 1024 * 1024) { toast.error('La imagen no puede superar 8 MB.'); e.target.value = ''; return }
+  if (!f.type.startsWith('image/')) { toast.error('El archivo debe ser una imagen.'); e.target.value = ''; return }
+  fotoFile.value    = f
+  fotoPreview.value = URL.createObjectURL(f)
+}
+function quitarFoto() {
+  fotoFile.value    = null
+  fotoPreview.value = null
+}
+
 const formatPatente = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')
 
 const cargarVehiculo = async () => {
@@ -34,6 +51,7 @@ const cargarVehiculo = async () => {
     if (!res.ok) throw new Error('Vehículo no encontrado')
     const v = await res.json()
     form.value = { patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, km_actuales: v.km_actuales }
+    fotoPreview.value = v.foto_url || null
   } catch (e) { error.value = e.message }
   finally { cargando.value = false }
 }
@@ -60,10 +78,24 @@ const guardar = async () => {
 
   guardando.value = true
   try {
-    const payload = { ...form.value, anio: form.value.anio || null }
     const url     = props.modo === 'editar' ? `/api/empresa/vehiculos/${vehiculoId}/` : '/api/empresa/vehiculos/'
     const method  = props.modo === 'editar' ? 'PUT' : 'POST'
-    const res     = await apiFetchEmpresa(url, { method, body: payload })
+
+    // Con foto nueva → multipart; si no, JSON como siempre.
+    let body
+    if (fotoFile.value) {
+      body = new FormData()
+      body.append('patente',          form.value.patente)
+      body.append('marca',            form.value.marca || '')
+      body.append('modelo',           form.value.modelo || '')
+      if (form.value.anio) body.append('anio', form.value.anio)
+      body.append('tipo_combustible', form.value.tipo_combustible)
+      body.append('km_actuales',      form.value.km_actuales)
+      body.append('foto',             fotoFile.value, fotoFile.value.name)
+    } else {
+      body = { ...form.value, anio: form.value.anio || null }
+    }
+    const res  = await apiFetchEmpresa(url, { method, body })
     const data    = await res.json()
     if (!res.ok) {
       if (data.error === 'Sin permisos.') return  // el toast global ya lo notifica
@@ -141,6 +173,30 @@ onMounted(async () => {
             <label class="label">KM actuales</label>
             <input v-model="form.km_actuales" type="number" class="input" :class="{ 'input-error': errores.km_actuales }" min="0" required/>
             <p v-if="errores.km_actuales" class="field-error">{{ errores.km_actuales[0] }}</p>
+          </div>
+        </div>
+
+        <!-- Foto del vehículo -->
+        <div class="form-group">
+          <label class="label">Foto del vehículo <span class="label-opt">(opcional)</span></label>
+          <div class="foto-row">
+            <div class="foto-preview">
+              <img v-if="fotoPreview" :src="fotoPreview" alt="Foto del vehículo"/>
+              <svg v-else fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
+              </svg>
+            </div>
+            <div class="foto-acciones">
+              <label class="btn-foto">
+                <input type="file" accept="image/*" class="hidden-input" @change="onFotoChange"/>
+                {{ fotoPreview ? 'Cambiar foto' : 'Subir foto' }}
+              </label>
+              <button v-if="fotoPreview" type="button" class="btn-foto-quitar" @click="quitarFoto">Quitar</button>
+              <p class="foto-hint">JPG o PNG · máx 8 MB. Ayuda a identificar el vehículo de un vistazo.</p>
+            </div>
           </div>
         </div>
 
@@ -223,4 +279,36 @@ onMounted(async () => {
   .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
 
 }
+
+/* ── Foto del vehículo ── */
+.label-opt { font-weight: 400; color: #9CA3AF; font-size: 0.8em; }
+.foto-row { display: flex; gap: 1rem; align-items: center; }
+.foto-preview {
+  flex-shrink: 0;
+  width: 120px; height: 90px;
+  border-radius: 10px;
+  border: 1.5px dashed #D1D5DB;
+  background: #F9FAFB;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.foto-preview img { width: 100%; height: 100%; object-fit: cover; }
+.foto-preview svg { width: 34px; height: 34px; color: #D1D5DB; }
+.foto-acciones { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.hidden-input { display: none; }
+.btn-foto {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: #EEF2FF; color: #4338CA;
+  border: 1px solid #C7D2FE; border-radius: 8px;
+  font-size: 0.8125rem; font-weight: 600; cursor: pointer;
+}
+.btn-foto:hover { background: #E0E7FF; }
+.btn-foto-quitar {
+  padding: 0.35rem 0.75rem;
+  background: none; border: none;
+  color: #DC2626; font-size: 0.8125rem; font-weight: 500; cursor: pointer;
+}
+.btn-foto-quitar:hover { text-decoration: underline; }
+.foto-hint { font-size: 0.75rem; color: #9CA3AF; margin: 0; max-width: 280px; }
 </style>

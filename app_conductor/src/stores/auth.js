@@ -92,14 +92,14 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** Clasifica un error de apiFetch en un objeto { tipo, mensaje } */
   function _clasificarError(e) {
-    // Sin conexión o timeout
+    // Sin conexión o timeout (no se distingue red caída de servidor inalcanzable).
     if (e.isNetworkError) {
       const esTimeout = e.message?.includes('tardó demasiado')
       return {
         tipo:    'sin_conexion',
         mensaje: esTimeout
-          ? 'El servidor tardó demasiado en responder. Verifica tu conexión e intenta nuevamente.'
-          : 'Sin conexión a Internet. Verifica tu red e intenta nuevamente.',
+          ? 'El servidor tardó demasiado en responder. Verifica tu conexión o intenta más tarde.'
+          : 'No se pudo conectar con el servidor. Verifica tu conexión a Internet o intenta más tarde.',
       }
     }
 

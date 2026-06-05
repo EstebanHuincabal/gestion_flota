@@ -407,6 +407,7 @@ class Vehiculo(models.Model):
     anio             = models.IntegerField(null=True, blank=True)
     tipo_combustible = models.CharField(max_length=20, choices=COMBUSTIBLE, default='bencina')
     km_actuales      = models.IntegerField(default=0)
+    foto             = models.ImageField(upload_to='vehiculos/fotos/', null=True, blank=True)
     activo           = models.BooleanField(default=True)
     en_mantencion    = models.BooleanField(
         default=False,
@@ -1066,6 +1067,13 @@ class Suscripcion(models.Model):
     fecha_fin_periodo = models.DateTimeField(null=True, blank=True)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
     dias_gracia       = models.PositiveSmallIntegerField(default=7)
+    # Downgrade diferido: el cambio a un plan inferior se programa para aplicarse
+    # al final del período vigente (el cliente conserva lo que pagó hasta vencer).
+    plan_programado         = models.ForeignKey(
+        PlanSuscripcion, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='suscripciones_programadas',
+    )
+    fecha_cambio_programado = models.DateTimeField(null=True, blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
 
@@ -1098,6 +1106,10 @@ class PagoTransbank(models.Model):
 
     empresa      = models.ForeignKey(Empresa, on_delete=models.PROTECT, related_name='pagos')
     suscripcion  = models.ForeignKey(Suscripcion, on_delete=models.PROTECT, related_name='pagos')
+    # Usuario que inició el pago. Permite saber quién lo confirmó aunque la
+    # transacción se cierre en el retorno de Transbank (request sin sesión) o en
+    # el autocobro (queda en null = sistema).
+    iniciado_por = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='pagos_iniciados')
     token        = models.CharField(max_length=200, unique=True)
     orden_compra = models.CharField(max_length=64, unique=True)
     monto        = models.PositiveIntegerField()

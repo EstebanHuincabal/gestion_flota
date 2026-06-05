@@ -208,10 +208,26 @@ def _broadcast_evento_gps(empresa_id, payload):
         pass
 
 
+def _empresa_tiene_gps(empresa):
+    """True si el plan de la empresa incluye el permiso de GPS (`gps.ver`)."""
+    plan = getattr(empresa, 'plan', None)
+    if not plan:
+        return False
+    return plan.permisos.filter(codigo='gps.ver').exists()
+
+
 def _verificar_desviacion_ruta(dispositivo, lat, lng):
-    """Detecta si el vehículo se alejó de su ruta activa y emite alertas."""
+    """Detecta si el vehículo se alejó de su ruta activa y emite alertas.
+
+    Solo aplica si el plan de la empresa aún incluye GPS: si se le quitó el
+    permiso (p. ej. tras un downgrade), no se generan alertas de salida de ruta.
+    """
     vid = dispositivo.vehiculo_id
     if not vid:
+        return
+
+    if not _empresa_tiene_gps(dispositivo.empresa):
+        _estado_desviacion.pop(vid, None)
         return
 
     ruta = (
@@ -254,6 +270,7 @@ def _verificar_desviacion_ruta(dispositivo, lat, lng):
                     f'{patente} se alejó {dist_m} m de "{ruta_nombre}".',
                     url_accion='/empresa/mapa',
                     extra={'vehiculo_id': vid, 'ruta_id': ruta.id},
+                    permiso='gps.ver',
                 )
             except Exception:
                 pass

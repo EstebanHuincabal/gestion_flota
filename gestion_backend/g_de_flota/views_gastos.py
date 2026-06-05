@@ -1,13 +1,8 @@
-import csv
-import io
 import os
 from datetime import date as date_cls
 from decimal import Decimal
 
-import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
 from django.db.models import Q, Sum
-from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -484,88 +479,6 @@ class GastoDetailView(APIView):
         })
         gasto.delete()
         return Response(status=204)
-
-
-class GastosExportarView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        if not _tiene_permiso(request.user, 'finanzas.exportar'):
-            return Response({'error': 'Sin permisos para exportar datos.'}, status=403)
-        empresa = _get_empresa(request)
-        if not empresa:
-            return Response({'error': 'Empresa no encontrada.'}, status=400)
-
-        mes  = request.query_params.get('mes')
-        anio = request.query_params.get('anio')
-        fmt  = request.query_params.get('formato', 'csv')
-
-        # La exportación de gastos normales excluye correctivos (tienen su módulo aparte).
-        qs = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=False).select_related('vehiculo', 'conductor')
-        if mes and anio:
-            qs = qs.filter(fecha__month=int(mes), fecha__year=int(anio))
-        elif anio:
-            qs = qs.filter(fecha__year=int(anio))
-
-        if fmt not in ('csv', 'xlsx'):
-            return Response({'error': 'Formato no soportado. Use formato=csv o formato=xlsx'}, status=400)
-
-        periodo = f"{anio}_{mes}" if mes else str(anio or 'todos')
-        cat_map = dict(GastoOperativo.CATEGORIAS)
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Gastos'
-
-        headers = ['Fecha', 'Categoría', 'Descripción', 'Vehículo', 'Conductor', 'Monto']
-        header_font  = Font(bold=True, color='FFFFFF', size=11)
-        header_fill  = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid')
-        header_align = Alignment(horizontal='center', vertical='center')
-        ws.append(headers)
-        ws.row_dimensions[1].height = 22
-        for cell in ws[1]:
-            cell.font      = header_font
-            cell.fill      = header_fill
-            cell.alignment = header_align
-
-        totales = {}
-        for g in qs:
-            cat_label = cat_map.get(g.categoria, g.categoria)
-            ws.append([
-                g.fecha.strftime('%d/%m/%Y'),
-                cat_label,
-                g.descripcion,
-                str(g.vehiculo) if g.vehiculo else '',
-                g.conductor.nombre if g.conductor else '',
-                int(g.monto),
-            ])
-            totales[cat_label] = totales.get(cat_label, 0) + int(g.monto)
-
-        ws.append([])
-        ws.append(['TOTALES POR CATEGORÍA', '', '', '', '', ''])
-        bold = Font(bold=True)
-        ws[ws.max_row][0].font = bold
-        for cat, total in totales.items():
-            ws.append(['', cat, '', '', '', total])
-        ws.append(['TOTAL GENERAL', '', '', '', '', sum(totales.values())])
-        ws[ws.max_row][0].font = bold
-
-        for col in ws.columns:
-            max_len = max((len(str(cell.value or '')) for cell in col), default=0)
-            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 45)
-
-        ws.freeze_panes = 'A2'
-        ws.auto_filter.ref = f'A1:F1'
-
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        response = HttpResponse(
-            output.read(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
-        response['Content-Disposition'] = f'attachment; filename="gastos_{periodo}.xlsx"'
-        return response
 
 
 class PresupuestoView(APIView):
@@ -1080,6 +993,7 @@ class GastosCorrectivosList(APIView):
                 f'Se registró un gasto correctivo de ${monto_fmt} por {descripcion}.',
                 url_accion='/empresa/finanzas',
                 extra={'gasto_id': gasto.id},
+                permiso='correctivos.ver',
             )
         except Exception:
             pass

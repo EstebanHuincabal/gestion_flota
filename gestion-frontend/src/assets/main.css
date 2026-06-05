@@ -31,6 +31,37 @@
   }
 }
 
+/* ── Scrollbars: mismo diseño que el sidebar (.nav) de Base.vue ──
+   Fino, redondeado, track transparente, sin botones de flecha. Reemplaza el
+   scrollbar nativo de Windows en toda la app. Color gris translúcido para fondo
+   claro (el sidebar usa blanco translúcido sobre su fondo morado). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* ── Valores base de radio de bordes ── */
 :root {
   --radius-card:  12px;

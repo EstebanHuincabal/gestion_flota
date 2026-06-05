@@ -38,6 +38,24 @@ def _iso(val):
     return val.isoformat()
 
 
+def _calcular_atraso(ruta):
+    """Atraso en iniciar: ruta aún pendiente cuya hora programada ya pasó.
+
+    Devuelve (atrasada: bool, minutos: int|None). El atraso es la diferencia entre
+    ahora y el momento programado de inicio (fecha_programada + hora_programada).
+    Solo aplica a rutas en estado 'pendiente' (las activas ya arrancaron).
+    """
+    if ruta.estado != 'pendiente' or not ruta.fecha_programada or not ruta.hora_programada:
+        return False, None
+    programado = datetime.combine(ruta.fecha_programada, ruta.hora_programada)
+    if timezone.is_aware(timezone.now()):
+        programado = timezone.make_aware(programado, timezone.get_current_timezone())
+    diff_min = int((timezone.now() - programado).total_seconds() // 60)
+    if diff_min <= 0:
+        return False, None
+    return True, diff_min
+
+
 def _tiene_permiso(user, codigo: str) -> bool:
     if user.rol == Rol.SUPERADMIN:
         return True
@@ -66,6 +84,8 @@ def _ruta_dict(ruta, detalle=False):
     origen_nombre  = next((p.nombre for p in paradas_qs if p.tipo == 'origen'),  '')
     destino_nombre = next((p.nombre for p in paradas_qs if p.tipo == 'destino'), '')
 
+    atrasada, atraso_min = _calcular_atraso(ruta)
+
     d = {
         'id':               ruta.id,
         'nombre':           ruta.nombre,
@@ -76,6 +96,8 @@ def _ruta_dict(ruta, detalle=False):
         'conductor':        ruta.conductor.nombre if ruta.conductor else None,
         'vehiculo_id':      ruta.vehiculo_id,
         'vehiculo':         str(ruta.vehiculo) if ruta.vehiculo else None,
+        'atrasada':         atrasada,
+        'atraso_min':       atraso_min,
         'fecha_programada': _iso(ruta.fecha_programada),
         'hora_programada':  (ruta.hora_programada.strftime('%H:%M') if hasattr(ruta.hora_programada, 'strftime') else str(ruta.hora_programada)) if ruta.hora_programada else None,
         'fecha_inicio':     _iso(ruta.fecha_inicio),

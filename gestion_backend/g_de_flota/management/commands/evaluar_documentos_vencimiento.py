@@ -54,7 +54,7 @@ class Command(BaseCommand):
                 else:
                     continue
 
-                notificar_admins_empresa(empresa, tipo, titulo, mensaje, url_accion=url, extra=extra)
+                notificar_admins_empresa(empresa, tipo, titulo, mensaje, url_accion=url, extra=extra, permiso='documentos.ver')
                 notificadas += 1
 
         self.stdout.write(self.style.SUCCESS(

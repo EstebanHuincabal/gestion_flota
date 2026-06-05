@@ -7,7 +7,16 @@ export class ApiError extends Error {
 }
 
 export function safeJsonParse(str, fallback) {
-  try { return JSON.parse(str) } catch { return fallback }
+  // Devuelve el fallback también cuando el valor es null/undefined o el literal
+  // "null"/"undefined": JSON.parse("null") no lanza y devolvería null, lo que
+  // rompe a quien espera un array/objeto (p. ej. plan_permisos.includes()).
+  if (str == null || str === 'null' || str === 'undefined') return fallback
+  try {
+    const parsed = JSON.parse(str)
+    return parsed == null ? fallback : parsed
+  } catch {
+    return fallback
+  }
 }
 
 function getAccessToken() {
@@ -120,7 +129,13 @@ export async function apiFetch(url, options = {}) {
 
     if (response.status === 403) {
       response.clone().json().then(data => {
-        if (data?.codigo === 'LIMITE_PLAN') {
+        if (data?.codigo === 'EMPRESA_DESACTIVADA' && !url.includes('/api/login/')) {
+          // Sesión vigente cuya empresa fue desactivada por el SUPERADMIN: cerrar
+          // sesión y mostrar el motivo en la pantalla de login (sin alert nativo).
+          sessionStorage.setItem('mensaje_logout',
+            data.error || 'Tu empresa fue desactivada. Contacta al administrador del sistema.')
+          limpiarSesion()
+        } else if (data?.codigo === 'LIMITE_PLAN') {
           window.dispatchEvent(new CustomEvent('limite-plan', { detail: data }))
         } else if (data?.codigo === 'MODULO_NO_INCLUIDO') {
           window.dispatchEvent(new CustomEvent('modulo-bloqueado', { detail: data }))
