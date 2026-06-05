@@ -152,12 +152,14 @@ SECURE_CONTENT_TYPE_NOSNIFF = True          # bloquea MIME sniffing
 X_FRAME_OPTIONS             = 'DENY'        # anti-clickjacking (refuerza el middleware)
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER     = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SECURE_SSL_REDIRECT         = True
-    SESSION_COOKIE_SECURE       = True
-    CSRF_COOKIE_SECURE          = True
-    SECURE_HSTS_SECONDS         = 31536000   # 1 año
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD         = True
+    # SSL redirect y HSTS solo cuando el servidor tiene HTTPS configurado.
+    # Activa estas líneas una vez que tengas certificado SSL:
+    #   SECURE_SSL_REDIRECT         = True
+    #   SESSION_COOKIE_SECURE       = True
+    #   CSRF_COOKIE_SECURE          = True
+    #   SECURE_HSTS_SECONDS         = 31536000
+    #   SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    #   SECURE_HSTS_PRELOAD         = True
 
 AUTH_USER_MODEL = 'g_de_flota.Usuario'
 
