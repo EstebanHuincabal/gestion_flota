@@ -8,7 +8,7 @@ import { usePermisos }   from '@/composables/usePermisos.js'
 import BottomNav from '@/components/BottomNav.vue'
 import { iniciales } from '@/utils/formato.js'
 import { apiFetch } from '@/services/api.js'
-import { validarLicencia } from '@/utils/validators.js'
+import { validarLicencia, soloTexto } from '@/utils/validators.js'
 
 const auth       = useAuthStore()
 const themeStore = useThemeStore()
@@ -551,7 +551,7 @@ function mostrarPerfilToast(mensaje, error = false) {
             <!-- Nombre -->
             <div class="mb-3">
               <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nombre completo</label>
-              <input v-model="perfilForm.nombre" type="text" placeholder="Tu nombre"
+              <input v-model="perfilForm.nombre" @input="perfilForm.nombre = soloTexto(perfilForm.nombre)" type="text" placeholder="Tu nombre"
                 class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-acento)]"
                 :class="perfilErrores.nombre ? 'border-red-300' : ''"/>
               <p v-if="perfilErrores.nombre" class="text-xs text-red-500 mt-1">{{ perfilErrores.nombre }}</p>

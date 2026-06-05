@@ -67,7 +67,7 @@ onMounted(async () => {
     <!-- ── Banner: vehículo en mantención ───────────────────────────────────── -->
     <div
       v-if="mantenStore.vehiculoEnMantencion"
-      class="alert-banner alert-banner--red mx-4 mt-3"
+      class="alert-banner alert-banner--red mx-4 alert-banner--top"
       @click="router.push('/mantencion')"
     >
       <i class="ti ti-engine-off text-red-500 text-xl shrink-0"/>
@@ -81,7 +81,7 @@ onMounted(async () => {
     <!-- ── Banner: mantención próxima (≤ 3 días) sin bloqueo ────────────────── -->
     <div
       v-else-if="mantenStore.hayUrgente"
-      class="alert-banner alert-banner--amber mx-4 mt-3"
+      class="alert-banner alert-banner--amber mx-4 alert-banner--top"
       @click="router.push('/mantencion')"
     >
       <i class="ti ti-alert-triangle text-amber-500 text-xl shrink-0"/>
@@ -93,7 +93,7 @@ onMounted(async () => {
     </div>
 
     <!-- ── Header con gradiente ──────────────────────────────────────────── -->
-    <header class="header-hero">
+    <header class="header-hero" :class="{ 'header-hero--no-safe': mantenStore.vehiculoEnMantencion || mantenStore.hayUrgente }">
       <!-- Capa de patrón sutil -->
       <div class="header-pattern" aria-hidden="true"/>
 
@@ -270,6 +270,15 @@ onMounted(async () => {
   overflow: hidden;
   background: var(--gradient-hero);
   padding: max(1.25rem, env(safe-area-inset-top)) 1rem 0.75rem;
+}
+/* Cuando hay un banner arriba, este ya absorbe el safe-area: el header
+   usa padding normal para no duplicar el espacio bajo la barra de estado. */
+.header-hero--no-safe {
+  padding-top: 1.25rem;
+}
+/* Banner que aparece por encima del header: respeta la barra de estado. */
+.alert-banner--top {
+  margin-top: calc(env(safe-area-inset-top) + 0.75rem);
 }
 .header-pattern {
   position: absolute;

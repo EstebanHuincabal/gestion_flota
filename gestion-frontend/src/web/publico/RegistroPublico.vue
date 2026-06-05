@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { validarRut, validarEmail, validarTelefono, validarPassword, validarNombre } from '../../utils/validators.js'
+import { validarRut, validarEmail, validarTelefono, validarPassword, validarNombre, soloTexto } from '../../utils/validators.js'
 import InputTelefono from '../../components/InputTelefono.vue'
 import { COMUNAS_POR_REGION } from '../../utils/comunasChile.js'
 
@@ -497,12 +497,12 @@ async function pagar() {
           <div class="grid sm:grid-cols-2 gap-4">
             <div class="field">
               <label class="field-label">Nombre <span class="text-red-500">*</span></label>
-              <input v-model="usuario.nombre" type="text" placeholder="Ej: Juan" class="field-input" :class="{'field-input-error': errUsr.nombre}" @input="errUsr.nombre=''" maxlength="30" />
+              <input v-model="usuario.nombre" type="text" placeholder="Ej: Juan" class="field-input" :class="{'field-input-error': errUsr.nombre}" @input="usuario.nombre = soloTexto(usuario.nombre); errUsr.nombre=''" maxlength="30" />
               <p v-if="errUsr.nombre" class="field-error">{{ errUsr.nombre }}</p>
             </div>
             <div class="field">
               <label class="field-label">Apellido paterno <span class="text-red-500">*</span></label>
-              <input v-model="usuario.apellido_paterno" type="text" placeholder="Ej: Pérez" class="field-input" :class="{'field-input-error': errUsr.apellido_paterno}" @input="errUsr.apellido_paterno=''" maxlength="30" />
+              <input v-model="usuario.apellido_paterno" type="text" placeholder="Ej: Pérez" class="field-input" :class="{'field-input-error': errUsr.apellido_paterno}" @input="usuario.apellido_paterno = soloTexto(usuario.apellido_paterno); errUsr.apellido_paterno=''" maxlength="30" />
               <p v-if="errUsr.apellido_paterno" class="field-error">{{ errUsr.apellido_paterno }}</p>
             </div>
           </div>
@@ -510,7 +510,7 @@ async function pagar() {
           <div class="grid sm:grid-cols-2 gap-4">
             <div class="field">
               <label class="field-label">Apellido materno <span class="text-red-500">*</span></label>
-              <input v-model="usuario.apellido_materno" type="text" placeholder="Ej: González" class="field-input" :class="{'field-input-error': errUsr.apellido_materno}" @input="errUsr.apellido_materno=''" maxlength="30" />
+              <input v-model="usuario.apellido_materno" type="text" placeholder="Ej: González" class="field-input" :class="{'field-input-error': errUsr.apellido_materno}" @input="usuario.apellido_materno = soloTexto(usuario.apellido_materno); errUsr.apellido_materno=''" maxlength="30" />
               <p v-if="errUsr.apellido_materno" class="field-error">{{ errUsr.apellido_materno }}</p>
             </div>
             <div class="field">

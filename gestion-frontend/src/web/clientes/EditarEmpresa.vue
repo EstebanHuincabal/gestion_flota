@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
-import { validarTelefono, validarNombre, validarEmail } from '../../utils/validators.js'
+import { validarTelefono, validarNombre, validarEmail, soloTexto } from '../../utils/validators.js'
 import InputTelefono from '../../components/InputTelefono.vue'
 
 const router = useRouter()
@@ -350,7 +350,7 @@ onMounted(async () => {
 
           <div class="form-group">
             <label class="label" for="ciudad">Ciudad</label>
-            <input id="ciudad" v-model="form.ciudad" type="text" class="input"
+            <input id="ciudad" v-model="form.ciudad" @input="form.ciudad = soloTexto(form.ciudad)" type="text" class="input"
               placeholder="Santiago" autocomplete="off"/>
           </div>
         </div>

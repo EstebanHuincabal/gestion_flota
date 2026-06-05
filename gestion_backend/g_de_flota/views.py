@@ -1725,6 +1725,37 @@ def usuario_permisos(request, pk):
 # Mantenciones
 # ─────────────────────────────────────────
 
+def generar_gasto_correctivo_de_mantencion(mantencion, usuario=None):
+    """Registra el costo de una mantención CORRECTIVA realizada como gasto correctivo.
+
+    Idempotente: solo crea el gasto si la mantención es correctiva, está 'realizada'
+    con costo > 0 y aún no lo generó (`gasto_correctivo_generado`). Así el costo de
+    una falla no presupuestada cuenta en Correctivos y no como mantención planificada.
+    """
+    if not getattr(mantencion, 'es_correctivo', False) or mantencion.gasto_correctivo_generado:
+        return None
+    if mantencion.estado != 'realizada' or not mantencion.costo or mantencion.costo <= 0:
+        return None
+    empresa = mantencion.vehiculo.empresa if mantencion.vehiculo else None
+    if not empresa:
+        return None
+
+    GastoOperativo.objects.create(
+        empresa=empresa,
+        vehiculo=mantencion.vehiculo,
+        categoria='mantencion',
+        es_correctivo=True,
+        categoria_correctiva='otro_correctivo',
+        prioridad_correctiva='media',
+        descripcion=(f'Correctivo: {mantencion.tipo_mantencion}' or 'Correctivo')[:200],
+        monto=int(mantencion.costo),
+        fecha=mantencion.fecha_realizada or timezone.now().date(),
+        registrado_por=usuario,
+    )
+    mantencion.gasto_correctivo_generado = True
+    mantencion.save(update_fields=['gasto_correctivo_generado'])
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def mantenciones_lista_crear(request):
@@ -1856,9 +1887,16 @@ def mantenciones_detalle(request, pk):
         if nuevo_estado == 'realizada' and estado_actual != 'realizada':
             if not data.get('fecha_realizada'):
                 data['fecha_realizada'] = timezone.now().date().isoformat()
-            costo = data.get('costo')
-            if costo is None or float(costo) <= 0:
+            # Parseo tolerante (el front ya manda un número limpio; esto cubre
+            # llamadas directas con espacios o coma decimal).
+            costo_raw = data.get('costo')
+            try:
+                costo = float(str(costo_raw).replace(' ', '').replace(',', '.')) if costo_raw not in (None, '') else 0
+            except (ValueError, TypeError):
+                costo = 0
+            if costo <= 0:
                 return Response({"error": "El costo real debe ser mayor a 0 para marcar una mantención como realizada."}, status=status.HTTP_400_BAD_REQUEST)
+            data['costo'] = costo
             # Fecha realizada no puede ser futura
             from datetime import date as date_type
             fecha_r = data.get('fecha_realizada')
@@ -1889,6 +1927,10 @@ def mantenciones_detalle(request, pk):
                 elif nuevo_estado in ('realizada', 'cancelada'):
                     vehiculo.en_mantencion = False
                     vehiculo.save(update_fields=['en_mantencion'])
+
+                # Si es correctiva y se realizó, registrar su costo como gasto correctivo.
+                if nuevo_estado == 'realizada':
+                    generar_gasto_correctivo_de_mantencion(mantencion, request.user)
 
                 registrar_log('ACTIVIDAD', 'mantencion_estado_cambiado', request, detalle={
                     'vehiculo':      mantencion.vehiculo.patente,

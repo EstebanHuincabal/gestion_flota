@@ -172,6 +172,15 @@ export function validarLongitud(texto, min, max) {
   return { valido: true, error: '' }
 }
 
+// ── Solo texto (nombres y apellidos de personas) ──────────────────────────────
+// Filtra el valor dejando únicamente letras (de cualquier idioma, incluye
+// tildes y ñ), espacios, guion y apóstrofe. Pensada para usarse en @input de
+// los campos de nombre/apellido: bloquea dígitos y símbolos al escribir.
+export function soloTexto(valor) {
+  if (valor === null || valor === undefined) return ''
+  return String(valor).replace(/[^\p{L}\s'-]/gu, '')
+}
+
 // ── Número de licencia de conducir (Chile) ────────────────────────────────────
 // Formato: 3 letras + 10 dígitos. Ej: ABC1234567890, MTT0001234567.
 // Debe coincidir con la validación del backend (views_conductor.py).

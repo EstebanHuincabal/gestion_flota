@@ -1,15 +1,3 @@
-"""
-views_auth.py — Vistas de autenticación JWT con verificación de cuenta activa.
-
-El TokenRefreshView estándar de simplejwt solo valida que el refresh token sea
-válido, sin volver a consultar el estado del usuario. Esto permite que una cuenta
-desactivada (is_active=False) siga renovando su access token indefinidamente.
-
-TokenRefreshSeguroView cierra esa puerta: al refrescar, verifica que el usuario
-exista y siga activo. Combinado con la verificación de is_active que simplejwt ya
-hace en cada request (USER_AUTHENTICATION_RULE), un conductor desactivado pierde
-el acceso en cuanto su access token vigente caduca o intenta renovarlo.
-"""
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import InvalidToken

@@ -1844,3 +1844,163 @@ Todos los accesos a `localStorage`/`sessionStorage` del router guard usan `safeJ
 
 ---
 
+
+## App conductor — Banners y safe-area (barra de estado)
+
+En `app_conductor/src/views/Rutas/ListaRutas.vue`, los banners de alerta que se
+renderizan **por encima** del header (vehículo en mantención y mantención próxima)
+podían quedar tapados por la barra de estado del teléfono (hora/batería).
+
+Solución:
+- Los banners superiores usan la clase `.alert-banner--top`, que aplica
+  `margin-top: calc(env(safe-area-inset-top) + 0.75rem)` para empezar debajo de la
+  barra de estado.
+- El header (`.header-hero`) recibe la clase condicional `.header-hero--no-safe`
+  cuando hay un banner arriba, para no duplicar el espacio del safe-area (el banner
+  ya lo absorbe). Sin banner, el header conserva su `padding-top` con
+  `env(safe-area-inset-top)` y el gradiente llega hasta el borde superior.
+
+---
+
+## Vite — Ruido "ws proxy error: ECONNRESET" en dev
+
+El proxy `/ws` de `gestion-frontend/vite.config.js` reenvía el WebSocket del mapa
+en vivo a daphne (`ws://127.0.0.1:8000`). En desarrollo, daphne corta esas
+conexiones de golpe cada vez que `runserver` reinicia por autoreload (al guardar
+un `.py`) o cuando el HMR de Vite recarga `MapaFlota.vue`. Eso produce un
+`read ECONNRESET` **benigno**: el cliente reconecta solo (backoff 1s→30s en
+`MapaFlota.vue`).
+
+Para no contaminar la consola, el proxy `/ws` tiene un handler `configure` que
+ignora los `ECONNRESET` esperados y sigue mostrando cualquier otro error. Cambiar
+`vite.config.js` exige reiniciar el servidor de Vite para que surta efecto.
+
+---
+
+## Validación "solo texto" en nombres y apellidos
+
+Se agregó la función `soloTexto(valor)` a `src/utils/validators.js` (panel web) y a
+`app_conductor/src/utils/validators.js` (app conductor). Filtra el valor dejando
+únicamente letras de cualquier idioma (incluye tildes y ñ), espacios, guion y
+apóstrofe, usando `String(valor).replace(/[^\p{L}\s'-]/gu, '')`. Bloquea dígitos y
+símbolos **al escribir**.
+
+Se aplica vía `@input` (junto al `v-model`) en los campos de nombre/apellido de
+personas:
+
+- `web/usuarios/NuevoUsuario.vue` y `EditarUsuario.vue` — nombre, apellido paterno, materno
+- `web/empresa/conductores/NuevoConductor.vue` y `EditarConductor.vue` — nombre, apellido paterno, materno
+- `web/publico/RegistroPublico.vue` — nombre, apellido paterno, materno del usuario (la razón social de la empresa NO se filtra, puede llevar números)
+- `web/configuracion/tabs/PerfilTab.vue` — nombre del perfil
+- `web/clientes/EditarEmpresa.vue` — ciudad
+- `app_conductor … Ajustes/Ajustes.vue` — nombre del conductor
+
+Quedan **sin** filtro a propósito: razón social de empresa, nombre de ruta y
+nombre de plan (legítimamente llevan números o símbolos).
+
+---
+
+## Sanitización server-side en el registro público de empresa
+
+El filtro `soloTexto` del frontend es cosmético y se puede saltar llamando la API
+directamente, así que `AutoRegistroView` (`views_publico.py`, POST
+`/api/auto-registro/`) ahora sanea los datos en el backend:
+
+- `sanitizar_nombre(valor)`: para **nombre y apellidos del administrador**. Deja
+  solo letras (con tildes y ñ, vía `str.isalpha`), espacios, guion y apóstrofe;
+  descarta dígitos y símbolos, colapsa espacios. Se valida sobre el resultado, de
+  modo que `"123"` o `"<b>x</b>"` quedan vacíos y se rechazan con 400.
+- `sanitizar_texto(valor)`: para **razón social, dirección, ciudad y comuna**.
+  Permite números y signos comunes, pero elimina caracteres de control y los
+  símbolos `<` `>` (XSS almacenado). La longitud se valida sobre el valor saneado.
+
+Nota: los serializers de usuario y conductor (`serializers.py`) solo hacen
+`.strip().title()` en nombre/apellido — si se quiere la misma regla de solo-texto
+en esos formularios, habría que aplicar `sanitizar_nombre` ahí también.
+
+---
+
+## Sanitización en la edición/creación de empresas (EmpresaSerializer)
+
+Las funciones `sanitizar_nombre` y `sanitizar_texto` se movieron al módulo
+compartido `g_de_flota/sanitizers.py` y se reutilizan desde `views_publico.py`
+(registro público) y `serializers.py`.
+
+`EmpresaSerializer` (usado tanto al **crear** como al **editar** empresas desde el
+panel) ahora sanea con `sanitizar_texto`:
+
+- `validate_nombre`: razón social — permite números pero quita tags `<>` y
+  caracteres de control, y exige que no quede vacía tras sanear.
+- `validate_direccion`, `validate_comuna`, `validate_ciudad`: misma limpieza.
+
+Como DRF reemplaza en `validated_data` el valor devuelto por cada `validate_<campo>`,
+los métodos `create`/`update` persisten directamente el dato ya saneado.
+
+---
+
+## Sanitización completa en serializers de personas y vehículos
+
+Se añadió `validar_nombre_persona(valor, etiqueta)` a `g_de_flota/sanitizers.py`:
+sanea con `sanitizar_nombre`, aplica `.title()` y lanza `ValidationError` si el
+valor queda vacío tras limpiar (rechaza `"123"`, `"<b>x</b>"`, etc.).
+
+Se aplica en los 4 serializers de personas, cubriendo **crear y editar**:
+- `UsuarioCrearSerializer`, `UsuarioEditarSerializer`
+- `ConductorCrearSerializer`, `ConductorEditarSerializer`
+
+(Antes solo hacían `value.strip().title()`, sin filtrar dígitos/símbolos.)
+En los serializers de edición los campos son `required=False` sin `allow_blank`,
+así que un valor vacío ya lo rechaza DRF y el validador solo añade el filtro de
+solo-texto sobre valores presentes.
+
+`VehiculoSerializer.validate_marca` / `validate_modelo` ahora usan
+`sanitizar_texto` (permiten números como "F-150" o "Hilux 4x4", pero limpian
+tags/control). 
+
+Resumen de la cobertura server-side de sanitización:
+- **Solo texto** (nombre/apellido personas): registro público + serializers de usuario/conductor.
+- **Texto libre sin tags** (razón social, dirección, ciudad, comuna, marca, modelo): EmpresaSerializer + VehiculoSerializer + registro público.
+
+---
+
+## Unicidad de razón social case-insensitive
+
+El campo `Empresa.nombre` es `unique=True` a nivel de BD, pero ese constraint
+distingue mayúsculas/minúsculas: "Transportes del Norte S.A" y "...S.a" se
+consideran distintos y ambos se podían crear. La unicidad real se valida en la
+capa de aplicación con `nombre__iexact`:
+
+- `EmpresaSerializer.validate_nombre` — ya lo hacía (crear y editar por SUPERADMIN);
+  excluye la propia instancia al editar.
+- `AutoRegistroView` (registro público) — **se le agregó** el chequeo `iexact`,
+  que antes no tenía. Esa era la vía por la que entraban los duplicados.
+
+---
+
+## Capitalización de datos de empresa al guardar
+
+Los campos de texto de empresa (nombre, dirección, comuna, ciudad) se capitalizan
+con `.title()` tras sanear, siguiendo el mismo patrón ya usado en conductores
+(`validar_nombre_persona`) y en marca/modelo de vehículo. Aplica en
+`EmpresaSerializer` (crear/editar SUPERADMIN) y `AutoRegistroView` (registro
+público). Así "transportes del norte s.a" se guarda como "Transportes Del Norte
+S.A". La unicidad sigue siendo case-insensitive (`iexact`), por lo que el
+capitalizado no afecta la detección de duplicados.
+
+---
+
+## Nombres de persona: rechazar en vez de limpiar a medias
+
+`validar_nombre_persona` (sanitizers.py) ahora **rechaza** cualquier nombre/apellido
+que contenga dígitos o símbolos, en lugar de borrarlos silenciosamente. Compara el
+texto contra `sanitizar_nombre`: si difieren, lanza `ValidationError`. Antes "Ju4n"
+se guardaba como "Jun" y "<b>x</b>" como "Bxb"; ahora ambos se rechazan con
+"… solo puede contener letras". Sigue aceptando letras con tildes/ñ, espacios,
+guion y apóstrofe ("De la Cruz", "O'Brien").
+
+Cubre los 4 serializers (UsuarioCrear/Editar, ConductorCrear/Editar) y
+`AutoRegistroView` (que pasó a usar `validar_nombre_persona` con try/except para
+poblar su dict de errores). La razón social de empresa, marca y modelo de vehículo
+siguen permitiendo números a propósito.
+
+---

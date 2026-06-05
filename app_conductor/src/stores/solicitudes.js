@@ -205,7 +205,7 @@ export const useSolicitudesStore = defineStore('solicitudes', () => {
       }
       // Error del servidor (validación, autenticación, etc.) → mostrar mensaje real
       error.value = e?.message || 'Error al enviar la solicitud'
-      return { success: false, error: error.value }
+      return { success: false, error: error.value, codigo: e?.codigo || null }
     } finally {
       enviando.value = false
     }

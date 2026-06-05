@@ -488,6 +488,9 @@ class Mantencion(models.Model):
     estado                 = models.CharField(max_length=50, choices=EstadoMantencion.choices, default=EstadoMantencion.PENDIENTE)
     costo                  = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
+    es_correctivo              = models.BooleanField(default=False)
+    gasto_correctivo_generado  = models.BooleanField(default=False)
+
     # ── Comprobante y confirmación del conductor ───────────────────────────────
     foto_comprobante       = models.ImageField(
         upload_to='mantenciones/comprobantes/',

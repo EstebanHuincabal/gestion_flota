@@ -77,7 +77,7 @@ def _modelo_display(d):
 
 
 # Longitud del nombre libre del modelo cuando la marca es 'otro'.
-MODELO_OTRO_MIN, MODELO_OTRO_MAX = 2, 50
+MODELO_OTRO_MIN, MODELO_OTRO_MAX = 2, 20
 
 
 def _validar_modelo_otro(modelo, modelo_otro):
@@ -320,8 +320,8 @@ class DispositivosListView(APIView):
 
         if not imei:
             return error_response('El IMEI es obligatorio.', 'VALIDACION', 400)
-        if not (10 <= len(imei) <= 20):
-            return error_response('El IMEI debe tener entre 10 y 20 caracteres.', 'VALIDACION', 400)
+        if len(imei) > 20:
+            return error_response('El IMEI no puede superar los 20 caracteres.', 'VALIDACION', 400)
         if DispositivoGPS.objects.filter(imei=imei).exists():
             return error_response('Ya existe un dispositivo con ese IMEI.', 'VALIDACION', 400)
 
@@ -395,8 +395,8 @@ class DispositivoDetailView(APIView):
 
         if 'imei' in request.data:
             nuevo_imei = (request.data.get('imei') or '').strip()
-            if not (10 <= len(nuevo_imei) <= 20):
-                return error_response('El IMEI debe tener entre 10 y 20 caracteres.', 'VALIDACION', 400)
+            if not nuevo_imei or len(nuevo_imei) > 20:
+                return error_response('El IMEI es obligatorio y no puede superar los 20 caracteres.', 'VALIDACION', 400)
             if DispositivoGPS.objects.filter(imei=nuevo_imei).exclude(pk=dispositivo.pk).exists():
                 return error_response('Ya existe un dispositivo con ese IMEI.', 'VALIDACION', 400)
             if nuevo_imei != dispositivo.imei:

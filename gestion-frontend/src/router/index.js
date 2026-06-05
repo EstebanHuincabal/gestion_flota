@@ -205,6 +205,7 @@ const routes = [
       { path: 'mapa',            component: () => import('../web/empresa/flota/MapaFlota.vue'),  meta: { permiso: 'gps.ver' } },
       { path: 'gps',             component: () => import('../web/empresa/flota/GestionGPS.vue'), meta: { permiso: 'gps.ver' } },
       { path: 'solicitudes',     component: SolicitudesConductores },
+      { path: 'solicitudes/:id', component: SolicitudesConductores },   // notificaciones que apuntan al detalle
       { path: 'calendario',      component: CalendarioGlobal,        meta: { permiso: 'calendario.ver' } },
       { path: 'configuracion',   component: ConfiguracionPage },
       { path: 'pago',            component: IniciarPago },

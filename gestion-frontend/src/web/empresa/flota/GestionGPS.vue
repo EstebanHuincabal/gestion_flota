@@ -33,7 +33,18 @@ const MODELOS = [
 
 // Longitud del nombre libre del modelo cuando se elige la marca "Otro".
 const MODELO_OTRO_MIN = 2
-const MODELO_OTRO_MAX = 50
+const MODELO_OTRO_MAX = 20
+
+// Validación visible del "Nombre del modelo" (solo cuando la marca es "Otro").
+const modeloOtroLen   = computed(() => (form.value?.modelo_otro || '').trim().length)
+const modeloOtroError = computed(() => {
+  if (form.value?.modelo !== 'otro') return ''
+  const l = modeloOtroLen.value
+  if (l === 0) return 'Ingresa el nombre del modelo.'
+  if (l < MODELO_OTRO_MIN) return `Debe tener al menos ${MODELO_OTRO_MIN} caracteres.`
+  if (l > MODELO_OTRO_MAX) return `No puede superar los ${MODELO_OTRO_MAX} caracteres.`
+  return ''
+})
 
 function toast(tipo, mensaje) {
   window.dispatchEvent(new CustomEvent('app-toast', { detail: { tipo, mensaje } }))
@@ -99,8 +110,8 @@ function abrirEditar(d) {
 
 async function guardar() {
   const imei = (form.value.imei || '').trim()
-  if (imei.length < 10 || imei.length > 20) {
-    toast('error', 'El IMEI debe tener entre 10 y 20 caracteres.')
+  if (imei.length < 1 || imei.length > 20) {
+    toast('error', 'El IMEI es obligatorio y no puede superar los 20 caracteres.')
     return
   }
   // Cuando la marca es "Otro" hay que anotar el nombre del modelo.
@@ -407,12 +418,18 @@ async function desasignar() {
 
         <!-- Nombre libre del modelo: solo cuando la marca es "Otro" -->
         <template v-if="form.modelo === 'otro'">
-          <label class="block text-sm font-semibold text-gray-700 mb-1">Nombre del modelo</label>
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-sm font-semibold text-gray-700">Nombre del modelo</label>
+            <span class="text-xs" :class="modeloOtroLen > MODELO_OTRO_MAX ? 'text-red-500' : 'text-gray-400'">
+              {{ modeloOtroLen }}/{{ MODELO_OTRO_MAX }}
+            </span>
+          </div>
           <input v-model="form.modelo_otro" type="text" :maxlength="MODELO_OTRO_MAX"
             placeholder="Ej. Sinotrack ST-901"
-            class="w-full mb-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none"/>
-          <p class="text-xs text-gray-400 mb-4">
-            Entre {{ MODELO_OTRO_MIN }} y {{ MODELO_OTRO_MAX }} caracteres.
+            class="w-full mb-1 px-3 py-2 text-sm border rounded-lg outline-none"
+            :class="modeloOtroError ? 'border-red-400 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'"/>
+          <p class="text-xs mb-4" :class="modeloOtroError ? 'text-red-500' : 'text-gray-400'">
+            {{ modeloOtroError || `Entre ${MODELO_OTRO_MIN} y ${MODELO_OTRO_MAX} caracteres.` }}
           </p>
         </template>
 
@@ -422,7 +439,7 @@ async function desasignar() {
 
         <div class="flex justify-end gap-2">
           <button @click="modalForm = false" class="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Cancelar</button>
-          <button @click="guardar" :disabled="guardando"
+          <button @click="guardar" :disabled="guardando || !!modeloOtroError"
             class="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
             {{ guardando ? 'Guardando...' : 'Guardar' }}
           </button>

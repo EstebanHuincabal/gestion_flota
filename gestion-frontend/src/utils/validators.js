@@ -173,6 +173,15 @@ export function validarNombre(texto, min = 2, max = 255) {
   return { valido: true, error: '' }
 }
 
+// ── Solo texto (nombres y apellidos de personas) ──────────────────────────────
+// Filtra el valor dejando únicamente letras (de cualquier idioma, incluye
+// tildes y ñ), espacios, guion y apóstrofe. Pensada para usarse en @input de
+// los campos de nombre/apellido: bloquea dígitos y símbolos al escribir.
+export function soloTexto(valor) {
+  if (valor === null || valor === undefined) return ''
+  return String(valor).replace(/[^\p{L}\s'-]/gu, '')
+}
+
 // ── Longitud de texto ─────────────────────────────────────────────────────────
 export function validarLongitud(texto, min, max) {
   if (texto === null || texto === undefined) texto = ''

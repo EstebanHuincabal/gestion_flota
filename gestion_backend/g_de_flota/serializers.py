@@ -6,6 +6,7 @@ from .models import (
     Vehiculo, Asignacion, PlanSuscripcion, CambioPlan, LogAuditoria,
     Mantencion, Documento, SolicitudConductor, descifrar,
 )
+from .sanitizers import sanitizar_nombre, sanitizar_texto, validar_nombre_persona
 
 
 # ─────────────────────────────────────────
@@ -93,15 +94,33 @@ class EmpresaSerializer(serializers.Serializer):
         return ret
 
     def validate_nombre(self, value):
-        value = value.strip()
+        # Razón social: permite números, pero se limpia de tags/control (XSS)
+        # y se capitaliza (.title()), igual que conductores y marca/modelo.
+        value = sanitizar_texto(value).title()
+        if not value:
+            raise serializers.ValidationError("El nombre de la empresa es obligatorio.")
         if len(value) > 30:
             raise serializers.ValidationError("El nombre no puede superar los 30 caracteres.")
+        # Unicidad case-insensitive (el unique=True de la BD distingue mayúsculas).
+        # Excluye la propia instancia para no chocar consigo misma al editar.
         qs = Empresa.objects.filter(nombre__iexact=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("Ya existe una empresa con ese nombre.")
         return value
+
+    def validate_direccion(self, value):
+        value = sanitizar_texto(value).title()
+        if len(value) > 40:
+            raise serializers.ValidationError("La dirección no puede superar los 40 caracteres.")
+        return value
+
+    def validate_comuna(self, value):
+        return sanitizar_texto(value).title()
+
+    def validate_ciudad(self, value):
+        return sanitizar_texto(value).title()
 
     def validate_rut(self, value):
         rut_norm = normalizar_rut(value)
@@ -257,13 +276,13 @@ class UsuarioCrearSerializer(serializers.Serializer):
     )
 
     def validate_nombre(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El nombre')
 
     def validate_apellido_paterno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido paterno')
 
     def validate_apellido_materno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido materno')
 
     def validate_telefono(self, value):
         limpio = re.sub(r'[\s\-\(\)]', '', value or '')
@@ -342,13 +361,13 @@ class UsuarioEditarSerializer(serializers.Serializer):
     )
 
     def validate_nombre(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El nombre')
 
     def validate_apellido_paterno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido paterno')
 
     def validate_apellido_materno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido materno')
 
     def validate_telefono(self, value):
         if not value:
@@ -594,13 +613,13 @@ class ConductorCrearSerializer(serializers.Serializer):
     vehiculo_modelo      = serializers.CharField(required=False, allow_blank=True)
 
     def validate_nombre(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El nombre')
 
     def validate_apellido_paterno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido paterno')
 
     def validate_apellido_materno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido materno')
 
     def validate_email(self, value):
         return value.strip().lower()
@@ -743,13 +762,13 @@ class ConductorEditarSerializer(serializers.Serializer):
     is_active       = serializers.BooleanField(required=False)
 
     def validate_nombre(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El nombre')
 
     def validate_apellido_paterno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido paterno')
 
     def validate_apellido_materno(self, value):
-        return value.strip().title()
+        return validar_nombre_persona(value, 'El apellido materno')
 
     def validate_email(self, value):
         return value.strip().lower()
@@ -859,11 +878,12 @@ class VehiculoSerializer(serializers.ModelSerializer):
 
     def validate_marca(self, value):
         if not value: return value
-        return value.strip().title()
+        # Permite números (modelos), pero limpia tags/control (XSS).
+        return sanitizar_texto(value).title()
 
     def validate_modelo(self, value):
         if not value: return value
-        return value.strip().title()
+        return sanitizar_texto(value).title()
 
 
 # ─────────────────────────────────────────
@@ -1204,6 +1224,7 @@ class SolicitudConductorSerializer(serializers.ModelSerializer):
     respondido_por_nombre = serializers.SerializerMethodField()
     tiene_foto          = serializers.SerializerMethodField()
     foto_url            = serializers.SerializerMethodField()
+    checklist           = serializers.SerializerMethodField()
 
     class Meta:
         model  = SolicitudConductor
@@ -1214,7 +1235,7 @@ class SolicitudConductorSerializer(serializers.ModelSerializer):
             'conductor', 'conductor_nombre', 'conductor_iniciales',
             'vehiculo', 'vehiculo_patente',
             'respondido_por', 'respondido_por_nombre', 'respondido_at',
-            'created_at', 'updated_at', 'extra',
+            'created_at', 'updated_at', 'extra', 'checklist',
         ]
 
     def _nombre_usuario(self, usuario):
@@ -1248,3 +1269,27 @@ class SolicitudConductorSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.foto.url)
         return obj.foto.url
+
+    def get_checklist(self, obj):
+        """Si la solicitud es un checklist pre-viaje, devuelve sus ítems con el
+        resultado y la observación, listos para mostrar (nombre + categoría)."""
+        extra = obj.extra or {}
+        if not extra.get('es_checklist'):
+            return None
+        from .checklist_items import get_items
+        respuestas = extra.get('respuestas') or {}
+        items = []
+        for it in get_items():
+            r = respuestas.get(it['id']) or {}
+            items.append({
+                'id':          it['id'],
+                'nombre':      it['nombre'],
+                'categoria':   it['categoria'],
+                'resultado':   r.get('resultado') or 'sin_revisar',
+                'observacion': (r.get('observacion') or '').strip(),
+            })
+        return {
+            'items':        items,
+            'tiene_fallas': bool(extra.get('tiene_fallas')),
+            'firma':        bool(extra.get('firma_b64')),
+        }

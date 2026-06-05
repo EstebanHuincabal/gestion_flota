@@ -301,10 +301,13 @@ async function eliminar() {
           <div class="leyenda"><span><i class="dot" style="background:#9CA3AF"/>Normal</span><span><i class="dot" style="background:#DC2626"/>Correctivo</span></div>
           <div v-if="!resumen.por_vehiculo.length" class="vacio">Sin gastos en el período.</div>
           <div v-for="v in resumen.por_vehiculo" :key="v.vehiculo_id" class="veh-row">
-            <span class="veh-pat">{{ v.patente }}</span>
-            <div class="veh-barras">
-              <div class="barra-wrap"><div class="barra" :style="`width:${(v.total_normal / maxVehiculo) * 100}%;background:#9CA3AF`"/></div>
-              <div class="barra-wrap"><div class="barra" :style="`width:${(v.total_correctivo / maxVehiculo) * 100}%;background:#DC2626`"/></div>
+            <div class="veh-info">
+              <span class="veh-pat">{{ v.patente }}</span>
+              <span v-if="v.modelo" class="veh-modelo">{{ v.modelo }}</span>
+            </div>
+            <div class="barra-wrap barra-stack">
+              <div v-if="v.total_normal" class="barra-seg" :style="`width:${(v.total_normal / maxVehiculo) * 100}%;background:#9CA3AF`" :title="`Normal: ${clp(v.total_normal)}`"/>
+              <div v-if="v.total_correctivo" class="barra-seg" :style="`width:${(v.total_correctivo / maxVehiculo) * 100}%;background:#DC2626`" :title="`Correctivo: ${clp(v.total_correctivo)}`"/>
             </div>
             <span class="veh-tot">{{ clp(v.total_correctivo) }}</span>
           </div>
@@ -335,7 +338,13 @@ async function eliminar() {
             <tbody>
               <tr v-for="g in gastos" :key="g.id" class="fila" @click="abrirDetalle(g)">
                 <td>{{ fmtFecha(g.fecha) }}</td>
-                <td class="mono">{{ g.vehiculo_patente || '—' }}</td>
+                <td>
+                  <div class="td-veh">
+                    <span class="mono">{{ g.vehiculo_patente || '—' }}</span>
+                    <span v-if="g.vehiculo_modelo" class="td-veh-sub">{{ g.vehiculo_modelo }}</span>
+                    <span class="td-veh-cond"><i class="ti ti-user"/>{{ g.vehiculo_conductor || 'Sin conductor' }}</span>
+                  </div>
+                </td>
                 <td><span class="badge" :style="`background:${catStyle(g.categoria_correctiva).bg};color:${catStyle(g.categoria_correctiva).text}`">{{ g.categoria_display }}</span></td>
                 <td class="desc">{{ g.descripcion }}</td>
                 <td><span class="badge" :style="`background:${prioStyle(g.prioridad).bg};color:${prioStyle(g.prioridad).text}`">{{ prioStyle(g.prioridad).label }}</span></td>
@@ -481,11 +490,18 @@ async function eliminar() {
 .leyenda span { display: inline-flex; align-items: center; gap: 0.3rem; }
 .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 
-.veh-row { display: grid; grid-template-columns: 60px 1fr 90px; align-items: center; gap: 0.5rem; margin-bottom: 0.55rem; }
+.veh-row { display: grid; grid-template-columns: 130px 1fr 90px; align-items: center; gap: 0.6rem; margin-bottom: 0.65rem; }
+.veh-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .veh-pat { font-family: ui-monospace, monospace; font-size: 0.75rem; font-weight: 700; color: #1E1B4B; }
+.veh-modelo { font-size: 0.6875rem; color: #6B7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.veh-cond { font-size: 0.6875rem; color: #9CA3AF; display: flex; align-items: center; gap: 0.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.veh-cond i { font-size: 11px; }
 .veh-barras { display: flex; flex-direction: column; gap: 2px; }
 .veh-tot { font-size: 0.75rem; font-weight: 600; color: #DC2626; text-align: right; }
 .barra-wrap { background: #F3F4F6; border-radius: 999px; height: 8px; overflow: hidden; }
+/* Barra única con segmentos normal+correctivo en la misma línea */
+.barra-stack { display: flex; }
+.barra-seg { height: 100%; transition: width 0.3s; }
 .barra { height: 100%; border-radius: 999px; transition: width 0.3s; }
 
 .cat-row { margin-bottom: 0.7rem; }
@@ -502,6 +518,10 @@ async function eliminar() {
 .fila { cursor: pointer; }
 .fila:hover { background: #FEF2F2; }
 .mono { font-family: ui-monospace, monospace; font-weight: 600; }
+.td-veh { display: flex; flex-direction: column; gap: 1px; }
+.td-veh-sub  { font-size: 0.6875rem; color: #6B7280; }
+.td-veh-cond { font-size: 0.6875rem; color: #9CA3AF; display: flex; align-items: center; gap: 0.2rem; }
+.td-veh-cond i { font-size: 11px; }
 .desc { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .text-tenue { color: #D1D5DB; }
 

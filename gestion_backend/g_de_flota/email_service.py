@@ -502,6 +502,31 @@ def email_checklist_fallas(email, nombre_admin, empresa_nombre, conductor_nombre
     enviar_email(email, f'⚠ Fallas en checklist — {patente}', html)
 
 
+def email_checklist_ok(email, nombre_admin, empresa_nombre, conductor_nombre,
+                       patente, ruta_nombre, url_solicitudes):
+    """Aviso a los admins cuando un checklist pre-viaje se completa SIN fallas."""
+    html = _base_template(
+        'Checklist pre-viaje completado',
+        f"""
+        <p style="color:#444;font-size:15px;">
+          Hola <strong>{nombre_admin}</strong>,
+        </p>
+        <p style="color:#444;font-size:15px;">
+          <strong>{conductor_nombre}</strong> completó el checklist del vehículo
+          <strong>{patente}</strong> para la ruta <strong>{ruta_nombre}</strong>.
+        </p>
+        <div style="background:#ECFDF5;border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;color:#065F46;font-size:14px;font-weight:600;">
+            ✓ Vehículo en orden — listo para partir.
+          </p>
+        </div>
+        {_btn('Ver checklist', url_solicitudes)}
+        """,
+        empresa_nombre,
+    )
+    enviar_email(email, f'✓ Checklist en orden — {patente}', html)
+
+
 # ── Acceso inicial conductor (creado sin contraseña) ─────────────────────────
 
 def email_acceso_conductor(email, nombre, empresa_nombre, rut, clave_temporal):

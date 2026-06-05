@@ -16,7 +16,7 @@ from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
@@ -26,6 +26,7 @@ from .models import (
 )
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
+from .sanitizers import sanitizar_texto, validar_nombre_persona
 
 logger = logging.getLogger(__name__)
 
@@ -152,20 +153,33 @@ class AutoRegistroView(APIView):
         # ── Validaciones básicas de campos requeridos ────────────────────────
         errores = {}
 
-        if not emp_d.get('nombre', '').strip():
+        # Razón social: permite números pero se limpia de tags/control (XSS)
+        # y se capitaliza (.title()), igual que en EmpresaSerializer.
+        nombre_emp_in    = sanitizar_texto(emp_d.get('nombre', '')).title()
+        direccion_emp_in = sanitizar_texto(emp_d.get('direccion', '')).title()
+        if not nombre_emp_in:
             errores['empresa_nombre'] = 'El nombre de la empresa es obligatorio.'
-        elif len(emp_d.get('nombre', '').strip()) > 30:
+        elif len(nombre_emp_in) > 30:
             errores['empresa_nombre'] = 'El nombre de la empresa no puede superar los 30 caracteres.'
+        # Unicidad case-insensitive: el constraint unique=True de la BD distingue
+        # mayúsculas/minúsculas ("S.A" vs "S.a"), así que se valida en la app.
+        elif Empresa.objects.filter(nombre__iexact=nombre_emp_in).exists():
+            errores['empresa_nombre'] = 'Ya existe una empresa registrada con ese nombre.'
 
-        if len(emp_d.get('direccion', '').strip()) > 40:
+        if len(direccion_emp_in) > 40:
             errores['empresa_direccion'] = 'La dirección no puede superar los 40 caracteres.'
 
-        if not usr_d.get('nombre', '').strip():
-            errores['usuario_nombre'] = 'El nombre del administrador es obligatorio.'
-        if not usr_d.get('apellido_paterno', '').strip():
-            errores['usuario_apellido_paterno'] = 'El apellido paterno es obligatorio.'
-        if not usr_d.get('apellido_materno', '').strip():
-            errores['usuario_apellido_materno'] = 'El apellido materno es obligatorio.'
+        # Nombre/apellido del administrador: solo texto. Se rechaza (no se limpia
+        # a medias) si trae dígitos/símbolos, igual que en los serializers.
+        def _validar_nombre(raw, campo, etiqueta):
+            try:
+                return validar_nombre_persona(raw, etiqueta)
+            except serializers.ValidationError as e:
+                errores[campo] = e.detail[0] if isinstance(e.detail, list) else str(e.detail)
+                return ''
+        nombre_usr_in     = _validar_nombre(usr_d.get('nombre', ''), 'usuario_nombre', 'El nombre del administrador')
+        ap_paterno_usr_in = _validar_nombre(usr_d.get('apellido_paterno', ''), 'usuario_apellido_paterno', 'El apellido paterno')
+        ap_materno_usr_in = _validar_nombre(usr_d.get('apellido_materno', ''), 'usuario_apellido_materno', 'El apellido materno')
         if not usr_d.get('email', '').strip():
             errores['usuario_email'] = 'El correo electrónico del administrador es obligatorio.'
         if not usr_d.get('password', ''):
@@ -256,7 +270,7 @@ class AutoRegistroView(APIView):
 
         # ── Crear Empresa ────────────────────────────────────────────────────
         empresa = Empresa(
-            nombre=emp_d.get('nombre', '').strip(),
+            nombre=nombre_emp_in,
             region=region,
             pais=emp_d.get('pais', 'Chile').strip() or 'Chile',
             estado='activa',
@@ -270,21 +284,20 @@ class AutoRegistroView(APIView):
         telefono_emp = emp_d.get('telefono', '').strip()
         if telefono_emp:
             empresa.set_telefono(telefono_emp)
-        direccion_emp = emp_d.get('direccion', '').strip()
-        if direccion_emp:
-            empresa.set_direccion(direccion_emp)
-        comuna_emp = emp_d.get('comuna', '').strip()
+        if direccion_emp_in:
+            empresa.set_direccion(direccion_emp_in)
+        comuna_emp = sanitizar_texto(emp_d.get('comuna', '')).title()
         if comuna_emp:
             empresa.set_comuna(comuna_emp)
-        ciudad_emp = emp_d.get('ciudad', '').strip()
+        ciudad_emp = sanitizar_texto(emp_d.get('ciudad', '')).title()
         if ciudad_emp:
             empresa.set_ciudad(ciudad_emp)
         empresa.save()
 
         # ── Crear Usuario administrador ──────────────────────────────────────
-        nombre_usr     = usr_d.get('nombre', '').strip().title()
-        ap_paterno_usr = usr_d.get('apellido_paterno', '').strip().title()
-        ap_materno_usr = usr_d.get('apellido_materno', '').strip().title()
+        nombre_usr     = nombre_usr_in.title()
+        ap_paterno_usr = ap_paterno_usr_in.title()
+        ap_materno_usr = ap_materno_usr_in.title()
         telefono_usr   = usr_d.get('telefono', '').strip()
         nombre_completo_usr = ' '.join(p for p in [nombre_usr, ap_paterno_usr, ap_materno_usr] if p)
 

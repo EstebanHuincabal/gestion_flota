@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from .models import (
     Empresa, GastoOperativo, PresupuestoMensual, Vehiculo, Usuario, Rol,
     Mantencion, PlanSuscripcion, CambioPlan, PagoTransbank, Suscripcion,
-    TipoNotificacion,
+    TipoNotificacion, Asignacion,
 )
 from .audit import registrar_log
 from .notificaciones import notificar_admins_empresa
@@ -174,10 +174,13 @@ class GastosListView(APIView):
             }
 
         # ── Incluir mantenciones realizadas en el período ──────────────
+        # Las correctivas NO se cuentan acá: su costo ya se registra como gasto
+        # correctivo (es_correctivo=True), que va al módulo de correctivos.
         mant_qs = Mantencion.objects.filter(
             vehiculo__empresa=empresa,
             estado='realizada',
             costo__gt=0,
+            es_correctivo=False,
         ).select_related('vehiculo')
         if mes and anio:
             mant_qs = mant_qs.filter(fecha_realizada__month=int(mes), fecha_realizada__year=int(anio))
@@ -244,6 +247,7 @@ class GastosListView(APIView):
         for _m in Mantencion.objects.filter(
             vehiculo__empresa=empresa,
             estado='realizada', costo__gt=0, fecha_realizada__isnull=False,
+            es_correctivo=False,
         ).filter(_q_tend):
             _k = (_m.fecha_realizada.month, _m.fecha_realizada.year % 100)
             _mant_tend_map[_k] = _mant_tend_map.get(_k, 0) + int(_m.costo)
@@ -790,11 +794,28 @@ def _validar_comprobante(archivo):
     return None
 
 
-def _gasto_correctivo_dict(g):
+def _gasto_correctivo_dict(g, cond_map=None):
+    # marca/modelo del vehículo (ya viene con select_related, sin query extra).
+    modelo = ''
+    if g.vehiculo:
+        modelo = ' '.join(p for p in [g.vehiculo.marca, g.vehiculo.modelo] if p)
+    # Conductor: del mapa pre-cargado (lista) o consultado directo (registro suelto).
+    if cond_map is not None:
+        conductor = cond_map.get(g.vehiculo_id)
+    elif g.vehiculo_id:
+        asig = Asignacion.objects.filter(
+            vehiculo_id=g.vehiculo_id, activo=True
+        ).select_related('conductor').first()
+        conductor = (asig.conductor.nombre or asig.conductor.email) if (asig and asig.conductor_id) else None
+    else:
+        conductor = None
+
     return {
         'id':                   g.id,
         'vehiculo_id':          g.vehiculo_id,
         'vehiculo_patente':     g.vehiculo.patente if g.vehiculo else None,
+        'vehiculo_modelo':      modelo,
+        'vehiculo_conductor':   conductor,
         'categoria_correctiva': g.categoria_correctiva,
         'categoria_display':    g.get_categoria_correctiva_display() if g.categoria_correctiva else '',
         'prioridad':            g.prioridad_correctiva,
@@ -836,7 +857,16 @@ class GastosCorrectivosList(APIView):
         if cat:  qs = qs.filter(categoria_correctiva=cat)
         if prio: qs = qs.filter(prioridad_correctiva=prio)
 
-        gastos = [_gasto_correctivo_dict(g) for g in qs.order_by('-fecha', '-created_at')]
+        # Conductor activo por vehículo, pre-cargado para evitar N+1 en la lista.
+        _veh_ids = [g.vehiculo_id for g in qs if g.vehiculo_id]
+        cond_map = {}
+        for asig in Asignacion.objects.filter(
+            vehiculo_id__in=_veh_ids, activo=True
+        ).select_related('conductor'):
+            if asig.conductor_id:
+                cond_map[asig.vehiculo_id] = asig.conductor.nombre or asig.conductor.email
+
+        gastos = [_gasto_correctivo_dict(g, cond_map) for g in qs.order_by('-fecha', '-created_at')]
         total_correctivos = int(qs.aggregate(t=Sum('monto'))['t'] or 0)
 
         # Total NORMAL del período (denominador del impacto): gasto operativo no
@@ -867,12 +897,22 @@ class GastosCorrectivosList(APIView):
                         for r in normal_qs.values('vehiculo_id').annotate(s=Sum('monto'))}
         veh_ids = {i for i in (set(corr_por_veh) | set(norm_por_veh)) if i}
         veh_map = {v.id: v for v in Vehiculo.objects.filter(id__in=veh_ids)}
+        # Conductor activo por vehículo (para mostrar quién lo maneja).
+        cond_por_veh = {}
+        for asig in Asignacion.objects.filter(
+            vehiculo_id__in=veh_ids, activo=True
+        ).select_related('conductor'):
+            if asig.conductor_id:
+                cond_por_veh[asig.vehiculo_id] = asig.conductor.nombre or asig.conductor.email
         por_vehiculo = []
         for vidk in veh_ids:
             v = veh_map.get(vidk)
+            modelo = ' '.join(p for p in [getattr(v, 'marca', ''), getattr(v, 'modelo', '')] if p) if v else ''
             por_vehiculo.append({
                 'vehiculo_id':      vidk,
                 'patente':          v.patente if v else '—',
+                'modelo':           modelo,
+                'conductor':        cond_por_veh.get(vidk),
                 'total_correctivo': corr_por_veh.get(vidk, 0),
                 'total_normal':     norm_por_veh.get(vidk, 0),
             })

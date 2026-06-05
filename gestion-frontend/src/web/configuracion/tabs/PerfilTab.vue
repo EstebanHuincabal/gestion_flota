@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
-import { validarPassword } from '../../../utils/validators.js'
+import { validarPassword, soloTexto } from '../../../utils/validators.js'
 
 const toast = useToast()
 
@@ -87,7 +87,7 @@ onMounted(cargarPerfil)
       <div class="card-body">
         <div class="form-group">
           <label class="label">Nombre</label>
-          <input v-model="perfil.nombre" type="text" class="input" placeholder="Tu nombre" />
+          <input v-model="perfil.nombre" @input="perfil.nombre = soloTexto(perfil.nombre)" type="text" class="input" placeholder="Tu nombre" />
         </div>
         <div class="form-group">
           <label class="label">Correo electrónico</label>

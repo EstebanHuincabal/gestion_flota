@@ -1,9 +1,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 
 const router = useRouter()
+const route  = useRoute()
 
 // ── Estado principal ────────────────────────────────────────────────────────
 const solicitudes   = ref([])
@@ -173,7 +174,9 @@ async function marcarEnRevision(sol) {
 // Aprobar: si es mantencion abre modal de programación; si no, aprueba directo
 function aprobar(sol) {
   if (sol.tipo === 'mantencion') {
-    programar.value      = { fecha: '', taller: '', presupuesto: '', suspender: false }
+    // Default es_correctivo=true: las solicitudes de conductor son fallas en terreno.
+    programar.value      = { fecha: '', taller: '', presupuesto: '', suspender: false,
+                             es_correctivo: true, monto: '', categoria_correctiva: '' }
     errorAccion.value    = ''
     modalProgramar.value = sol
     modalDetalle.value   = null   // cerrar modal detalle si estaba abierto
@@ -183,11 +186,33 @@ function aprobar(sol) {
 }
 
 async function confirmarProgramacion() {
+  errorAccion.value = ''
+  const p = programar.value
+
+  if (p.es_correctivo) {
+    // Correctivo → se registra el gasto directo: el monto es obligatorio.
+    const montoNum = Number(String(p.monto).replace(/[.\s]/g, '').replace(',', '.'))
+    if (!Number.isFinite(montoNum) || montoNum <= 0) {
+      errorAccion.value = 'Ingresa el monto del gasto correctivo (mayor a 0).'
+      return
+    }
+    const sol = modalProgramar.value
+    await _ejecutarAprobacion(sol, {
+      es_correctivo:        true,
+      monto:                montoNum,
+      categoria_correctiva: p.categoria_correctiva || undefined,
+    })
+    if (!errorAccion.value) modalProgramar.value = null
+    return
+  }
+
+  // Programada → crea la mantención.
   const mantencionId = await _ejecutarAprobacion(modalProgramar.value, {
-    fecha_programada:   programar.value.fecha     || undefined,
-    taller:             programar.value.taller    || undefined,
-    presupuesto:        programar.value.presupuesto ? Number(programar.value.presupuesto) : undefined,
-    suspender_vehiculo: programar.value.suspender,
+    es_correctivo:      false,
+    fecha_programada:   p.fecha     || undefined,
+    taller:             p.taller    || undefined,
+    presupuesto:        p.presupuesto ? Number(p.presupuesto) : undefined,
+    suspender_vehiculo: p.suspender,
   })
   modalProgramar.value = null
 
@@ -260,13 +285,14 @@ async function confirmarRechazo() {
 
 async function verDetalle(sol) {
   errorAccion.value = ''
+  const id = typeof sol === 'object' ? sol.id : sol
   try {
-    const res  = await apiFetch(`/api/empresa/solicitudes/${sol.id}/`)
+    const res  = await apiFetch(`/api/empresa/solicitudes/${id}/`)
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Error')
     modalDetalle.value = data
   } catch {
-    modalDetalle.value = { ...sol }
+    if (typeof sol === 'object') modalDetalle.value = { ...sol }
   }
 }
 
@@ -280,12 +306,19 @@ onMounted(() => {
   cargar()
   conectarWS()
   pollingConteo = setInterval(refrescarConteo, 30_000)
+  // Abrir el detalle si la URL apunta a una solicitud (desde notificación/email).
+  // Soporta ?sol=ID (formato nuevo) y /solicitudes/:id (notificaciones antiguas).
+  const solId = route.query.sol || route.params.id
+  if (solId) verDetalle(Number(solId))
 })
 
 onUnmounted(() => {
   desconectarWS()
   clearInterval(pollingConteo)
 })
+
+// Abrir detalle si cambia la solicitud apuntada estando ya en la página.
+watch(() => route.query.sol || route.params.id, (id) => { if (id) verDetalle(Number(id)) })
 
 // Watch filtros con debounce
 let debounce = null
@@ -519,8 +552,30 @@ watch(filtroBuscar, () => {
               </template>
             </div>
 
-            <!-- Descripción -->
-            <div class="detalle-seccion">
+            <!-- Checklist pre-viaje: detalle de ítems -->
+            <div v-if="modalDetalle.checklist" class="detalle-seccion">
+              <span class="detalle-lbl">
+                Checklist pre-viaje
+                <span :class="['chk-resumen', modalDetalle.checklist.tiene_fallas ? 'chk-fallas' : 'chk-ok']">
+                  {{ modalDetalle.checklist.tiene_fallas ? 'Con fallas' : 'Todo en orden' }}
+                </span>
+              </span>
+              <div class="chk-lista">
+                <div v-for="it in modalDetalle.checklist.items" :key="it.id" class="chk-item">
+                  <span :class="['chk-icono', 'chk-' + it.resultado]">
+                    {{ it.resultado === 'ok' ? '✓' : it.resultado === 'falla' ? '✕' : '—' }}
+                  </span>
+                  <div class="chk-texto">
+                    <span class="chk-nombre">{{ it.nombre }}</span>
+                    <span v-if="it.observacion" class="chk-obs">{{ it.observacion }}</span>
+                  </div>
+                </div>
+              </div>
+              <p v-if="modalDetalle.checklist.firma" class="chk-firma">✍ Firmado por el conductor</p>
+            </div>
+
+            <!-- Descripción (no se repite para checklists) -->
+            <div v-if="!modalDetalle.checklist" class="detalle-seccion">
               <span class="detalle-lbl">Descripción</span>
               <p class="detalle-texto">{{ modalDetalle.descripcion || '—' }}</p>
             </div>
@@ -612,46 +667,91 @@ watch(filtroBuscar, () => {
               </span>
             </p>
 
+            <!-- Clasificación del costo -->
             <div class="form-group">
-              <label class="form-label">
-                Fecha programada
-                <span class="opt-label">(opcional)</span>
-              </label>
-              <input v-model="programar.fecha" type="date" class="form-input" />
+              <label class="form-label">Tipo de mantención</label>
+              <div class="seg-toggle">
+                <button type="button"
+                  :class="['seg-opt', { 'seg-active': programar.es_correctivo }]"
+                  @click="programar.es_correctivo = true">
+                  Correctivo (falla)
+                </button>
+                <button type="button"
+                  :class="['seg-opt', { 'seg-active': !programar.es_correctivo }]"
+                  @click="programar.es_correctivo = false">
+                  Programada
+                </button>
+              </div>
+              <p class="seg-hint">
+                {{ programar.es_correctivo
+                  ? 'La falla ya ocurrió: se registra el gasto directo en Correctivos (no se planifica).'
+                  : 'Trabajo a ejecutar: se crea una mantención para programar.' }}
+              </p>
             </div>
 
-            <div class="form-group">
-              <label class="form-label">
-                Taller / Mecánico
-                <span class="opt-label">(opcional)</span>
-              </label>
-              <input
-                v-model="programar.taller"
-                type="text"
-                class="form-input"
-                placeholder="Ej: Taller Mecánico Rodríguez"
-              />
-            </div>
+            <!-- CORRECTIVO → monto + categoría del gasto -->
+            <template v-if="programar.es_correctivo">
+              <div class="form-group">
+                <label class="form-label">Monto del gasto ($) <span class="req">*</span></label>
+                <input v-model="programar.monto" type="number" min="1" class="form-input" placeholder="0" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Categoría correctiva <span class="opt-label">(opcional)</span></label>
+                <select v-model="programar.categoria_correctiva" class="form-input">
+                  <option value="">— Selecciona —</option>
+                  <option value="falla_mecanica">Falla mecánica urgente</option>
+                  <option value="repuesto_urgente">Repuesto no planificado</option>
+                  <option value="accidente">Daño por accidente</option>
+                  <option value="electrico">Falla eléctrica</option>
+                  <option value="neumatico">Neumático de emergencia</option>
+                  <option value="otro_correctivo">Otro correctivo</option>
+                </select>
+              </div>
+            </template>
 
-            <div class="form-group">
-              <label class="form-label">
-                Presupuesto estimado
-                <span class="opt-label">(opcional)</span>
-              </label>
-              <input
-                v-model="programar.presupuesto"
-                type="number"
-                min="0"
-                step="1"
-                class="form-input"
-                placeholder="0"
-              />
-            </div>
+            <!-- PROGRAMADA → datos de la mantención a ejecutar -->
+            <template v-else>
+              <div class="form-group">
+                <label class="form-label">
+                  Fecha programada
+                  <span class="opt-label">(opcional)</span>
+                </label>
+                <input v-model="programar.fecha" type="date" class="form-input" />
+              </div>
 
-            <label class="check-label">
-              <input v-model="programar.suspender" type="checkbox" class="check-input" />
-              <span>Suspender vehículo (marcarlo como en mantención)</span>
-            </label>
+              <div class="form-group">
+                <label class="form-label">
+                  Taller / Mecánico
+                  <span class="opt-label">(opcional)</span>
+                </label>
+                <input
+                  v-model="programar.taller"
+                  type="text"
+                  class="form-input"
+                  placeholder="Ej: Taller Mecánico Rodríguez"
+                />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">
+                  Presupuesto estimado
+                  <span class="opt-label">(opcional)</span>
+                </label>
+                <input
+                  v-model="programar.presupuesto"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="form-input"
+                  placeholder="0"
+                />
+              </div>
+
+              <label class="check-label">
+                <input v-model="programar.suspender" type="checkbox" class="check-input" />
+                <span>Suspender vehículo (marcarlo como en mantención)</span>
+              </label>
+            </template>
 
             <div v-if="errorAccion" class="error-inline">{{ errorAccion }}</div>
           </div>
@@ -883,4 +983,36 @@ watch(filtroBuscar, () => {
 .toast-warn { background: #D97706; color: #fff; }
 .toast-info { background: #4F46E5; color: #fff; }
 @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+/* Toggle correctivo / programada */
+.seg-toggle { display: flex; gap: 0.5rem; }
+.seg-opt {
+  flex: 1; padding: 0.55rem 0.5rem;
+  border: 1.5px solid #E5E7EB; border-radius: 9px;
+  background: #fff; color: #6B7280;
+  font-size: 0.8125rem; font-weight: 600; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.seg-opt:hover { border-color: #C7D2FE; }
+.seg-active { border-color: #4F46E5; background: #EEF2FF; color: #4338CA; }
+.seg-hint { font-size: 0.75rem; color: #9CA3AF; margin: 0.4rem 0 0; }
+
+/* Checklist pre-viaje en el detalle */
+.chk-resumen { margin-left: 0.5rem; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; }
+.chk-ok     { background: #ECFDF5; color: #059669; }
+.chk-fallas { background: #FEF2F2; color: #DC2626; }
+.chk-lista  { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.chk-item   { display: flex; align-items: flex-start; gap: 0.6rem; }
+.chk-icono  {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 800;
+}
+.chk-item .chk-ok          { background: #ECFDF5; color: #059669; }
+.chk-item .chk-falla       { background: #FEF2F2; color: #DC2626; }
+.chk-item .chk-sin_revisar { background: #F3F4F6; color: #9CA3AF; }
+.chk-texto  { display: flex; flex-direction: column; }
+.chk-nombre { font-size: 0.8125rem; color: #374151; font-weight: 500; }
+.chk-obs    { font-size: 0.75rem; color: #DC2626; }
+.chk-firma  { font-size: 0.75rem; color: #6B7280; margin: 0.6rem 0 0; }
 </style>

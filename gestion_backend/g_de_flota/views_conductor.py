@@ -602,6 +602,21 @@ def conductor_solicitudes(request):
     if asignacion:
         vehiculo = asignacion.vehiculo
 
+    # Evitar duplicados: si ya hay una solicitud de mantención sin resolver para
+    # el mismo vehículo, avisar (a menos que el conductor confirme con forzar=true).
+    forzar = str(request.data.get('forzar', '')).lower() in ('1', 'true', 'sí', 'si')
+    if tipo == 'mantencion' and vehiculo and not forzar:
+        existente = SolicitudConductor.objects.filter(
+            conductor=request.user, vehiculo=vehiculo, tipo='mantencion',
+            estado__in=['pendiente', 'en_revision'],
+        ).first()
+        if existente:
+            return Response({
+                'error':  'Ya tienes una solicitud de mantención pendiente para este vehículo.',
+                'codigo': 'solicitud_duplicada',
+                'solicitud_id': existente.id,
+            }, status=409)
+
     solicitud = SolicitudConductor.objects.create(
         conductor=request.user,
         empresa=empresa,
@@ -982,20 +997,30 @@ def conductor_completar_mantencion(request, mantencion_id):
     vehiculo.save(update_fields=['en_mantencion'])
 
     # ── Crear GastoOperativo automáticamente ─────────────────────────────────
+    # Si la mantención es correctiva (falla no presupuestada), el gasto se marca
+    # como correctivo para que cuente en Correctivos, no como mantención normal.
     empresa = vehiculo.empresa if vehiculo.empresa_id else None
     gasto   = None
     if empresa:
+        es_corr = getattr(mantencion, 'es_correctivo', False)
         gasto = GastoOperativo.objects.create(
             empresa       = empresa,
             vehiculo      = vehiculo,
             conductor     = request.user,
             categoria     = 'mantencion',
-            descripcion   = f'Mantención: {mantencion.tipo_mantencion} — {vehiculo.patente}',
+            es_correctivo = es_corr,
+            categoria_correctiva = 'otro_correctivo' if es_corr else '',
+            prioridad_correctiva = 'media' if es_corr else '',
+            descripcion   = (('Correctivo: ' if es_corr else 'Mantención: ')
+                             + f'{mantencion.tipo_mantencion} — {vehiculo.patente}'),
             monto         = int(costo),
             fecha         = fecha_realizada,
             comprobante   = mantencion.foto_comprobante if mantencion.foto_comprobante else None,
             registrado_por= request.user,
         )
+        if es_corr and not mantencion.gasto_correctivo_generado:
+            mantencion.gasto_correctivo_generado = True
+            mantencion.save(update_fields=['gasto_correctivo_generado'])
 
     registrar_log('ACTIVIDAD', 'mantencion_completada_conductor', request, detalle={
         'mantencion_id': mantencion.id,
@@ -1393,7 +1418,7 @@ def conductor_checklist(request, ruta_id):
                 tipo='actividad',
                 titulo=f'✓ Vehículo en orden — {patente}',
                 mensaje=f'{nombre_conductor} completó el checklist. Vehículo listo para partir en {ruta.nombre}.',
-                url_accion=f'/empresa/solicitudes/{sol.id}',
+                url_accion=f'/empresa/solicitudes?sol={sol.id}',
             )
         else:
             notificar_admins_empresa(
@@ -1401,7 +1426,7 @@ def conductor_checklist(request, ruta_id):
                 tipo='solicitud_conductor',
                 titulo=f'⚠ Checklist con fallas — {patente}',
                 mensaje=f'{nombre_conductor} detectó fallas antes de partir: {resumen_fallas}',
-                url_accion=f'/empresa/solicitudes/{sol.id}',
+                url_accion=f'/empresa/solicitudes?sol={sol.id}',
             )
 
     # 6. Actualizar ruta.extra
@@ -1419,26 +1444,39 @@ def conductor_checklist(request, ruta_id):
     except Exception:
         registrar_log('ERROR', 'checklist_push_fallido', request, detalle={'ruta_id': ruta.id})
 
-    # 7b. Email a los admins cuando hay fallas ────────────────────────────────
-    if tiene_fallas and empresa:
+    # 7b. Email a los admins SIEMPRE (con fallas o en orden) ───────────────────
+    if empresa:
         try:
-            from .email_service import email_checklist_fallas
+            from .email_service import email_checklist_fallas, email_checklist_ok
             from django.conf import settings as _settings
             admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
-            lista_fallas = [
-                f"{ITEMS_MAP.get(iid, iid)}: {resumen_fallas}"
-                for iid in fallas
-            ]
-            for admin in admins:
-                email_checklist_fallas(
-                    email=admin.email,
-                    nombre_admin=admin.nombre or admin.email,
-                    empresa_nombre=empresa.nombre,
-                    conductor_nombre=nombre_conductor,
-                    patente=patente,
-                    fallas=lista_fallas or [resumen_fallas],
-                    url_solicitudes=f"{_settings.FRONTEND_URL}/empresa/solicitudes/{sol.id}",
-                )
+            url_sol = f"{_settings.FRONTEND_URL}/empresa/solicitudes?sol={sol.id}"
+            if tiene_fallas:
+                lista_fallas = [
+                    f"{ITEMS_MAP.get(iid, iid)}: {resumen_fallas}"
+                    for iid in fallas
+                ]
+                for admin in admins:
+                    email_checklist_fallas(
+                        email=admin.email,
+                        nombre_admin=admin.nombre or admin.email,
+                        empresa_nombre=empresa.nombre,
+                        conductor_nombre=nombre_conductor,
+                        patente=patente,
+                        fallas=lista_fallas or [resumen_fallas],
+                        url_solicitudes=url_sol,
+                    )
+            else:
+                for admin in admins:
+                    email_checklist_ok(
+                        email=admin.email,
+                        nombre_admin=admin.nombre or admin.email,
+                        empresa_nombre=empresa.nombre,
+                        conductor_nombre=nombre_conductor,
+                        patente=patente,
+                        ruta_nombre=ruta.nombre,
+                        url_solicitudes=url_sol,
+                    )
         except Exception:
             pass
 

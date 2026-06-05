@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
-import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia } from '../../../utils/validators.js'
+import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia, soloTexto } from '../../../utils/validators.js'
 import InputTelefono from '../../../components/InputTelefono.vue'
 
 const router    = useRouter()
@@ -200,7 +200,7 @@ const guardar = async () => {
           <div class="form-row">
             <div class="form-group">
               <label class="label">Nombre</label>
-              <input v-model="form.nombre" type="text" class="input"
+              <input v-model="form.nombre" @input="form.nombre = soloTexto(form.nombre)" type="text" class="input"
                 :class="{ 'input-error': errores.nombre }"
                 placeholder="Ej: Juan" required autocomplete="off" maxlength="30"/>
               <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
@@ -219,14 +219,14 @@ const guardar = async () => {
           <div class="form-row">
             <div class="form-group">
               <label class="label">Apellido paterno</label>
-              <input v-model="form.apellido_paterno" type="text" class="input"
+              <input v-model="form.apellido_paterno" @input="form.apellido_paterno = soloTexto(form.apellido_paterno)" type="text" class="input"
                 :class="{ 'input-error': errores.apellido_paterno }"
                 placeholder="Ej: Pérez" required autocomplete="off" maxlength="30"/>
               <p v-if="errores.apellido_paterno" class="field-error">{{ errores.apellido_paterno[0] }}</p>
             </div>
             <div class="form-group">
               <label class="label">Apellido materno</label>
-              <input v-model="form.apellido_materno" type="text" class="input"
+              <input v-model="form.apellido_materno" @input="form.apellido_materno = soloTexto(form.apellido_materno)" type="text" class="input"
                 :class="{ 'input-error': errores.apellido_materno }"
                 placeholder="Ej: González" required autocomplete="off" maxlength="30"/>
               <p v-if="errores.apellido_materno" class="field-error">{{ errores.apellido_materno[0] }}</p>

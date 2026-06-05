@@ -137,7 +137,9 @@ const confirmarCompletar = async () => {
     erroresModal.value.fecha = `La fecha realizada no puede ser anterior a la programada (${formatFecha(fechaProg)}).`
     return
   }
-  if (!formRealizar.value.costo || Number(formRealizar.value.costo) <= 0) {
+  // Parseo robusto: acepta "50000", "50.000", "50,000" → 50000.
+  const costoNum = Number(String(formRealizar.value.costo).replace(/[.\s]/g, '').replace(',', '.'))
+  if (!Number.isFinite(costoNum) || costoNum <= 0) {
     erroresModal.value.costo = 'El costo real debe ser mayor a 0.'
     return
   }
@@ -149,7 +151,7 @@ const confirmarCompletar = async () => {
   const fd = new FormData()
   fd.append('estado', 'realizada')
   fd.append('fecha_realizada', formRealizar.value.fecha_realizada)
-  fd.append('costo', formRealizar.value.costo)
+  fd.append('costo', costoNum)
   if (formRealizar.value.kilometraje_realizado)
     fd.append('kilometraje_realizado', formRealizar.value.kilometraje_realizado)
   if (fotoComprobante.value)

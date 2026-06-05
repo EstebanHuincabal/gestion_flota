@@ -94,6 +94,25 @@ def _crear_entidad_automatica(solicitud, request_user, extra=None):
     extra = extra or {}
 
     if solicitud.tipo == 'mantencion' and solicitud.vehiculo:
+        # CORRECTIVO: la falla ya ocurrió → se registra el GASTO directo, no se
+        # planifica una mantención. PROGRAMADA: se crea la Mantencion a ejecutar.
+        if extra.get('es_correctivo', True):
+            gasto = GastoOperativo.objects.create(
+                empresa=solicitud.empresa,
+                vehiculo=solicitud.vehiculo,
+                conductor=solicitud.conductor,
+                categoria='mantencion',
+                es_correctivo=True,
+                categoria_correctiva=extra.get('categoria_correctiva') or 'otro_correctivo',
+                prioridad_correctiva=solicitud.prioridad or 'media',
+                descripcion=(solicitud.titulo or 'Correctivo')[:300],
+                monto=int(extra.get('monto') or 0),
+                fecha=timezone.now().date(),
+                registrado_por=request_user,
+                comprobante=solicitud.foto if solicitud.foto else None,
+            )
+            return gasto
+
         mantencion = Mantencion.objects.create(
             vehiculo=solicitud.vehiculo,
             tipo_mantencion=solicitud.titulo,
@@ -102,8 +121,8 @@ def _crear_entidad_automatica(solicitud, request_user, extra=None):
             fecha_programada=extra.get('fecha_programada') or None,
             taller_proveedor=extra.get('taller', ''),
             presupuesto=extra.get('presupuesto') or None,
+            es_correctivo=False,
         )
-        # Suspender vehículo si se indicó explícitamente
         if extra.get('suspender_vehiculo'):
             solicitud.vehiculo.en_mantencion = True
             solicitud.vehiculo.save(update_fields=['en_mantencion'])
@@ -313,23 +332,38 @@ class SolicitudAprobarView(APIView):
         if sol.estado in ('aprobado', 'rechazado'):
             return Response({'error': 'La solicitud ya fue resuelta.'}, status=400)
 
+        # Parámetros según clasificación (se validan ANTES de marcar aprobada).
+        extra = {}
+        if sol.tipo == 'mantencion':
+            # Default True: las solicitudes de conductor son fallas no presupuestadas.
+            es_corr = bool(request.data.get('es_correctivo', True))
+            extra['es_correctivo'] = es_corr
+            if es_corr:
+                # Correctivo → registra el gasto directo: necesita monto.
+                raw_monto = request.data.get('monto')
+                try:
+                    extra['monto'] = int(float(raw_monto)) if raw_monto not in (None, '') else 0
+                except (ValueError, TypeError):
+                    extra['monto'] = 0
+                if extra['monto'] <= 0:
+                    return Response({'monto': 'Para un gasto correctivo el monto debe ser mayor a 0.'}, status=400)
+                extra['categoria_correctiva'] = str(request.data.get('categoria_correctiva', '')).strip()
+            else:
+                # Programada → crea la mantención a ejecutar.
+                extra['fecha_programada']  = request.data.get('fecha_programada') or None
+                extra['taller']            = str(request.data.get('taller', '')).strip()
+                raw_pres = request.data.get('presupuesto')
+                try:
+                    extra['presupuesto'] = float(raw_pres) if raw_pres not in (None, '') else None
+                except (ValueError, TypeError):
+                    extra['presupuesto'] = None
+                extra['suspender_vehiculo'] = bool(request.data.get('suspender_vehiculo', False))
+
         sol.estado         = 'aprobado'
         sol.respuesta      = request.data.get('respuesta', '')
         sol.respondido_por = request.user
         sol.respondido_at  = timezone.now()
         sol.save()
-
-        # Parámetros de programación de mantención (opcionales)
-        extra = {}
-        if sol.tipo == 'mantencion':
-            extra['fecha_programada']  = request.data.get('fecha_programada') or None
-            extra['taller']            = str(request.data.get('taller', '')).strip()
-            raw_pres = request.data.get('presupuesto')
-            try:
-                extra['presupuesto'] = float(raw_pres) if raw_pres not in (None, '') else None
-            except (ValueError, TypeError):
-                extra['presupuesto'] = None
-            extra['suspender_vehiculo'] = bool(request.data.get('suspender_vehiculo', False))
 
         entidad   = _crear_entidad_automatica(sol, request.user, extra)
         _notificar_conductor(sol, aprobado=True, extra=extra)
@@ -383,11 +417,14 @@ class SolicitudAprobarView(APIView):
             'ok': True,
             'solicitud': SolicitudConductorSerializer(sol, context={'request': request}).data,
         }
-        # Si se creó una mantención, incluir su id para redirigir al formulario
-        if entidad and sol.tipo == 'mantencion':
+        # Mantención PROGRAMADA → id de la mantención (redirige al formulario).
+        # Correctivo / combustible / incidencia → se creó un gasto.
+        if entidad and sol.tipo == 'mantencion' and not extra.get('es_correctivo'):
             resp['mantencion_id'] = entidad.id
-        elif entidad and sol.tipo in ('combustible', 'incidencia'):
+        elif entidad:
             resp['gasto_id'] = entidad.id
+            if sol.tipo == 'mantencion':
+                resp['es_correctivo'] = True
 
         return Response(resp)
 

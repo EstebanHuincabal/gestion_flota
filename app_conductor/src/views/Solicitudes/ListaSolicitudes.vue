@@ -87,13 +87,14 @@ function tipoHabilitado(tipo) {
 }
 
 function abrirNuevaSolicitud() {
-  paso.value             = 1
-  tipoSeleccionado.value = null
-  fotoDataUrl.value      = null
-  fotoBase64.value       = null
-  errorForm.value        = ''
-  form.value             = { titulo: '', descripcion: '', prioridad: 'media', monto: null, litros: null, subtipo_incidencia: '' }
-  modalNueva.value       = true
+  paso.value               = 1
+  tipoSeleccionado.value   = null
+  fotoDataUrl.value        = null
+  fotoBase64.value         = null
+  errorForm.value          = ''
+  confirmarDuplicada.value = false
+  form.value               = { titulo: '', descripcion: '', prioridad: 'media', monto: null, litros: null, subtipo_incidencia: '' }
+  modalNueva.value         = true
 }
 
 function cerrarNueva() { modalNueva.value = false }
@@ -145,7 +146,7 @@ function quitarFoto() {
 }
 
 // Enviar solicitud desde el formulario paso 2
-async function enviarSolicitud() {
+async function enviarSolicitud(forzar = false) {
   errorForm.value = ''
   const t = tipoSeleccionado.value
   const f = form.value
@@ -211,10 +212,12 @@ async function enviarSolicitud() {
     datos.subtipo = 'multa'
     datos.monto   = f.monto
   }
+  if (forzar) datos.forzar = 'true'
 
   const res = await store.crearSolicitud(datos, foto)
 
   if (res.success) {
+    confirmarDuplicada.value = false
     cerrarNueva()
     mostrarToast(
       res.offline
@@ -222,9 +225,20 @@ async function enviarSolicitud() {
         : 'Solicitud enviada correctamente',
       res.offline ? 'offline' : 'ok',
     )
+  } else if (res.codigo === 'solicitud_duplicada') {
+    // Ya hay una solicitud de mantención pendiente para este vehículo → confirmar.
+    confirmarDuplicada.value = true
+    errorForm.value = res.error || 'Ya tienes una solicitud pendiente para este vehículo.'
   } else {
     errorForm.value = res.error || 'Error al enviar la solicitud.'
   }
+}
+
+// Confirmación de solicitud duplicada
+const confirmarDuplicada = ref(false)
+function enviarDeTodasFormas() {
+  confirmarDuplicada.value = false
+  enviarSolicitud(true)
 }
 
 // ── Modal Detalle Solicitud ───────────────────────────────────────────────────
@@ -721,9 +735,19 @@ onUnmounted(() => {
               {{ errorForm }}
             </p>
 
+            <!-- Confirmación de solicitud duplicada -->
+            <button
+              v-if="confirmarDuplicada"
+              @click="enviarDeTodasFormas"
+              :disabled="store.enviando"
+              class="w-full mb-2 py-3 rounded-xl text-amber-700 bg-amber-50 border border-amber-300 text-sm font-semibold min-h-[44px]"
+            >
+              Crear otra de todas formas
+            </button>
+
             <!-- Botón enviar -->
             <button
-              @click="enviarSolicitud"
+              @click="enviarSolicitud()"
               :disabled="store.enviando"
               class="w-full py-3.5 rounded-xl text-white text-sm font-semibold
                      flex items-center justify-center gap-2 transition min-h-[44px]"
