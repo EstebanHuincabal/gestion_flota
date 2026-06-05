@@ -25,20 +25,14 @@ services:
     image: traccar/traccar:latest
     env_file: .env.production
     volumes:
-      - ./traccar.xml.template:/opt/traccar/conf/traccar.xml.template:ro
+      - ./traccar.xml.template:/traccar.xml.template:ro
+      - ./docker/traccar-start.sh:/traccar-start.sh:ro
       - traccar_data:/opt/traccar/data
     ports:
       - "5000-5150:5000-5150"     # rango de protocolos GPS (TCP/UDP)
       - "5055:5055/udp"           # OsmAnd (UDP)
       - "8082:8082"               # interfaz web/API de Traccar
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >
-        sed -e "s|__DB_USER__|$$POSTGRES_USER|g"
-            -e "s|__DB_PASS__|$$POSTGRES_PASSWORD|g"
-            /opt/traccar/conf/traccar.xml.template > /opt/traccar/conf/traccar.xml &&
-        cd /opt/traccar &&
-        exec ./jre/bin/java -jar tracker-server.jar conf/traccar.xml
+    entrypoint: ["/bin/sh", "/traccar-start.sh"]
     depends_on:
       db:
         condition: service_healthy
