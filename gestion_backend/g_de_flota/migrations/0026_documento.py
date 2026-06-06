@@ -12,6 +12,27 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        # ── Limpieza previa ──────────────────────────────────────────────────
+        # Los modelos antiguos DocumentoVehiculo (renombrado desde 'Documento'
+        # en 0010) y DocumentoConductor se eliminan ANTES de crear el nuevo
+        # 'Documento'. Esto es imprescindible en PostgreSQL: al renombrar la
+        # tabla en 0010, el índice del FK conservó su nombre original
+        # (g_de_flota_documento_vehiculo_id_196fd87b). Si se creara el nuevo
+        # Documento sin liberar antes ese nombre, PostgreSQL aborta con
+        # "relation ... already exists". Borrando primero el modelo viejo se
+        # libera el índice y el CreateModel siguiente corre en limpio.
+        migrations.RemoveField(
+            model_name='documentovehiculo',
+            name='vehiculo',
+        ),
+        migrations.DeleteModel(
+            name='DocumentoConductor',
+        ),
+        migrations.DeleteModel(
+            name='DocumentoVehiculo',
+        ),
+
+        # ── Modelo Documento (unificado vehículo + conductor) ────────────────
         migrations.CreateModel(
             name='Documento',
             fields=[
