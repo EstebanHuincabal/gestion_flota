@@ -41,7 +41,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Aviso',
             fields=[
-                ('id',           models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('id',           models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('destino',      models.CharField(max_length=20, choices=[('flota','Toda la flota'),('conductor','Conductor específico'),('admins','Administradores')])),
                 ('asunto',       models.CharField(max_length=150)),
                 ('mensaje',      models.TextField(max_length=2000)),
