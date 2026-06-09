@@ -64,6 +64,12 @@ const routes = [
     component: () => import('@/views/Avisos/Avisos.vue'),
     meta: { requiereAuth: true, modulo: 'avisos' },
   },
+  {
+    path: '/notificaciones',
+    name: 'notificaciones',
+    component: () => import('@/views/Notificaciones/Notificaciones.vue'),
+    meta: { requiereAuth: true },
+  },
 
   // ── Protegidas — módulo 'rutas' requerido ────────────────────────────────
   {

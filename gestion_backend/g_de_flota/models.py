@@ -567,6 +567,14 @@ class TipoNotificacion(models.TextChoices):
     SEGURIDAD             = "seguridad",             "Seguridad"
     ACTIVIDAD             = "actividad",             "Actividad"
     LIMITE_PLAN           = "limite_plan",           "Límite de plan"
+    # Recordatorios push al conductor (registrados por firebase_push.enviar_push)
+    RECORDATORIO_RUTA       = "recordatorio_ruta",       "Recordatorio de ruta"
+    RECORDATORIO_CHECKLIST  = "recordatorio_checklist",  "Recordatorio de checklist"
+    RECORDATORIO_FINALIZAR  = "recordatorio_finalizar",  "Recordatorio de finalizar ruta"
+    RECORDATORIO_VISPERA    = "recordatorio_vispera",    "Recordatorio de ruta del día siguiente"
+    RECORDATORIO_DOCUMENTOS = "recordatorio_documentos", "Recordatorio de documentos"
+    CHECKLIST_COMPLETADO    = "checklist_completado",    "Checklist completado"
+    CHECKLIST_ENVIADO       = "checklist_enviado",       "Checklist con fallas"
 
 
 class Notificacion(models.Model):

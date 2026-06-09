@@ -200,7 +200,7 @@ gestion_flota/
 │   │   │   ├── BottomNav.vue     # Barra de navegación inferior (4 tabs: Rutas/Solicitudes/Mantención/Ajustes)
 │   │   │   └── RutaCard.vue      # Tarjeta de ruta (variantes: activa/pendiente/finalizada)
 │   │   ├── utils/
-│   │   │   └── formato.js        # formatCLP, formatDuracion, formatFechaRuta, iniciales
+│   │   │   └── formato.js        # formatCLP, formatDuracion, formatFechaRuta, tiempoDesde, agruparPorFecha, iniciales
 │   │   └── assets/
 │   │       └── main.css          # Tailwind + variables CSS --color-acento
 │   ├── vite.config.js            # Puerto 5174 · envDir '..' · proxy /api → :8000
@@ -769,10 +769,11 @@ La app está optimizada para todos los tamaños de pantalla y modelos de teléfo
 | Pantalla | Ruta | Descripción |
 |---|---|---|
 | `Login.vue` | `/login` | Autenticación por RUT chileno + contraseña. Validación módulo 11 en el cliente. |
-| `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. |
+| `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. La campanita del header navega a `/notificaciones` y muestra un punto rojo si hay notificaciones sin leer (`GET /api/notificaciones/no-leidas/`). |
 | `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Detalles / Historial). Mapa Leaflet (carga dinámica desde CDN). Lista de paradas con tipo e ícono. Bottom-sheet modales con validación para iniciar (km_inicio) y finalizar (km_fin + notas). Tab Historial con lista de `EventoRuta` e input para agregar comentarios. Toast de confirmación. **Para rutas pendientes**, si el checklist pre-viaje no está completo muestra un botón morado "Completar checklist antes de iniciar"; una vez completado aparece el botón verde "Iniciar ruta". |
 | `ChecklistPreviaje.vue` | `/rutas/:id/checklist` | Checklist pre-viaje de 12 ítems agrupados (Documentos, Mecánica, Seguridad). Barra de progreso animada, ítems con estado visual (pendiente/ok/falla), documentos vigentes pre-marcados automáticamente, textarea de observación para fallas, firma digital por canvas (touch). Botón de envío deshabilitado hasta completar todos los ítems obligatorios y firmar. |
-| `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial" colapsable. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
+| `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial". El Historial está **siempre visible** (no colapsa) y se agrupa en secciones por fecha (Hoy/Ayer/Esta semana/Este mes/Anteriores) mediante el helper `agruparPorFecha()`. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
+| `Notificaciones.vue` | `/notificaciones` | Historial de notificaciones del conductor (rutas, mantenciones, solicitudes, recordatorios). Lista paginada (`GET /api/notificaciones/`) agrupada por secciones de fecha (Hoy/Ayer/Esta semana/Este mes/Anteriores) con `agruparPorFecha()`, ícono y color por tipo, indicador de no leída, botón "Marcar todas" y "Cargar más" para paginar. Al tocar una notificación se marca como leída y navega a `url_accion` si existe; si no, abre un modal con el mensaje completo. Se accede desde la campanita de `ListaRutas.vue`. |
 | `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. Al tocar una tarjeta se abre `ModalDetalleMantencion` con la acción correspondiente al estado. Toast de feedback tras iniciar o completar. |
 | `MisDocumentos.vue` | `/documentos` | Documentación del conductor y del vehículo asignado. **Sección conductor:** Licencia de conducir. **Sección vehículo:** Permiso de circulación, Revisión técnica y Seguro SOAP (vinculados al vehículo asignado vía `Asignacion`). Cada tarjeta muestra estado (Vigente/Por vencer/Vencido/Sin documento), fechas e historial de versiones. Sheet modal con Cámara/Galería/Archivo, fechas y notas. Los documentos quedan registrados en el módulo de Documentos del panel web. Pull-to-refresh. |
 | `SubirDocumentos.vue` | `/onboarding` | Pantalla de onboarding (primer login). Muestra las mismas tarjetas de documentación (conductor + vehículo) con encabezado "Completa tu documentación". Botón **Continuar** al pie que redirige al primer módulo disponible según el plan. Comparte el mismo store `documentos.js`. |
@@ -1009,6 +1010,15 @@ La función `_enviar_recordatorios_conductor()` en `views_conductor.py` evalúa 
 
 - **Idempotencia:** los recordatorios de ruta marcan un flag en `Ruta.extra` (`recordatorio_inicio_enviado` / `recordatorio_checklist_enviado` / `recordatorio_finalizar_enviado` / `recordatorio_vispera_enviado`) para avisar una sola vez por evento. El de documentos guarda `Usuario.notif_prefs['recordatorio_docs_ultima']` (1 vez al día). Si se reprograma `fecha_programada` u `hora_programada` desde el panel, los flags se limpian vía `_reset_recordatorios()` en `views_rutas.py`.
 - **Fail-silent:** toda la función está envuelta en `try/except` — nunca bloquea ni retrasa la respuesta al conductor.
+
+##### Historial de notificaciones del conductor
+
+Cada push enviado con `enviar_push()` queda registrado como `Notificacion` para que el conductor pueda revisarlo después en `Notificaciones.vue` (`/notificaciones`), reutilizando los mismos endpoints genéricos del panel web (`/api/notificaciones/`, `/api/notificaciones/no-leidas/`, `/api/notificaciones/leer/`).
+
+- **`_registrar_notificacion(usuario, titulo, cuerpo, data)`** en `firebase_push.py` se ejecuta al inicio de `enviar_push()` (antes de la inicialización de Firebase, así el historial queda registrado aunque falle el envío FCM). Crea un `Notificacion` con `tipo=data['tipo']`, `url_accion` resuelta por `_url_accion()` y `extra=data`.
+- **`_TIPOS_YA_REGISTRADOS`**: conjunto de `data.tipo` que ya generan su propio `Notificacion` vía `notificar()`/`_notificar_conductor()` (`mantencion_*`, `solicitud_aprobada`, `solicitud_rechazada`, `ruta_*`). `_registrar_notificacion()` los ignora para no duplicar.
+- **`_RUTAS_POR_TIPO`**: mapea cada `data.tipo` de recordatorio/checklist a su `url_accion` (mismas rutas del tap-to-navigate descritas arriba: `/rutas/<id>`, `/rutas/<id>/checklist`, `/documentos`).
+- **Nuevos `TipoNotificacion`** (sin migración, son `TextChoices`): `recordatorio_ruta`, `recordatorio_checklist`, `recordatorio_finalizar`, `recordatorio_vispera`, `recordatorio_documentos`, `checklist_completado`, `checklist_enviado`. Estos dos últimos se disparan al completar el checklist pre-viaje (`views_conductor.py`), con o sin fallas.
 
 ---
 

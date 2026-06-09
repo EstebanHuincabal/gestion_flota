@@ -5,6 +5,7 @@ import { useAuthStore }       from '@/stores/auth.js'
 import { useRutasStore }      from '@/stores/rutas.js'
 import { useMantencionesStore } from '@/stores/mantenciones.js'
 import { usePermisos } from '@/composables/usePermisos.js'
+import { apiFetch } from '@/services/api.js'
 import BottomNav  from '@/components/BottomNav.vue'
 import RutaCard   from '@/components/RutaCard.vue'
 import { iniciales, tiempoDesde } from '@/utils/formato.js'
@@ -16,6 +17,7 @@ const mantenStore  = useMantencionesStore()
 const { cargando: cargandoPermisos } = usePermisos()
 
 const historialAbierto = ref(true)
+const notifNoLeidas    = ref(0)
 
 // ── Pull to refresh ───────────────────────────────────────────────────────────
 let startY    = 0
@@ -43,6 +45,12 @@ onMounted(async () => {
   await rutasStore.init()
   await rutasStore.cargarRutas()
   await mantenStore.cargarMantenciones()
+  try {
+    const data = await apiFetch('/api/notificaciones/no-leidas/')
+    notifNoLeidas.value = data.count || 0
+  } catch {
+    // Silencioso: el badge simplemente no se muestra
+  }
 })
 </script>
 
@@ -131,13 +139,14 @@ onMounted(async () => {
           </button>
           <!-- Notificaciones -->
           <button
-            @click="router.push('/solicitudes')"
-            class="icon-btn-ghost"
-            aria-label="Solicitudes"
+            @click="router.push('/notificaciones')"
+            class="icon-btn-ghost relative"
+            aria-label="Notificaciones"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
             </svg>
+            <span v-if="notifNoLeidas > 0" class="notif-dot"/>
           </button>
         </div>
       </div>
@@ -316,6 +325,11 @@ onMounted(async () => {
   cursor: pointer;
 }
 .icon-btn-ghost:active { background: rgba(255,255,255,0.25); }
+.notif-dot {
+  position: absolute; top: 6px; right: 6px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #F87171; border: 2px solid var(--color-acento, #534AB7);
+}
 
 /* Stats row */
 .stats-row {

@@ -5,6 +5,7 @@ import { useSolicitudesStore } from '@/stores/solicitudes.js'
 import { usePermisos } from '@/composables/usePermisos.js'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import BottomNav from '@/components/BottomNav.vue'
+import { agruparPorFecha } from '@/utils/formato.js'
 
 const router = useRouter()
 const store  = useSolicitudesStore()
@@ -38,12 +39,10 @@ async function onTouchEnd(e) {
   }
 }
 
-// ── Historial colapsable ──────────────────────────────────────────────────────
-const _histAbierto = ref(false)
-const historialAbierto = computed(() =>
-  store.resueltas.length <= 3 ? true : _histAbierto.value,
+// ── Historial agrupado por fecha (siempre visible) ────────────────────────────
+const historialAgrupado = computed(() =>
+  agruparPorFecha(store.resueltas, sol => sol.respondido_at || sol.created_at),
 )
-function toggleHistorial() { _histAbierto.value = !_histAbierto.value }
 
 // ── Toast ──────────────────────────────────────────────────────────────────────
 const toast = ref({ visible: false, mensaje: '', tipo: 'ok' })
@@ -291,7 +290,6 @@ function formatFecha(isoStr) {
 // ── Inicialización ────────────────────────────────────────────────────────────
 onMounted(async () => {
   await store.cargarSolicitudes()
-  _histAbierto.value = store.resueltas.length <= 3
 })
 
 onUnmounted(() => {
@@ -412,52 +410,43 @@ onUnmounted(() => {
           </div>
         </section>
 
-        <!-- ── Historial ─────────────────────────────────────────────────── -->
+        <!-- ── Historial (siempre visible, agrupado por fecha) ──────────────── -->
         <section v-if="store.resueltas.length">
-          <button
-            @click="toggleHistorial"
-            class="flex items-center justify-between w-full mb-2 min-h-[44px]"
-          >
-            <p class="sol-section-label" style="margin-bottom:0"><i class="ti ti-history mr-1.5"/>Historial</p>
-            <svg
-              class="w-4 h-4 text-gray-400 transition-transform"
-              :class="{ 'rotate-180': historialAbierto }"
-              fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
+          <p class="sol-section-label"><i class="ti ti-history mr-1.5"/>Historial</p>
 
-          <Transition name="historial">
-            <div v-if="historialAbierto" class="flex flex-col gap-1.5">
-              <button
-                v-for="sol in store.resueltas"
-                :key="sol.id"
-                @click="verDetalle(sol)"
-                class="w-full text-left bg-gray-50 rounded-xl px-3 py-2.5 border border-gray-100
-                       flex items-center gap-3 min-h-[44px] active:bg-gray-100 transition"
-              >
-                <div
-                  class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                  :style="`background: ${tipoInfo(sol.tipo).colorSuave}`"
+          <div class="flex flex-col gap-3">
+            <div v-for="grupo in historialAgrupado" :key="grupo.label">
+              <p class="sol-subgroup-label">{{ grupo.label }}</p>
+              <div class="flex flex-col gap-1.5">
+                <button
+                  v-for="sol in grupo.items"
+                  :key="sol.id"
+                  @click="verDetalle(sol)"
+                  class="w-full text-left bg-gray-50 rounded-xl px-3 py-2.5 border border-gray-100
+                         flex items-center gap-3 min-h-[44px] active:bg-gray-100 transition"
                 >
-                  <i
-                    class="ti text-xs"
-                    :class="tipoInfo(sol.tipo).icono"
-                    :style="`color: ${tipoInfo(sol.tipo).color}`"
-                  />
-                </div>
-                <p class="flex-1 text-sm text-gray-600 truncate">{{ sol.titulo }}</p>
-                <span
-                  class="shrink-0 text-[10px] font-semibold rounded-full px-2 py-0.5"
-                  :style="`color: ${badgeEstado(sol.estado).color}; background: ${badgeEstado(sol.estado).bg}`"
-                >
-                  {{ badgeEstado(sol.estado).label }}
-                </span>
-                <span class="text-[10px] text-gray-400 shrink-0">{{ tiempoDesde(sol.created_at) }}</span>
-              </button>
+                  <div
+                    class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                    :style="`background: ${tipoInfo(sol.tipo).colorSuave}`"
+                  >
+                    <i
+                      class="ti text-xs"
+                      :class="tipoInfo(sol.tipo).icono"
+                      :style="`color: ${tipoInfo(sol.tipo).color}`"
+                    />
+                  </div>
+                  <p class="flex-1 text-sm text-gray-600 truncate">{{ sol.titulo }}</p>
+                  <span
+                    class="shrink-0 text-[10px] font-semibold rounded-full px-2 py-0.5"
+                    :style="`color: ${badgeEstado(sol.estado).color}; background: ${badgeEstado(sol.estado).bg}`"
+                  >
+                    {{ badgeEstado(sol.estado).label }}
+                  </span>
+                  <span class="text-[10px] text-gray-400 shrink-0">{{ tiempoDesde(sol.created_at) }}</span>
+                </button>
+              </div>
             </div>
-          </Transition>
+          </div>
         </section>
 
       </div>
@@ -949,6 +938,10 @@ section .chip--accent {
   font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.07em; color: #9CA3AF; margin-bottom: 0.5rem;
 }
+.sol-subgroup-label {
+  font-size: 0.6875rem; font-weight: 600;
+  color: #B0B6C0; margin-bottom: 0.375rem;
+}
 
 /* ── FAB ───────────────────────────────────────────────────────────────── */
 .fab-btn {
@@ -967,10 +960,6 @@ section .chip--accent {
 /* Bottom sheet */
 .sheet-enter-active, .sheet-leave-active { transition: transform 0.3s ease; }
 .sheet-enter-from,   .sheet-leave-to     { transform: translateY(100%); }
-
-/* Historial colapsable */
-.historial-enter-active, .historial-leave-active { transition: all 0.25s ease; }
-.historial-enter-from,   .historial-leave-to     { opacity: 0; transform: translateY(-6px); }
 
 /* Toast */
 .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }

@@ -1439,9 +1439,11 @@ def conductor_checklist(request, ruta_id):
     # 7. Push al conductor (fail-silent)
     try:
         if not tiene_fallas:
-            enviar_push(request.user, 'Checklist completado ✓', 'Todo en orden. Ya puedes iniciar la ruta.')
+            enviar_push(request.user, 'Checklist completado ✓', 'Todo en orden. Ya puedes iniciar la ruta.',
+                        data={'tipo': 'checklist_completado', 'ruta_id': str(ruta.id)})
         else:
-            enviar_push(request.user, 'Checklist enviado ⚠', 'Se notificó al administrador sobre las fallas.')
+            enviar_push(request.user, 'Checklist enviado ⚠', 'Se notificó al administrador sobre las fallas.',
+                        data={'tipo': 'checklist_enviado', 'ruta_id': str(ruta.id)})
     except Exception:
         registrar_log('ERROR', 'checklist_push_fallido', request, detalle={'ruta_id': ruta.id})
 

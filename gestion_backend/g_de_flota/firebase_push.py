@@ -62,6 +62,65 @@ def _inicializar():
         logger.error(f'[Push] Error al inicializar Firebase: {e}')
 
 
+# ─── Historial de notificaciones del conductor ─────────────────────────────────
+
+# Tipos cuyo registro en el historial ya lo crea `notificar()` (con su propio
+# título/mensaje/url_accion) en el sitio donde se llama a enviar_push(). Evita
+# duplicar la notificación en el historial del conductor.
+_TIPOS_YA_REGISTRADOS = {
+    'mantencion_programada', 'mantencion_estado', 'mantencion_eliminada',
+    'mantencion_aprobada', 'solicitud_aprobada', 'solicitud_rechazada',
+    'ruta_asignada', 'ruta_iniciada', 'ruta_finalizada', 'ruta_cancelada',
+}
+
+# Mapeo tipo de push → URL a la que debe navegar la app al tocar la notificación.
+_RUTAS_POR_TIPO = {
+    'recordatorio_ruta':       lambda d: f"/rutas/{d.get('ruta_id')}",
+    'recordatorio_finalizar':  lambda d: f"/rutas/{d.get('ruta_id')}",
+    'recordatorio_vispera':    lambda d: f"/rutas/{d.get('ruta_id')}",
+    'recordatorio_checklist':  lambda d: f"/rutas/{d.get('ruta_id')}/checklist",
+    'recordatorio_documentos': lambda d: '/documentos',
+    'checklist_completado':    lambda d: f"/rutas/{d.get('ruta_id')}",
+    'checklist_enviado':       lambda d: f"/rutas/{d.get('ruta_id')}",
+}
+
+
+def _url_accion(tipo: str, data: dict) -> str:
+    armar = _RUTAS_POR_TIPO.get(tipo)
+    if not armar:
+        return ''
+    try:
+        return armar(data)
+    except Exception:
+        return ''
+
+
+def _registrar_notificacion(usuario, titulo: str, cuerpo: str, data: dict = None):
+    """Guarda la push como notificación in-app para el historial del conductor.
+
+    Se omite si el tipo ya fue registrado por notificar() en el sitio de llamada
+    (ver _TIPOS_YA_REGISTRADOS), para no duplicar la entrada en el historial.
+    Nunca lanza excepción — falla silenciosamente.
+    """
+    data = data or {}
+    tipo = data.get('tipo')
+    if not tipo or tipo in _TIPOS_YA_REGISTRADOS:
+        return
+    try:
+        from .models import Notificacion, TipoNotificacion
+        tipo_valido = tipo if tipo in TipoNotificacion.values else TipoNotificacion.ACTIVIDAD
+        Notificacion.objects.create(
+            usuario=usuario,
+            tipo=tipo_valido,
+            titulo=titulo,
+            mensaje=cuerpo,
+            url_accion=_url_accion(tipo, data),
+            extra=data,
+        )
+    except Exception as e:
+        logger.error(f'[Push] Error al registrar notificación de usuario {usuario.id}: {e}')
+
+
 # ─── API pública ───────────────────────────────────────────────────────────────
 
 def enviar_push(usuario, titulo: str, cuerpo: str, data: dict = None):
@@ -73,8 +132,12 @@ def enviar_push(usuario, titulo: str, cuerpo: str, data: dict = None):
     - cuerpo:  Cuerpo / descripción de la notificación.
     - data:    Dict de pares clave-valor que la app puede leer al abrir la notif.
 
+    Registra la notificación en el historial del conductor (salvo que ya la haya
+    registrado notificar()) y luego intenta enviarla por FCM.
     Nunca lanza excepción — falla silenciosamente.
     """
+    _registrar_notificacion(usuario, titulo, cuerpo, data)
+
     _inicializar()
     if not _firebase_ok:
         return

@@ -56,6 +56,39 @@ export function tiempoDesde(iso) {
   return `hace ${Math.floor(diff / 3600)}h`
 }
 
+/**
+ * Agrupa una lista de items por antigüedad de fecha en secciones:
+ * "Hoy", "Ayer", "Esta semana", "Este mes", "Anteriores".
+ * `obtenerFecha(item)` debe devolver un string ISO.
+ * Devuelve [{ label, items }] solo con los grupos que tienen elementos.
+ */
+export function agruparPorFecha(items, obtenerFecha) {
+  const ORDEN = ['Hoy', 'Ayer', 'Esta semana', 'Este mes', 'Anteriores']
+  const hoy  = new Date()
+  const ayer = new Date(hoy)
+  ayer.setDate(hoy.getDate() - 1)
+
+  const mismoDia = (a, b) => a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate()  === b.getDate()
+
+  const grupos = {}
+  for (const item of items) {
+    const fecha = new Date(obtenerFecha(item))
+    let label
+    if (mismoDia(fecha, hoy))       label = 'Hoy'
+    else if (mismoDia(fecha, ayer)) label = 'Ayer'
+    else {
+      const diasDiff = Math.floor((hoy - fecha) / 86400000)
+      if (diasDiff < 7)       label = 'Esta semana'
+      else if (diasDiff < 30) label = 'Este mes'
+      else                    label = 'Anteriores'
+    }
+    ;(grupos[label] ??= []).push(item)
+  }
+  return ORDEN.filter(g => grupos[g]?.length).map(label => ({ label, items: grupos[label] }))
+}
+
 /** Iniciales del nombre para el avatar: "Juan Muñoz" → "JM" */
 export function iniciales(nombre) {
   if (!nombre) return '?'
