@@ -83,9 +83,9 @@ export async function apiFetch(url, options = {}) {
   try {
     const headers = { ...(options.headers || {}) }
 
-    // Inyectar empresa_id para SUPERADMIN en endpoints de empresa
+    // Inyectar empresa_id para SUPERADMIN en endpoints de empresa (solo si no viene ya en la URL)
     const usuario = safeJsonParse(localStorage.getItem('usuario'), {})
-    if (usuario.rol === 'SUPERADMIN' && url.includes('/api/empresa/')) {
+    if (usuario.rol === 'SUPERADMIN' && url.includes('/api/empresa/') && !url.includes('empresa_id=')) {
       const empresaActiva = safeJsonParse(sessionStorage.getItem('empresaActiva'), null)
       if (empresaActiva?.id) {
         const sep = url.includes('?') ? '&' : '?'

@@ -83,7 +83,8 @@ def enviar_push(usuario, titulo: str, cuerpo: str, data: dict = None):
         prefs = getattr(usuario, 'notif_prefs', None) or {}
         token = prefs.get('push_token', '').strip()
         if not token:
-            return  # El conductor no tiene token registrado → sin push
+            logger.warning(f'[Push] Usuario {usuario.id} no tiene push_token — notificación omitida.')
+            return
 
         from firebase_admin import messaging
 
@@ -109,7 +110,7 @@ def enviar_push(usuario, titulo: str, cuerpo: str, data: dict = None):
         )
 
         response = messaging.send(message)
-        logger.debug(f'[Push] Enviada a {usuario.id} — response: {response}')
+        logger.info(f'[Push] Enviada a usuario {usuario.id} — FCM response: {response}')
 
     except Exception as e:
         logger.error(f'[Push] Error al enviar push a usuario {usuario.id}: {e}')

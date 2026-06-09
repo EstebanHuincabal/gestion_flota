@@ -2661,7 +2661,7 @@ def notificaciones_preferencias(request):
     usuario.notif_prefs = {
         'inapp':      serializer.validated_data['inapp'],
         'email':      serializer.validated_data['email'],
-        'push_token': serializer.validated_data.get('push_token', current['push_token']),
+        'push_token': current['push_token'],  # siempre preservar; el token se gestiona por /api/conductor/push-token/
     }
     usuario.save(update_fields=['notif_prefs'])
     return Response(usuario.notif_prefs)

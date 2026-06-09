@@ -75,6 +75,20 @@ async function inicializarPush() {
     const { receive } = await PushNotifications.requestPermissions()
     if (receive !== 'granted') return
 
+    // Crear el canal de notificaciones (Android 8+) — falla silenciosamente
+    try {
+      await PushNotifications.createChannel({
+        id:          'solicitudes',
+        name:        'Avisos de flota',
+        description: 'Mantenciones, rutas y solicitudes',
+        importance:  5,
+        sound:       'default',
+        vibration:   true,
+      })
+    } catch (e) {
+      console.warn('[Push] No se pudo crear el canal:', e)
+    }
+
     // Registrar para recibir el token FCM
     await PushNotifications.register()
 
@@ -87,8 +101,8 @@ async function inicializarPush() {
             method: 'POST',
             body:   JSON.stringify({ token }),
           })
-        } catch {
-          // Reintentar hasta 3 veces con backoff exponencial
+        } catch (err) {
+          console.warn('[Push] Error al registrar token (intento', intentos, '):', err)
           if (intentos < 3) {
             setTimeout(() => _enviarToken(intentos + 1), 5000 * (intentos + 1))
           }

@@ -188,7 +188,8 @@
                 <div class="flex items-center justify-center gap-1">
                   <template v-if="ruta.estado === 'pendiente'">
                     <button @click="prepararIniciar(ruta)" title="Iniciar"
-                      class="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition">
+                      :disabled="iniciandoId === ruta.id"
+                      class="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -462,9 +463,10 @@
                 <div>
                   <label class="block text-xs font-semibold text-gray-600 mb-1">Conductor</label>
                   <select v-model="form.conductor_id" @change="onConductorChange"
-                    :class="['w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 transition',
+                    :disabled="esTodas && !modoEdicion && !empresaIdForm"
+                    :class="['w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 transition disabled:opacity-50 disabled:cursor-not-allowed',
                       autoFillConductor ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200']">
-                    <option :value="null">Sin asignar</option>
+                    <option :value="null">{{ esTodas && !modoEdicion && !empresaIdForm ? 'Selecciona empresa primero' : 'Sin asignar' }}</option>
                     <option v-for="c in conductores" :key="c.id" :value="c.id">{{ c.nombre }}</option>
                   </select>
                   <p v-if="autoFillConductor" class="mt-1 text-xs text-indigo-600 flex items-center gap-1">
@@ -477,9 +479,10 @@
                 <div>
                   <label class="block text-xs font-semibold text-gray-600 mb-1">Vehículo</label>
                   <select v-model="form.vehiculo_id" @change="onVehiculoChange"
-                    :class="['w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 transition',
+                    :disabled="esTodas && !modoEdicion && !empresaIdForm"
+                    :class="['w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 transition disabled:opacity-50 disabled:cursor-not-allowed',
                       autoFillVehiculo ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200']">
-                    <option :value="null">Sin asignar</option>
+                    <option :value="null">{{ esTodas && !modoEdicion && !empresaIdForm ? 'Selecciona empresa primero' : 'Sin asignar' }}</option>
                     <option v-for="v in vehiculos" :key="v.id" :value="v.id">{{ v.patente }} — {{ v.marca }} {{ v.modelo }}</option>
                   </select>
                   <p v-if="autoFillVehiculo" class="mt-1 text-xs text-indigo-600 flex items-center gap-1">
@@ -830,6 +833,16 @@
           </div>
 
           <div class="p-5 overflow-y-auto space-y-4">
+            <!-- Empresa destino (solo SUPERADMIN en modo Todas) -->
+            <div v-if="esTodas">
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Empresa destino *</label>
+              <select v-model="empresaMasivaId"
+                class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="" disabled>— Seleccionar empresa —</option>
+                <option v-for="e in empresas.filter(e => e.id !== '__todas__')" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+              </select>
+            </div>
+
             <!-- Paso 1: plantilla -->
             <div>
               <p class="text-sm font-semibold text-gray-700 mb-1">1. Descarga la plantilla</p>
@@ -842,9 +855,12 @@
             <!-- Paso 2: archivo -->
             <div>
               <p class="text-sm font-semibold text-gray-700 mb-1">2. Completa los datos y sube el archivo</p>
-              <label class="flex items-center justify-center gap-2 w-full border-2 border-dashed border-gray-200 rounded-xl py-4 text-sm text-gray-500 cursor-pointer hover:border-indigo-300 hover:text-indigo-600 transition">
-                📂 {{ archivoNombre || 'Seleccionar archivo' }}
-                <input type="file" accept=".xlsx,.xls" class="hidden" @change="onArchivoCarga"/>
+              <label :class="['flex items-center justify-center gap-2 w-full border-2 border-dashed rounded-xl py-4 text-sm transition',
+                esTodas && !empresaMasivaId
+                  ? 'border-gray-100 text-gray-300 cursor-not-allowed'
+                  : 'border-gray-200 text-gray-500 cursor-pointer hover:border-indigo-300 hover:text-indigo-600']">
+                📂 {{ archivoNombre || (esTodas && !empresaMasivaId ? 'Selecciona una empresa primero' : 'Seleccionar archivo') }}
+                <input type="file" accept=".xlsx,.xls" class="hidden" :disabled="esTodas && !empresaMasivaId" @change="onArchivoCarga"/>
               </label>
               <p class="text-xs text-gray-400 mt-1">Acepta: .xlsx · máx 5MB · columnas: nombre, tipo, conductor_rut, fecha_programada, hora_programada, origen_direccion, destino_direccion, notas</p>
             </div>
@@ -946,7 +962,7 @@
           <div class="flex items-center justify-end gap-2 p-4 border-t border-gray-100">
             <button @click="cerrarModalCarga" :disabled="importando"
               class="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg disabled:opacity-50">Cancelar</button>
-            <button @click="importarRutas" :disabled="!filasValidas.length || importando"
+            <button @click="importarRutas" :disabled="!filasValidas.length || importando || (esTodas && !empresaMasivaId)"
               class="px-5 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">
               {{ importando ? 'Importando...' : `Importar ${filasValidas.length} ruta(s) válida(s)` }}
             </button>
@@ -958,7 +974,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { apiFetch as apiFetchBase } from '../../utils/api.js'
 import { apiFetchEmpresa as apiFetch, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import MapaRuta from './MapaRuta.vue'
@@ -1064,6 +1080,16 @@ const mapaParadasRef = ref(null)   // ref al MapaRuta del paso 2
 const errorModal     = ref('')
 const empresaIdForm  = ref('')     // empresa elegida al crear en modo "Todas"
 
+// Al seleccionar empresa en el modal (modo Todas), recargar conductores y vehículos de esa empresa
+watch(empresaIdForm, (id) => {
+  if (id && id !== '__todas__') {
+    form.value.conductor_id = null
+    form.value.vehiculo_id  = null
+    cargarConductores(id)
+    cargarVehiculos(id)
+  }
+})
+
 // ── Validación pre-vuelo ──────────────────────────────────────────────────
 const validando             = ref(false)
 const validacionResult      = ref(null)   // { errores: [], advertencias: [] }
@@ -1156,15 +1182,17 @@ async function cargarRutas() {
   }
 }
 
-async function cargarVehiculos() {
-  const res = await apiFetch('/api/empresa/vehiculos/')
+async function cargarVehiculos(empresaId = null) {
+  const url = empresaId ? `/api/empresa/vehiculos/?empresa_id=${empresaId}` : '/api/empresa/vehiculos/'
+  const res = await apiFetch(url)
   if (!res.ok) return
   const data = await res.json()
   vehiculos.value = Array.isArray(data) ? data : (data.vehiculos || data.results || [])
 }
 
-async function cargarConductores() {
-  const res = await apiFetch('/api/empresa/conductores/')
+async function cargarConductores(empresaId = null) {
+  const url = empresaId ? `/api/empresa/conductores/?empresa_id=${empresaId}` : '/api/empresa/conductores/'
+  const res = await apiFetch(url)
   if (!res.ok) return
   const data = await res.json()
   conductores.value = Array.isArray(data) ? data : (data.conductores || data.results || [])
@@ -1459,12 +1487,21 @@ function quitarParada(idx) {
 }
 
 // ── Acciones de ruta ──────────────────────────────────────────────────────
+const iniciandoId = ref(null)
+
 async function prepararIniciar(ruta) {
-  const res = await apiFetch(`/api/empresa/rutas/${ruta.id}/iniciar/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
-  })
-  if (res.ok) { await cargarRutas(); toast('exito', 'Ruta iniciada.') }
-  else { const err = await res.json(); toast('error', err.error || 'Error al iniciar la ruta.') }
+  if (iniciandoId.value) return
+  iniciandoId.value = ruta.id
+  try {
+    const res = await apiFetch(`/api/empresa/rutas/${ruta.id}/iniciar/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    })
+    await cargarRutas()
+    if (res.ok) toast('exito', 'Ruta iniciada.')
+    else { const err = await res.json(); toast('error', err.error || 'Error al iniciar la ruta.') }
+  } finally {
+    iniciandoId.value = null
+  }
 }
 
 function prepararFinalizar(ruta) {
@@ -1610,6 +1647,7 @@ function toast(tipo, mensaje) {
 // ── Inicialización ────────────────────────────────────────────────────────
 // ── Carga masiva (Excel / xlsx) ───────────────────────────────────────────────
 const modalCarga       = ref(false)
+const empresaMasivaId  = ref('')   // empresa destino en modo Todas
 const archivoNombre    = ref('')
 const filasParseadas   = ref([])
 const parseandoArchivo = ref(false)
@@ -1654,12 +1692,22 @@ async function _geocodificar(direccion) {
 
 function abrirModalCarga() {
   modalCarga.value       = true
+  empresaMasivaId.value  = ''
   archivoNombre.value    = ''
   filasParseadas.value   = []
   errorCarga.value       = ''
   progresoActual.value   = 0
   progresoTotal.value    = 0
 }
+
+watch(empresaMasivaId, (id) => {
+  if (id && id !== '__todas__') {
+    filasParseadas.value = []   // limpiar preview al cambiar empresa
+    archivoNombre.value  = ''
+    cargarConductores(id)
+    cargarVehiculos(id)
+  }
+})
 function cerrarModalCarga() {
   if (importando.value) return
   modalCarga.value = false
@@ -1810,14 +1858,16 @@ async function onArchivoCarga(e) {
         const cond  = conductores.value.find(c => _normRut(c.rut) === _normRut(f.conductor_rut))
         const veh   = cond?.vehiculo?.id ? vehiculos.value.find(v => v.patente === cond.vehiculo.patente) : null
         try {
-          const res = await apiFetch('/api/empresa/rutas/validar/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const validarBody = {
               conductor_id:     cond?.id || null,
               vehiculo_id:      veh?.id || null,
               fecha_programada: f.fecha_programada,
-            }),
+            }
+          if (esTodas.value && empresaMasivaId.value) validarBody.empresa_id = empresaMasivaId.value
+          const res = await apiFetch('/api/empresa/rutas/validar/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(validarBody),
           })
           if (res.ok) {
             const data = await res.json()
@@ -1877,10 +1927,7 @@ async function importarRutas() {
       if (cond?.vehiculo?.patente) patente = cond.vehiculo.patente
     }
     try {
-      const res = await apiFetch('/api/empresa/rutas/', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
+      const payload = {
           nombre:           ruta.nombre,
           tipo:             ruta.tipo,
           vehiculo_patente: patente,
@@ -1892,7 +1939,12 @@ async function importarRutas() {
             { tipo: 'origen',  orden: 1, nombre: ruta.origen_nombre,  lat: ruta.origen_lat,  lng: ruta.origen_lng },
             { tipo: 'destino', orden: 2, nombre: ruta.destino_nombre, lat: ruta.destino_lat, lng: ruta.destino_lng },
           ],
-        }),
+        }
+      if (esTodas.value && empresaMasivaId.value) payload.empresa_id = empresaMasivaId.value
+      const res = await apiFetch('/api/empresa/rutas/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
       })
       if (res.ok) {
         exitosas++
