@@ -5,6 +5,8 @@ import { tienePermiso } from '../../../utils/permisos.js'
 import { getEmpresaActiva, useEmpresaNav, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 import SelectorEmpresa from '../../../components/SelectorEmpresa.vue'
+import { usePaginacion } from '../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../components/PaginacionTabla.vue'
 
 const { ruta } = useEmpresaNav()
 
@@ -246,6 +248,9 @@ const modalAsignar = ref(false)
 const asignarId    = ref(null)
 const vehiculoSel  = ref('')
 
+const dispositivosFiltrados = computed(() => dispositivos.value)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(dispositivosFiltrados, 20)
+
 const vehiculosLibres = computed(() => {
   // Vehículos sin dispositivo_gps asignado. La lista de vehículos no trae ese
   // dato directo, así que excluimos los que ya aparecen asignados a un dispositivo.
@@ -377,7 +382,7 @@ async function desasignar() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="d in dispositivos" :key="d.id" class="border-b border-gray-50 hover:bg-gray-50/60">
+            <tr v-for="d in paginado" :key="d.id" class="border-b border-gray-50 hover:bg-gray-50/60">
               <td v-if="esTodas" class="px-4 py-3 text-gray-700 font-medium">{{ d.empresa_nombre || '—' }}</td>
               <td class="px-4 py-3 font-mono text-gray-700">{{ d.imei }}</td>
               <td class="px-4 py-3 text-gray-600">{{ d.modelo_display }}</td>
@@ -413,6 +418,13 @@ async function desasignar() {
             </tr>
           </tbody>
         </table>
+        <PaginacionTabla
+          :pagina="pagina"
+          :total-paginas="totalPaginas"
+          :total="total"
+          :por-pagina="20"
+          @update:pagina="irA"
+        />
       </div>
     </div>
 

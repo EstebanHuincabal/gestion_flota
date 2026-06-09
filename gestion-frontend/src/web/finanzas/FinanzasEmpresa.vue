@@ -5,6 +5,8 @@ import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
 import { tienePermiso } from '../../utils/permisos.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
+import { usePaginacion } from '../../composables/usePaginacion.js'
+import PaginacionTabla from '../../components/PaginacionTabla.vue'
 import { Chart, registerables } from 'chart.js'
 Chart.register(...registerables)
 
@@ -110,6 +112,9 @@ const gastosPorVehiculo = computed(() => {
   const vid = parseInt(vehiculoFiltro.value)
   return gastos.value.filter(g => g.vehiculo_id === vid)
 })
+
+const { pagina: paginaGastos, totalPaginas: totalPaginasGastos, total: totalGastos, paginado: gastosFiltradosPaginados, irA: irAPaginaGastos } = usePaginacion(gastosFiltrados, 20)
+const { pagina: paginaGastosVeh, totalPaginas: totalPaginasGastosVeh, total: totalGastosVeh, paginado: gastosPorVehiculoPaginados, irA: irAPaginaGastosVeh } = usePaginacion(gastosPorVehiculo, 20)
 
 const breakdownVehiculo = computed(() => {
   const cats = {}
@@ -765,7 +770,7 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
               <tr><th>Fecha</th><th>Vehículo</th><th>Descripción</th><th>Conductor</th><th>Monto</th><th>Comp.</th><th></th></tr>
             </thead>
             <tbody>
-              <tr v-for="g in gastosFiltrados" :key="g.id">
+              <tr v-for="g in gastosFiltradosPaginados" :key="g.id">
                 <td>{{ fechaDisplay(g.fecha) }}</td>
                 <td>{{ g.vehiculo || '—' }}</td>
                 <td class="td-desc">{{ g.descripcion }}</td>
@@ -798,6 +803,8 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
               </tr>
             </tfoot>
           </table>
+          <PaginacionTabla :pagina="paginaGastos" :total-paginas="totalPaginasGastos" :total="totalGastos"
+            @update:pagina="irAPaginaGastos" />
         </div>
       </div>
 
@@ -838,18 +845,22 @@ const porConductor = computed(() => resumen.value?.por_conductor || [])
             </div>
 
             <div v-if="!gastosPorVehiculo.length" class="card-body"><p class="empty-msg">Sin gastos para este vehículo en el período.</p></div>
-            <table v-else class="tabla">
-              <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Conductor</th><th>Monto</th></tr></thead>
-              <tbody>
-                <tr v-for="g in gastosPorVehiculo" :key="g.id">
-                  <td>{{ fechaDisplay(g.fecha) }}</td>
-                  <td><span class="badge-cat" :style="{ background: colorCat(g.categoria) + '22', color: colorCat(g.categoria) }">{{ labelCat(g.categoria) }}</span></td>
-                  <td class="td-desc">{{ g.descripcion }}</td>
-                  <td>{{ g.conductor || '—' }}</td>
-                  <td class="font-medium">{{ clp(g.monto) }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <template v-else>
+              <table class="tabla">
+                <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Conductor</th><th>Monto</th></tr></thead>
+                <tbody>
+                  <tr v-for="g in gastosPorVehiculoPaginados" :key="g.id">
+                    <td>{{ fechaDisplay(g.fecha) }}</td>
+                    <td><span class="badge-cat" :style="{ background: colorCat(g.categoria) + '22', color: colorCat(g.categoria) }">{{ labelCat(g.categoria) }}</span></td>
+                    <td class="td-desc">{{ g.descripcion }}</td>
+                    <td>{{ g.conductor || '—' }}</td>
+                    <td class="font-medium">{{ clp(g.monto) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <PaginacionTabla :pagina="paginaGastosVeh" :total-paginas="totalPaginasGastosVeh" :total="totalGastosVeh"
+                @update:pagina="irAPaginaGastosVeh" />
+            </template>
           </template>
         </div>
       </div>

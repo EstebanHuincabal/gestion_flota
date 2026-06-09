@@ -11,6 +11,8 @@ import { apiFetchEmpresa, getEmpresaActiva, EMPRESA_TODAS } from '../../utils/em
 import { useToast } from '../../utils/useToast.js'
 import { tienePermiso } from '../../utils/permisos.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
+import { usePaginacion } from '../../composables/usePaginacion.js'
+import PaginacionTabla from '../../components/PaginacionTabla.vue'
 
 const props = defineProps({
   mes:  { type: Number, required: true },
@@ -88,6 +90,8 @@ const maxVehiculo = computed(() => {
   const pv = resumen.value?.por_vehiculo || []
   return Math.max(1, ...pv.flatMap(v => [v.total_correctivo, v.total_normal]))
 })
+
+const { pagina: paginaGastos, totalPaginas: totalPaginasGastos, total: totalGastos, paginado: gastosPaginados, irA: irAPaginaGastos } = usePaginacion(gastos, 20)
 
 // ── Carga ───────────────────────────────────────────────────────────────────────
 async function cargar() {
@@ -340,7 +344,7 @@ async function eliminar() {
               <tr><th v-if="esTodas">Empresa</th><th>Fecha</th><th>Vehículo</th><th>Categoría</th><th>Descripción</th><th>Prioridad</th><th class="r">Monto</th><th>Comp.</th></tr>
             </thead>
             <tbody>
-              <tr v-for="g in gastos" :key="g.id" class="fila" @click="abrirDetalle(g)">
+              <tr v-for="g in gastosPaginados" :key="g.id" class="fila" @click="abrirDetalle(g)">
                 <td v-if="esTodas" class="mono">{{ g.empresa_nombre || '—' }}</td>
                 <td>{{ fmtFecha(g.fecha) }}</td>
                 <td>
@@ -358,6 +362,8 @@ async function eliminar() {
               </tr>
             </tbody>
           </table>
+          <PaginacionTabla :pagina="paginaGastos" :total-paginas="totalPaginasGastos" :total="totalGastos"
+            @update:pagina="irAPaginaGastos" />
         </div>
       </div>
 

@@ -5,6 +5,8 @@ import { apiFetch } from '../../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../../utils/permisos.js'
 import { useToast } from '../../../../utils/useToast.js'
+import { usePaginacion } from '../../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../../components/PaginacionTabla.vue'
 
 const router = useRouter()
 const { ruta } = useEmpresaNav()
@@ -61,6 +63,8 @@ const historialFiltrado = computed(() =>
       return m.fecha_realizada?.startsWith(filtroMes.value)
     })
 )
+
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(historialFiltrado, 20)
 
 const costoFiltrado = computed(() =>
   historialFiltrado.value.reduce((acc, m) => acc + Number(m.costo), 0)
@@ -198,7 +202,7 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargar()]) })
             </tr>
           </thead>
           <tbody>
-            <tr v-for="m in historialFiltrado" :key="m.id">
+            <tr v-for="m in paginado" :key="m.id">
               <td v-if="esTodas" class="font-medium">{{ m.empresa_nombre || '—' }}</td>
               <td>
                 <strong>{{ m.vehiculo_patente }}</strong>
@@ -237,6 +241,13 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargar()]) })
             </tr>
           </tbody>
         </table>
+        <PaginacionTabla
+          :pagina="pagina"
+          :total-paginas="totalPaginas"
+          :total="total"
+          :por-pagina="20"
+          @update:pagina="irA"
+        />
 
         <!-- Totales del filtro -->
         <div v-if="historialFiltrado.length" class="tabla-footer">

@@ -1249,6 +1249,12 @@ de rutas prioriza `request.data['empresa_id']` sobre el query param.
 de cada módulo. Los `v-if="!esTodas"` sobre botones de acción fueron eliminados; los
 formularios de creación muestran un `<select>` de empresa cuando `esTodas`.
 
+> **Nota — `apiFetch` y `empresa_id` explícito:** `api.js` solo agrega
+> `?empresa_id=<empresaActiva>` cuando la URL **no** trae ya `empresa_id=` (p. ej. cuando
+> un módulo arma la URL con `empresa_id` propio para cargar conductores/vehículos de una
+> empresa específica). Antes esto se duplicaba (`?empresa_id=2&empresa_id=__todas__`) y
+> Django tomaba el último valor (`__todas__`), devolviendo datos de todas las empresas.
+
 ---
 
 ## 10. Referencia de la API REST

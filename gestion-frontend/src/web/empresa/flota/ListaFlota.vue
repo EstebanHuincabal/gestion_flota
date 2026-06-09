@@ -6,6 +6,8 @@ import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, con
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 import { useToast } from '../../../utils/useToast.js'
+import { usePaginacion } from '../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../components/PaginacionTabla.vue'
 
 const router   = useRouter()
 const { ruta } = useEmpresaNav()
@@ -28,6 +30,9 @@ const toast        = useToast()
 const confirm      = ref({ visible: false, item: null, tipo: '' })
 
 const COMBUSTIBLE_LABEL = { bencina: 'Bencina', diesel: 'Diésel', electrico: 'Eléctrico', hibrido: 'Híbrido' }
+
+const vehiculosFiltrados = computed(() => vehiculos.value)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(vehiculosFiltrados, 20)
 
 // ── Selector de empresa (SUPERADMIN — actúa como filtro) ─
 const empresas         = ref([])
@@ -371,7 +376,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="v in vehiculos" :key="v.id" :class="{ inactivo: !v.activo }">
+          <tr v-for="v in paginado" :key="v.id" :class="{ inactivo: !v.activo }">
             <td v-if="esTodas" class="td-empresa">{{ v.empresa_nombre || '—' }}</td>
             <td class="td-patente">
               <div class="patente-cell">
@@ -438,6 +443,13 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+      <PaginacionTabla
+        :pagina="pagina"
+        :total-paginas="totalPaginas"
+        :total="total"
+        :por-pagina="20"
+        @update:pagina="irA"
+      />
     </div>
 
     <!-- ── Modal asignar conductor ── -->

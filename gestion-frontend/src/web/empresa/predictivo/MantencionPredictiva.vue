@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { useToast } from '../../../utils/useToast.js'
+import { usePaginacion } from '../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../components/PaginacionTabla.vue'
 
 const router = useRouter()
 const { ruta } = useEmpresaNav()
@@ -214,6 +216,8 @@ const asignaciones    = ref([])
 const cargandoAsig    = ref(false)
 const vehiculos       = ref([])
 const guardandoAsig   = ref(false)
+
+const { pagina: paginaAsig, totalPaginas: totalPaginasAsig, total: totalAsig, paginado: paginadoAsig, irA: irAAsig } = usePaginacion(asignaciones, 20)
 
 // Nuevo flujo: seleccionar plan → checkboxes de vehículos
 const asigPlanId      = ref('')
@@ -747,7 +751,7 @@ onUnmounted(() => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="asig in asignaciones" :key="asig.id">
+                  <tr v-for="asig in paginadoAsig" :key="asig.id">
                     <td class="font-med">{{ asig.vehiculo_patente }}</td>
                     <td>{{ asig.plan_nombre }}</td>
                     <td>
@@ -765,6 +769,13 @@ onUnmounted(() => {
                   </tr>
                 </tbody>
               </table>
+              <PaginacionTabla
+                :pagina="paginaAsig"
+                :total-paginas="totalPaginasAsig"
+                :total="totalAsig"
+                :por-pagina="20"
+                @update:pagina="irAAsig"
+              />
             </div>
             <div v-else class="card list-card">
               <div class="empty-msg">Aún no hay asignaciones.</div>

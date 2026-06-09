@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 import { useToast } from '../../utils/useToast.js'
+import { usePaginacion } from '../../composables/usePaginacion.js'
+import PaginacionTabla from '../../components/PaginacionTabla.vue'
 const router = useRouter()
 const usuarios = ref([])
 const empresas = ref([])
@@ -18,6 +20,9 @@ const filtros = ref({ q: '', empresa_id: '', rol: '', estado: '' })
 const historialModal = ref({ visible: false, items: [], usuario: null })
 
 const yo = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
+
+const usuariosFiltrados = computed(() => usuarios.value)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(usuariosFiltrados, 20)
 
 const ROL_LABEL = { SUPERADMIN: 'Super Admin', ADMIN: 'Administrador', CONDUCTOR: 'Conductor' }
 const ROL_CLASS = { SUPERADMIN: 'badge-superadmin', ADMIN: 'badge-admin', CONDUCTOR: 'badge-conductor' }
@@ -286,7 +291,7 @@ onUnmounted(() => {
           <tr v-if="usuarios.length === 0">
             <td colspan="7" class="empty-row">No hay usuarios registrados que coincidan con los filtros.</td>
           </tr>
-          <tr v-for="u in usuarios" :key="u.id" :class="{ inactivo: !u.is_active || u.is_blocked }">
+          <tr v-for="u in paginado" :key="u.id" :class="{ inactivo: !u.is_active || u.is_blocked }">
             <td class="td-nombre">
               <div class="flex items-center gap-2">
                 {{ u.nombre }}
@@ -350,6 +355,13 @@ onUnmounted(() => {
           </tr>
         </tbody>
       </table>
+      <PaginacionTabla
+        :pagina="pagina"
+        :total-paginas="totalPaginas"
+        :total="total"
+        :por-pagina="20"
+        @update:pagina="irA"
+      />
     </div>
 
     <!-- Modal Historial -->

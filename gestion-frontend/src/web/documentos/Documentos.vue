@@ -3,6 +3,8 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import { useToast } from '../../utils/useToast.js'
+import { usePaginacion } from '../../composables/usePaginacion.js'
+import PaginacionTabla from '../../components/PaginacionTabla.vue'
 
 const toast = useToast()
 
@@ -140,6 +142,8 @@ const docsFiltrados = computed(() => {
   }
   return list
 })
+
+const { pagina: paginaDocs, totalPaginas: totalPaginasDocs, total: totalDocs, paginado: docsPaginados, irA: irAPaginaDocs } = usePaginacion(docsFiltrados, 20)
 
 // ── Carga
 async function cargar() {
@@ -647,7 +651,7 @@ onMounted(async () => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="doc in docsFiltrados" :key="doc.id">
+              <tr v-for="doc in docsPaginados" :key="doc.id">
                 <td v-if="esTodas" class="font-medium">{{ doc.empresa_nombre || '—' }}</td>
                 <td>
                   <span class="badge" :style="doc.entidad === 'vehiculo'
@@ -699,6 +703,8 @@ onMounted(async () => {
               </tr>
             </tbody>
           </table>
+          <PaginacionTabla :pagina="paginaDocs" :total-paginas="totalPaginasDocs" :total="totalDocs"
+            @update:pagina="irAPaginaDocs" />
         </div>
       </div>
     </template>

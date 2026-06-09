@@ -142,7 +142,7 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr v-for="ruta in rutasFiltradas" :key="ruta.id"
+            <tr v-for="ruta in paginado" :key="ruta.id"
               @click="abrirPanel(ruta)"
               class="hover:bg-indigo-50/30 cursor-pointer transition group">
               <td v-if="esTodas" class="px-4 py-3 font-medium text-gray-700">{{ ruta.empresa_nombre || '—' }}</td>
@@ -234,6 +234,13 @@
             </tr>
           </tbody>
         </table>
+        <PaginacionTabla
+          :pagina="pagina"
+          :total-paginas="totalPaginas"
+          :total="total"
+          :por-pagina="20"
+          @update:pagina="irA"
+        />
       </div>
     </div>
 
@@ -979,6 +986,8 @@ import { apiFetch as apiFetchBase } from '../../utils/api.js'
 import { apiFetchEmpresa as apiFetch, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import MapaRuta from './MapaRuta.vue'
 import { validarRut } from '../../utils/validators.js'
+import { usePaginacion } from '../../composables/usePaginacion.js'
+import PaginacionTabla from '../../components/PaginacionTabla.vue'
 
 // ── Estado principal ──────────────────────────────────────────────────────
 const rutas       = ref([])
@@ -1126,6 +1135,8 @@ const motivoCancelar = ref('')
 const rutasFiltradas = computed(() =>
   tabActivo.value === 'todas' ? rutas.value : rutas.value.filter(r => r.estado === tabActivo.value)
 )
+
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(rutasFiltradas, 20)
 
 // ── Autocompletado conductor ↔ vehículo ───────────────────────────────────
 const autoFillConductor = ref(false)

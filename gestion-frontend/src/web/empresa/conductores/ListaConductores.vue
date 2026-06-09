@@ -6,6 +6,8 @@ import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, con
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 import { useToast } from '../../../utils/useToast.js'
+import { usePaginacion } from '../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../components/PaginacionTabla.vue'
 
 const router     = useRouter()
 const { ruta }   = useEmpresaNav()
@@ -49,6 +51,9 @@ const conductores = ref([])
 const vehiculos   = ref([])
 const cargando    = ref(true)
 const sinEmpresa  = ref(false)
+
+const conductoresFiltrados = computed(() => conductores.value)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(conductoresFiltrados, 20)
 
 const confirmState = ref({ visible: false, accion: null, conductor: null })
 const toast = useToast()
@@ -297,7 +302,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="c in conductores" :key="c.id" :class="{ inactivo: !c.is_active }">
+          <tr v-for="c in paginado" :key="c.id" :class="{ inactivo: !c.is_active }">
             <td>
               <div class="conductor-info">
                 <div class="avatar">{{ (c.nombre || 'C')[0].toUpperCase() }}</div>
@@ -361,6 +366,13 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+      <PaginacionTabla
+        :pagina="pagina"
+        :total-paginas="totalPaginas"
+        :total="total"
+        :por-pagina="20"
+        @update:pagina="irA"
+      />
     </div>
 
     <!-- Modal asignar vehículo -->

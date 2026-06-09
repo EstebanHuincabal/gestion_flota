@@ -182,13 +182,13 @@ export function soloTexto(valor) {
 }
 
 // ── Número de licencia de conducir (Chile) ────────────────────────────────────
-// Formato: 3 letras + 10 dígitos. Ej: ABC1234567890, MTT0001234567.
+// Formatos válidos: ABC1234567890 / AB1234567890 / A1234567890 / 1234567890
 // Debe coincidir con la validación del backend (views_conductor.py).
 export function validarLicencia(valor) {
   const v = (valor || '').trim().toUpperCase()
   if (!v) return { valido: false, error: 'Ingresa tu número de licencia.' }
-  if (!/^[A-Z]{3}\d{10}$/.test(v)) {
-    return { valido: false, error: 'Formato inválido. Debe ser 3 letras y 10 dígitos. Ej: ABC1234567890.' }
+  if (!/^[A-Z]{0,3}\d{10}$/.test(v)) {
+    return { valido: false, error: 'Formato inválido. Ej: ABC1234567890 / AB1234567890 / A1234567890 / 1234567890.' }
   }
   return { valido: true, error: '' }
 }

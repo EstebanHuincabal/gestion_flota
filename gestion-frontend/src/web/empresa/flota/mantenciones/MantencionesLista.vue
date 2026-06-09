@@ -6,6 +6,8 @@ import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, con
 import { tienePermiso } from '../../../../utils/permisos.js'
 import { useToast } from '../../../../utils/useToast.js'
 import ConfirmModal from '../../../../components/ConfirmModal.vue'
+import { usePaginacion } from '../../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../../components/PaginacionTabla.vue'
 
 const router    = useRouter()
 const { ruta }  = useEmpresaNav()
@@ -74,6 +76,8 @@ const mantencionesFiltradas = computed(() =>
     })
     .filter(m => !filtroVehiculo.value || String(m.vehiculo_id) === filtroVehiculo.value)
 )
+
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(mantencionesFiltradas, 20)
 
 const cargar = async () => {
   if (sinEmpresa.value) { cargando.value = false; return }
@@ -343,7 +347,7 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="m in mantencionesFiltradas" :key="m.id">
+            <tr v-for="m in paginado" :key="m.id">
               <td v-if="esTodas" class="font-medium">{{ m.empresa_nombre || '—' }}</td>
               <td>
                 <strong>{{ m.vehiculo_patente }}</strong>
@@ -437,6 +441,13 @@ onMounted(async () => {
             </tr>
           </tbody>
         </table>
+        <PaginacionTabla
+          :pagina="pagina"
+          :total-paginas="totalPaginas"
+          :total="total"
+          :por-pagina="20"
+          @update:pagina="irA"
+        />
       </div>
     </template>
 
