@@ -41,15 +41,35 @@ def _nombre_traccar(dispositivo):
 
 # ── Helpers locales (evitan import circular con views.py) ─────────────────────
 
+# Centinela de la opción "Todas las empresas" del SelectorEmpresa (frontend).
+# Debe coincidir con EMPRESA_TODAS de empresaActiva.js.
+EMPRESA_TODAS = '__todas__'
+
+
+def _empresa_id_param(request):
+    # El body tiene prioridad cuando trae un empresa_id concreto (flujo "Todas" + crear).
+    body_id = request.data.get('empresa_id')
+    if body_id and body_id != EMPRESA_TODAS:
+        return body_id
+    return request.query_params.get('empresa_id') or body_id
+
+
+def _es_todas(request):
+    """True si el SUPERADMIN pidió ver todas las empresas a la vez (solo lectura)."""
+    return request.user.rol == Rol.SUPERADMIN and _empresa_id_param(request) == EMPRESA_TODAS
+
+
 def _get_empresa(request):
     """Empresa del USUARIO, o la indicada por ?empresa_id= para SUPERADMIN.
 
-    Devuelve None si no se puede determinar (el caller responde el error).
+    Devuelve None si no se puede determinar (el caller responde el error). El
+    centinela "__todas__" se trata como sin empresa concreta: las escrituras
+    quedan bloqueadas (no se puede crear sin saber a qué empresa pertenece).
     """
     user = request.user
     if user.rol == Rol.SUPERADMIN:
-        eid = request.query_params.get('empresa_id') or request.data.get('empresa_id')
-        if not eid:
+        eid = _empresa_id_param(request)
+        if not eid or eid == EMPRESA_TODAS:
             return None
         return Empresa.objects.filter(pk=eid).first()
     if not user.empresa_id:
@@ -95,10 +115,14 @@ def _validar_modelo_otro(modelo, modelo_otro):
     return '', None
 
 
-def _serializar_dispositivo(d):
-    """Dict de un DispositivoGPS para las respuestas de lista/detalle."""
+def _serializar_dispositivo(d, con_empresa=False):
+    """Dict de un DispositivoGPS para las respuestas de lista/detalle.
+
+    `con_empresa` agrega el nombre de la empresa, usado por el SUPERADMIN en el
+    modo "Todas las empresas" para distinguir el origen de cada fila.
+    """
     veh = d.vehiculo
-    return {
+    data = {
         'id':               d.id,
         'imei':             d.imei,
         'modelo':           d.modelo,
@@ -111,6 +135,10 @@ def _serializar_dispositivo(d):
         'tiene_clave':      bool(d.api_key),   # nunca se expone el valor en la lista
         'creado_at':        d.creado_at.isoformat(),
     }
+    if con_empresa:
+        data['empresa_id']     = d.empresa_id
+        data['empresa_nombre'] = d.empresa.nombre if d.empresa_id else None
+    return data
 
 
 def _broadcast_posicion(empresa_id, payload):
@@ -293,24 +321,24 @@ class DispositivosListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        empresa = _get_empresa(request)
-        if not empresa:
+        todas = _es_todas(request)
+        empresa = None if todas else _get_empresa(request)
+        if not todas and not empresa:
             return error_response('Empresa no identificada.', 'VALIDACION', 400)
         if not _tiene_permiso(request.user, 'gps.ver'):
             return error_response('Sin permiso para ver GPS.', 'SIN_PERMISO', 403)
 
-        dispositivos = (
-            DispositivoGPS.objects
-            .filter(empresa=empresa)
-            .select_related('vehiculo')
-        )
-        data = [_serializar_dispositivo(d) for d in dispositivos]
+        dispositivos = DispositivoGPS.objects.select_related('vehiculo', 'empresa')
+        if not todas:
+            dispositivos = dispositivos.filter(empresa=empresa)
+        data = [_serializar_dispositivo(d, con_empresa=todas) for d in dispositivos]
         return Response({'dispositivos': data, 'total': len(data)})
 
     def post(self, request):
+        # En modo "Todas" el empresa_id concreto viene en el body del POST.
         empresa = _get_empresa(request)
         if not empresa:
-            return error_response('Empresa no identificada.', 'VALIDACION', 400)
+            return error_response('Selecciona una empresa concreta para registrar el dispositivo.', 'VALIDACION', 400)
         if not _tiene_permiso(request.user, 'gps.gestionar'):
             return error_response('Sin permiso para gestionar GPS.', 'SIN_PERMISO', 403)
 
@@ -738,8 +766,9 @@ class UltimasPosicionesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        empresa = _get_empresa(request)
-        if not empresa:
+        todas = _es_todas(request)
+        empresa = None if todas else _get_empresa(request)
+        if not todas and not empresa:
             return error_response('Empresa no identificada.', 'VALIDACION', 400)
         if not _tiene_permiso(request.user, 'gps.ver'):
             return error_response('Sin permiso para ver GPS.', 'SIN_PERMISO', 403)
@@ -747,9 +776,11 @@ class UltimasPosicionesView(APIView):
         ahora = timezone.now()
         dispositivos = (
             DispositivoGPS.objects
-            .filter(empresa=empresa, activo=True, vehiculo__isnull=False)
+            .filter(activo=True, vehiculo__isnull=False)
             .select_related('vehiculo', 'vehiculo__empresa')
         )
+        if not todas:
+            dispositivos = dispositivos.filter(empresa=empresa)
 
         vehiculos = []
         for d in dispositivos:
@@ -777,6 +808,9 @@ class UltimasPosicionesView(APIView):
                 'patente':          veh.patente,
                 'marca':            veh.marca,
                 'modelo':           veh.modelo,
+                # En modo "Todas" el mapa muestra de qué empresa es cada vehículo.
+                'empresa_id':       veh.empresa_id,
+                'empresa_nombre':   veh.empresa.nombre if veh.empresa_id else None,
                 'latitud':          ult.latitud,
                 'longitud':         ult.longitud,
                 'velocidad':        round(ult.velocidad or 0, 1),

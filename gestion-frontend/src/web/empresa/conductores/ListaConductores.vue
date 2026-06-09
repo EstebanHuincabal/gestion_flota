@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 import { useToast } from '../../../utils/useToast.js'
@@ -17,6 +17,8 @@ const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 const empresas         = ref([])
 const empresaActiva    = ref(getEmpresaActiva())
 const cargandoEmpresas = ref(false)
+// Modo "Todas las empresas": vista de solo lectura (se ocultan acciones de escritura).
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 const mostrarDropdown  = ref(false)
 const busqueda         = ref('')
 
@@ -31,7 +33,7 @@ const cargarEmpresas = async () => {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } finally { cargandoEmpresas.value = false }
 }
 

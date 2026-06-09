@@ -64,15 +64,28 @@ def _aviso_dict(aviso):
 # Admin: bandeja + envío
 # ─────────────────────────────────────────
 
+EMPRESA_TODAS = '__todas__'
+
+
+def _es_todas(request):
+    """True si el SUPERADMIN pidió ver "Todas las empresas" (solo lectura)."""
+    return request.user.rol == Rol.SUPERADMIN \
+        and (request.query_params.get('empresa_id') or request.data.get('empresa_id')) == EMPRESA_TODAS
+
+
 def _resolver_empresa(request):
-    """Devuelve la empresa a operar: la propia del USUARIO o la indicada por SUPERADMIN."""
+    """Devuelve la empresa a operar: la propia del USUARIO o la indicada por SUPERADMIN.
+
+    El centinela "__todas__" se trata como "sin empresa concreta" (None) para no
+    castear un pk inválido (evita el 500) y bloquear las escrituras.
+    """
     if request.user.rol == Rol.SUPERADMIN:
         eid = request.query_params.get('empresa_id') or request.data.get('empresa_id')
-        if not eid:
+        if not eid or eid == EMPRESA_TODAS:
             return None
         try:
             return Empresa.objects.get(pk=eid)
-        except Empresa.DoesNotExist:
+        except (Empresa.DoesNotExist, ValueError, TypeError):
             return None
     return request.user.empresa
 
@@ -83,13 +96,17 @@ def empresa_avisos(request):
     if not _tiene_permiso(request.user, 'avisos.ver'):
         return Response({'error': 'Sin permisos.'}, status=status.HTTP_403_FORBIDDEN)
 
-    empresa = _resolver_empresa(request)
-    if not empresa:
-        return Response({'error': 'Sin empresa.'}, status=status.HTTP_400_BAD_REQUEST)
+    # Modo "Todas las empresas" (SUPERADMIN, solo lectura): bandeja sin filtro.
+    todas = _es_todas(request) and request.method == 'GET'
+    empresa = None if todas else _resolver_empresa(request)
 
     # ── GET: bandeja ─────────────────────────────────────────────────────────
     if request.method == 'GET':
-        avisos = Aviso.objects.filter(empresa=empresa).select_related('emisor', 'destinatario')
+        if not todas and not empresa:
+            return Response({'error': 'Sin empresa.'}, status=status.HTTP_400_BAD_REQUEST)
+        avisos = Aviso.objects.select_related('emisor', 'destinatario', 'empresa')
+        if not todas:
+            avisos = avisos.filter(empresa=empresa)
         return Response([_aviso_dict(a) for a in avisos])
 
     # ── POST: enviar ──────────────────────────────────────────────────────────
@@ -139,6 +156,12 @@ def empresa_avisos(request):
         return Response({'enviado': True, 'empresas': enviados}, status=status.HTTP_201_CREATED)
 
     # ── Envío normal (una empresa) ────────────────────────────────────────────
+    # Los envíos dirigidos exigen una empresa concreta (no aplica "Todas").
+    if not empresa:
+        return Response(
+            {'error': 'Selecciona una empresa para enviar este aviso.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     destinatario = None
     if destino == Aviso.DESTINO_CONDUCTOR:
         cid = request.data.get('destinatario_id')

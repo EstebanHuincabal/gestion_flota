@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../../utils/empresaActiva.js'
 import { useToast } from '../../../../utils/useToast.js'
 
 const router = useRouter()
@@ -23,6 +23,8 @@ const cargandoEmpresas = ref(false)
 const mostrarDropdown  = ref(false)
 const busqueda         = ref('')
 const sinEmpresa       = computed(() => esSuperadmin && !empresaActiva.value)
+// Modo "Todas las empresas": solo lectura.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 
 const empresasFiltradas = computed(() => {
   if (!busqueda.value.trim()) return empresas.value
@@ -35,7 +37,7 @@ const cargarEmpresas = async () => {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } finally {
     cargandoEmpresas.value = false
   }
@@ -231,12 +233,13 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargarMes()]) })
             </button>
           </div>
           <div class="panel-lista">
-            <div v-for="ev in diaSelected.eventos" :key="ev.id" class="panel-item" @click="irEditar(ev.id)">
+            <div v-for="ev in diaSelected.eventos" :key="ev.id" class="panel-item" @click="!esTodas && irEditar(ev.id)">
               <div class="panel-item-top">
                 <span :class="['badge', badgeClasePanel(ev.estado)]">{{ ev.estado_display }}</span>
                 <span class="panel-patente">{{ ev.vehiculo_patente }}</span>
               </div>
               <p class="panel-tipo">{{ ev.tipo_mantencion }}</p>
+              <p v-if="esTodas && ev.empresa_nombre" class="panel-tipo" style="color:#4F46E5;font-weight:600">{{ ev.empresa_nombre }}</p>
             </div>
           </div>
         </div>

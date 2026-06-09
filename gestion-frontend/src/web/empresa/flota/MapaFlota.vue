@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { apiFetch, safeJsonParse } from '../../../utils/api.js'
-import { getEmpresaActiva, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { getEmpresaActiva, useEmpresaNav, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import SelectorEmpresa from '../../../components/SelectorEmpresa.vue'
 
 const { ruta } = useEmpresaNav()
@@ -18,6 +18,11 @@ const esSuperadmin = computed(() => {
 })
 const empresaActiva = ref(getEmpresaActiva())
 const sinEmpresa = computed(() => esSuperadmin.value && !empresaActiva.value)
+// Modo "Todas las empresas": el WebSocket es por empresa (canal gps_{id}), así que
+// no aplica aquí; se usa una actualización periódica (polling) de las posiciones.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
+let pollTimer = null
+const POLL_TODAS_MS = 20000
 
 let mapa       = null
 const marcadores = {}                  // vehiculo_id → L.marker
@@ -187,7 +192,10 @@ function tiempoRelativo(iso) {
 function popupHtml(v) {
   const nombre   = [v.marca, v.modelo].filter(Boolean).join(' ')
   const conductor = v.tiene_conductor ? (v.conductor_nombre || 'Asignado') : 'Sin conductor'
+  const empresaLinea = (esTodas.value && v.empresa_nombre)
+    ? `<span style="color:#0369A1;font-size:12px;font-weight:600">${v.empresa_nombre}</span><br>` : ''
   return `<div style="min-width:160px">
+    ${empresaLinea}
     <strong>${v.patente}</strong>${nombre ? ' — ' + nombre : ''}<br>
     <span style="color:#6B7280;font-size:12px">
       Velocidad: ${Math.round(v.velocidad || 0)} km/h<br>
@@ -261,8 +269,20 @@ function empresaIdActual() {
   return usuario.empresa_id || null
 }
 
+// En modo "Todas" no hay canal WebSocket único; refrescamos por polling.
+function iniciarPolling() {
+  clearInterval(pollTimer)
+  pollTimer = setInterval(() => cargarPosiciones(false), POLL_TODAS_MS)
+}
+
+// Activa el flujo en vivo adecuado según el modo (WebSocket por empresa o polling).
+function iniciarTiempoReal() {
+  if (esTodas.value) { iniciarPolling(); return }
+  conectarWS()
+}
+
 function conectarWS() {
-  if (desmontado) return
+  if (desmontado || esTodas.value) return
   const empresaId = empresaIdActual()
   const token     = localStorage.getItem('access_token')
   if (!empresaId || !token) return
@@ -394,6 +414,7 @@ async function onCambioEmpresa(empresa) {
   // Cerrar WS anterior y limpiar el mapa
   clearTimeout(reconnectTimer)
   clearInterval(estadoTimer)
+  clearInterval(pollTimer)
   reconnectDelay = 1000
   if (ws) { try { ws.close() } catch { /* noop */ } ; ws = null }
   conectado.value = false
@@ -405,7 +426,7 @@ async function onCambioEmpresa(empresa) {
   await inicializarMapa()
   await cargarPosiciones()
   cargando.value = false
-  conectarWS()
+  iniciarTiempoReal()
   iniciarTimerEstado()
 }
 
@@ -419,7 +440,7 @@ onMounted(async () => {
   await inicializarMapa()
   await cargarPosiciones()
   cargando.value = false
-  conectarWS()
+  iniciarTiempoReal()
   iniciarTimerEstado()
 })
 
@@ -427,6 +448,7 @@ onUnmounted(() => {
   desmontado = true
   clearTimeout(reconnectTimer)
   clearInterval(estadoTimer)
+  clearInterval(pollTimer)
   if (ws) { try { ws.close() } catch { /* noop */ } ; ws = null }
   if (mapa) { mapa.remove(); mapa = null }
 })
@@ -440,7 +462,11 @@ onUnmounted(() => {
         <p class="text-sm text-gray-500">Posición de los vehículos con GPS en tiempo real.</p>
       </div>
       <div class="flex items-center gap-3">
-        <span class="flex items-center gap-1.5 text-xs font-medium"
+        <span v-if="esTodas" class="flex items-center gap-1.5 text-xs font-medium text-sky-600">
+          <span class="w-2 h-2 rounded-full bg-sky-500"></span>
+          Todas las empresas · actualización periódica
+        </span>
+        <span v-else class="flex items-center gap-1.5 text-xs font-medium"
           :class="conectado ? 'text-green-600' : 'text-gray-400'">
           <span :class="['w-2 h-2 rounded-full', conectado ? 'bg-green-500' : 'bg-gray-300']"></span>
           {{ conectado ? 'En vivo' : 'Reconectando...' }}
@@ -529,6 +555,7 @@ onUnmounted(() => {
               <span v-else class="text-xs text-gray-400 truncate">{{ [v.marca, v.modelo].filter(Boolean).join(' ') }}</span>
             </div>
             <div class="pl-[1.1rem] space-y-0.5">
+              <div v-if="esTodas && v.empresa_nombre" class="text-xs font-semibold text-sky-700 truncate">{{ v.empresa_nombre }}</div>
               <div class="flex items-center justify-between text-xs">
                 <span class="text-gray-500">{{ labelEstado(v.estado) }}</span>
                 <span class="font-semibold text-gray-700">{{ Math.round(v.velocidad || 0) }} km/h</span>

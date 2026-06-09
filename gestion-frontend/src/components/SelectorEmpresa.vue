@@ -11,9 +11,14 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { apiFetch, safeJsonParse } from '../utils/api.js'
-import { getEmpresaActiva, setEmpresaActiva, clearEmpresaActiva } from '../utils/empresaActiva.js'
+import { getEmpresaActiva, setEmpresaActiva, clearEmpresaActiva, EMPRESA_TODAS } from '../utils/empresaActiva.js'
 
 const emit = defineEmits(['cambio'])
+
+// Opción especial "Todas": muestra los datos de todas las empresas a la vez.
+// Viaja por la misma tubería que una empresa normal (id centinela), por lo que
+// apiFetch inyecta ?empresa_id=__todas__ y el backend filtra (o no) en consecuencia.
+const OPCION_TODAS = { id: EMPRESA_TODAS, nombre: 'Todas las empresas' }
 
 const esSuperadmin = computed(() => {
   const usuario = safeJsonParse(localStorage.getItem('usuario'), {})
@@ -31,6 +36,13 @@ const filtradas = computed(() => {
   if (!q) return empresas.value
   return empresas.value.filter(e => e.nombre.toLowerCase().includes(q))
 })
+
+// La opción "Todas" se muestra salvo que la búsqueda no coincida con su texto.
+const mostrarTodas = computed(() => {
+  const q = busqueda.value.toLowerCase().trim()
+  return !q || 'todas las empresas'.includes(q)
+})
+const esTodas = computed(() => seleccionada.value?.id === EMPRESA_TODAS)
 
 async function cargarEmpresas() {
   cargando.value = true
@@ -103,7 +115,21 @@ onUnmounted(() => document.removeEventListener('click', cerrarFuera))
 
         <div class="se-list">
           <div v-if="cargando" class="se-loading">Cargando…</div>
-          <div v-else-if="filtradas.length === 0" class="se-empty">Sin resultados</div>
+          <template v-else>
+          <button
+            v-if="mostrarTodas"
+            class="se-item se-item--todas"
+            :class="{ 'se-item--selected': esTodas }"
+            @click="seleccionar(OPCION_TODAS)"
+          >
+            <span class="se-avatar se-avatar--todas">★</span>
+            <div class="se-item-info">
+              <span class="se-item-nombre">Todas las empresas</span>
+              <span class="se-item-rut">Ver datos de todas las empresas</span>
+            </div>
+            <span v-if="esTodas" style="color:#6366F1;font-size:0.875rem">✓</span>
+          </button>
+          <div v-if="filtradas.length === 0 && !mostrarTodas" class="se-empty">Sin resultados</div>
           <button
             v-for="emp in filtradas"
             :key="emp.id"
@@ -118,6 +144,7 @@ onUnmounted(() => document.removeEventListener('click', cerrarFuera))
             </div>
             <span v-if="seleccionada?.id === emp.id" style="color:#6366F1;font-size:0.875rem">✓</span>
           </button>
+          </template>
         </div>
       </div>
     </div>
@@ -170,6 +197,8 @@ onUnmounted(() => document.removeEventListener('click', cerrarFuera))
   display: flex; align-items: center; justify-content: center;
   font-size: 0.85rem; font-weight: 700;
 }
+.se-avatar--todas { background: linear-gradient(135deg, #0EA5E9, #6366F1); }
+.se-item--todas { border-bottom: 1px solid #EEF2FF; }
 .se-item-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .se-item-nombre { font-size: 0.875rem; font-weight: 600; color: #111827; }
 .se-item-rut { font-size: 0.72rem; color: #9CA3AF; }

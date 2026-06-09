@@ -1,9 +1,13 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../utils/api.js'
+import { getEmpresaActiva, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import { useToast } from '../../utils/useToast.js'
 
 const toast = useToast()
+// Modo "Todas las empresas" (SUPERADMIN): la bandeja muestra avisos de todas; los
+// envíos dirigidos exigen una empresa concreta, así que solo se permite "todas".
+const esTodas = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 const avisos       = ref([])
@@ -44,6 +48,12 @@ async function cargar() {
 }
 
 onMounted(cargar)
+
+// Abre el formulario; en modo "Todas" solo es válido enviar a todas las empresas.
+function abrirForm() {
+  if (esTodas.value) form.value.destino = 'todas'
+  mostrarForm.value = !mostrarForm.value
+}
 
 // ── Enviar aviso ──────────────────────────────────────────────────────────────
 async function enviar() {
@@ -100,7 +110,7 @@ function iconoDestino(destino) {
         <h1 class="page-title">Avisos</h1>
         <p class="page-subtitle">Comunica novedades a tus conductores o recibe mensajes del equipo.</p>
       </div>
-      <button v-if="puedeEnviar" class="btn-primary" @click="mostrarForm = !mostrarForm">
+      <button v-if="puedeEnviar" class="btn-primary" @click="abrirForm">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M12 4v16m8-8H4"/>
@@ -118,11 +128,12 @@ function iconoDestino(destino) {
           <!-- Destino -->
           <div class="form-group">
             <label class="label">Enviar a</label>
-            <select v-model="form.destino" class="input select">
-              <option value="flota">Toda la flota</option>
-              <option value="conductor">Un conductor específico</option>
+            <select v-model="form.destino" class="input select" :disabled="esTodas">
+              <option v-if="!esTodas" value="flota">Toda la flota</option>
+              <option v-if="!esTodas" value="conductor">Un conductor específico</option>
               <option v-if="esSuperAdmin" value="todas">Todas las empresas</option>
             </select>
+            <p v-if="esTodas" class="field-hint">Para enviar a una flota o conductor específico, elige una empresa concreta en el selector.</p>
           </div>
           <!-- Conductor específico -->
           <div v-if="form.destino === 'conductor'" class="form-group">
@@ -193,6 +204,7 @@ function iconoDestino(destino) {
           </span>
           <span class="aviso-fecha">{{ formatFecha(a.fecha) }}</span>
         </div>
+        <p v-if="esTodas" class="aviso-empresa">🏢 {{ a.empresa_nombre || '—' }}</p>
         <p class="aviso-asunto">{{ a.asunto }}</p>
         <p class="aviso-mensaje">{{ a.mensaje }}</p>
         <p class="aviso-emisor">Enviado por <strong>{{ a.emisor }}</strong></p>
@@ -217,6 +229,8 @@ function iconoDestino(destino) {
 .compose-card   { background:#fff; border:1px solid #E5E7EB; border-radius:14px; padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 1px 4px rgba(0,0,0,.06); }
 .compose-title  { font-size:1rem; font-weight:700; color:#1E1B4B; margin-bottom:1rem; }
 .compose-actions { display:flex; justify-content:flex-end; gap:.75rem; margin-top:1rem; }
+.field-hint { font-size:.75rem; color:#6B7280; margin-top:.35rem; }
+.aviso-empresa { font-size:.75rem; font-weight:600; color:#4F46E5; margin:.15rem 0 .35rem; }
 
 .form-row   { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem; }
 .form-group { display:flex; flex-direction:column; gap:.35rem; margin-bottom:1rem; }

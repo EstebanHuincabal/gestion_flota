@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../../utils/permisos.js'
 import { useToast } from '../../../../utils/useToast.js'
 
@@ -25,6 +25,8 @@ const cargandoEmpresas = ref(false)
 const mostrarDropdown  = ref(false)
 const busqueda         = ref('')
 const sinEmpresa       = computed(() => esSuperadmin && !empresaActiva.value)
+// Modo "Todas las empresas": vista de solo lectura con columna de empresa.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 
 const empresasFiltradas = computed(() => {
   if (!busqueda.value.trim()) return empresas.value
@@ -37,7 +39,7 @@ const cargarEmpresas = async () => {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } finally {
     cargandoEmpresas.value = false
   }
@@ -183,6 +185,7 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargar()]) })
         <table class="table">
           <thead>
             <tr>
+              <th v-if="esTodas">Empresa</th>
               <th>Vehículo</th>
               <th>Tipo / Descripción</th>
               <th>Fecha Realizada</th>
@@ -196,6 +199,7 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargar()]) })
           </thead>
           <tbody>
             <tr v-for="m in historialFiltrado" :key="m.id">
+              <td v-if="esTodas" class="font-medium">{{ m.empresa_nombre || '—' }}</td>
               <td>
                 <strong>{{ m.vehiculo_patente }}</strong>
                 <span class="text-xs text-muted block">{{ m.vehiculo_descripcion }}</span>

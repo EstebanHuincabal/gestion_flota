@@ -47,10 +47,20 @@ def _get_empresa(request):
     """Devuelve la Empresa del usuario o None. Compatible con empresa_id query-param para SUPERADMIN."""
     if request.user.rol == Rol.SUPERADMIN:
         eid = request.query_params.get('empresa_id') or request.data.get('empresa_id')
-        if eid:
-            return Empresa.objects.filter(pk=eid).first()
+        # '__todas__' (opción "Todas las empresas") no es una empresa concreta.
+        if eid and eid != '__todas__':
+            try:
+                return Empresa.objects.filter(pk=eid).first()
+            except (ValueError, TypeError):
+                return None
         return None
     return request.user.empresa
+
+
+def _es_todas(request):
+    """True si el SUPERADMIN pidió ver "Todas las empresas" (solo lectura)."""
+    return request.user.rol == Rol.SUPERADMIN \
+        and (request.query_params.get('empresa_id') or request.data.get('empresa_id')) == '__todas__'
 
 
 def _notificar_conductor(solicitud, aprobado, extra=None):
@@ -183,12 +193,15 @@ class SolicitudesListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        empresa = _get_empresa(request)
-        if not empresa:
+        # Modo "Todas las empresas" (SUPERADMIN, solo lectura): sin filtro por empresa.
+        ver_todas = _es_todas(request)
+        empresa = None if ver_todas else _get_empresa(request)
+        if not ver_todas and not empresa:
             return Response({'error': 'Empresa no encontrada.'}, status=404)
+        emp_filter = {} if ver_todas else {'empresa': empresa}
 
-        qs = SolicitudConductor.objects.filter(empresa=empresa).select_related(
-            'conductor', 'vehiculo', 'respondido_por'
+        qs = SolicitudConductor.objects.filter(**emp_filter).select_related(
+            'conductor', 'vehiculo', 'respondido_por', 'empresa'
         )
 
         # Filtros
@@ -227,7 +240,7 @@ class SolicitudesListView(APIView):
         # Resumen (sobre el QS sin paginación para tenerlo siempre completo)
         from django.utils.timezone import now
         hoy = now().date()
-        qs_empresa_full = SolicitudConductor.objects.filter(empresa=empresa)
+        qs_empresa_full = SolicitudConductor.objects.filter(**emp_filter)
         resumen = {
             'pendientes':    qs_empresa_full.filter(estado='pendiente').count(),
             'en_revision':   qs_empresa_full.filter(estado='en_revision').count(),
@@ -282,6 +295,14 @@ class SolicitudDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _get_sol(self, request, sol_id):
+        if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            try:
+                sol = SolicitudConductor.objects.select_related(
+                    'conductor', 'vehiculo', 'respondido_por'
+                ).get(pk=sol_id)
+                return sol, None
+            except SolicitudConductor.DoesNotExist:
+                return None, Response({'error': 'Solicitud no encontrada.'}, status=404)
         empresa = _get_empresa(request)
         if not empresa:
             return None, Response({'error': 'Empresa no encontrada.'}, status=404)
@@ -319,15 +340,23 @@ class SolicitudAprobarView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request, sol_id):
-        empresa = _get_empresa(request)
-        if not empresa:
-            return Response({'error': 'Empresa no encontrada.'}, status=404)
-        try:
-            sol = SolicitudConductor.objects.select_related(
-                'conductor', 'vehiculo', 'respondido_por'
-            ).get(pk=sol_id, empresa=empresa)
-        except SolicitudConductor.DoesNotExist:
-            return Response({'error': 'Solicitud no encontrada.'}, status=404)
+        if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            try:
+                sol = SolicitudConductor.objects.select_related(
+                    'conductor', 'vehiculo', 'respondido_por'
+                ).get(pk=sol_id)
+            except SolicitudConductor.DoesNotExist:
+                return Response({'error': 'Solicitud no encontrada.'}, status=404)
+        else:
+            empresa = _get_empresa(request)
+            if not empresa:
+                return Response({'error': 'Empresa no encontrada.'}, status=404)
+            try:
+                sol = SolicitudConductor.objects.select_related(
+                    'conductor', 'vehiculo', 'respondido_por'
+                ).get(pk=sol_id, empresa=empresa)
+            except SolicitudConductor.DoesNotExist:
+                return Response({'error': 'Solicitud no encontrada.'}, status=404)
 
         if sol.estado in ('aprobado', 'rechazado'):
             return Response({'error': 'La solicitud ya fue resuelta.'}, status=400)
@@ -437,15 +466,23 @@ class SolicitudRechazarView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request, sol_id):
-        empresa = _get_empresa(request)
-        if not empresa:
-            return Response({'error': 'Empresa no encontrada.'}, status=404)
-        try:
-            sol = SolicitudConductor.objects.select_related(
-                'conductor', 'vehiculo', 'respondido_por'
-            ).get(pk=sol_id, empresa=empresa)
-        except SolicitudConductor.DoesNotExist:
-            return Response({'error': 'Solicitud no encontrada.'}, status=404)
+        if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            try:
+                sol = SolicitudConductor.objects.select_related(
+                    'conductor', 'vehiculo', 'respondido_por'
+                ).get(pk=sol_id)
+            except SolicitudConductor.DoesNotExist:
+                return Response({'error': 'Solicitud no encontrada.'}, status=404)
+        else:
+            empresa = _get_empresa(request)
+            if not empresa:
+                return Response({'error': 'Empresa no encontrada.'}, status=404)
+            try:
+                sol = SolicitudConductor.objects.select_related(
+                    'conductor', 'vehiculo', 'respondido_por'
+                ).get(pk=sol_id, empresa=empresa)
+            except SolicitudConductor.DoesNotExist:
+                return Response({'error': 'Solicitud no encontrada.'}, status=404)
 
         if sol.estado in ('aprobado', 'rechazado'):
             return Response({'error': 'La solicitud ya fue resuelta.'}, status=400)

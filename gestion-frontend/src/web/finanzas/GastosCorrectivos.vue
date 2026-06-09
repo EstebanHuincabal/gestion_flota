@@ -7,7 +7,7 @@
  * Los correctivos nunca se mezclan con el presupuesto normal.
  */
 import { ref, computed, watch, onMounted } from 'vue'
-import { apiFetchEmpresa } from '../../utils/empresaActiva.js'
+import { apiFetchEmpresa, getEmpresaActiva, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import { useToast } from '../../utils/useToast.js'
 import { tienePermiso } from '../../utils/permisos.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
@@ -18,9 +18,12 @@ const props = defineProps({
 })
 
 const toast = useToast()
-const puedeCrear    = tienePermiso('correctivos.crear')
-const puedeEditar   = tienePermiso('correctivos.editar')
-const puedeEliminar = tienePermiso('correctivos.eliminar')
+// Modo "Todas las empresas" (SUPERADMIN): vista de solo lectura agregada. La
+// escritura exige una empresa concreta, así que se oculta crear/editar/eliminar.
+const esTodas = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
+const puedeCrear    = computed(() => tienePermiso('correctivos.crear') && !esTodas.value)
+const puedeEditar   = computed(() => tienePermiso('correctivos.editar') && !esTodas.value)
+const puedeEliminar = computed(() => tienePermiso('correctivos.eliminar') && !esTodas.value)
 
 // ── Estado ───────────────────────────────────────────────────────────────────
 const loading   = ref(false)
@@ -281,7 +284,8 @@ async function eliminar() {
             </div>
             <div class="kpi-lbl">
               Impacto sobre el presupuesto
-              <span v-if="impactoPresupuesto === null" class="sin-pres"> (sin presupuesto definido)</span>
+              <span v-if="esTodas" class="sin-pres"> (no aplica al ver todas las empresas)</span>
+              <span v-else-if="impactoPresupuesto === null" class="sin-pres"> (sin presupuesto definido)</span>
             </div>
           </div>
         </div>
@@ -333,10 +337,11 @@ async function eliminar() {
         <div v-else class="tabla-wrap">
           <table class="tabla">
             <thead>
-              <tr><th>Fecha</th><th>Vehículo</th><th>Categoría</th><th>Descripción</th><th>Prioridad</th><th class="r">Monto</th><th>Comp.</th></tr>
+              <tr><th v-if="esTodas">Empresa</th><th>Fecha</th><th>Vehículo</th><th>Categoría</th><th>Descripción</th><th>Prioridad</th><th class="r">Monto</th><th>Comp.</th></tr>
             </thead>
             <tbody>
               <tr v-for="g in gastos" :key="g.id" class="fila" @click="abrirDetalle(g)">
+                <td v-if="esTodas" class="mono">{{ g.empresa_nombre || '—' }}</td>
                 <td>{{ fmtFecha(g.fecha) }}</td>
                 <td>
                   <div class="td-veh">
@@ -434,6 +439,7 @@ async function eliminar() {
     <div v-if="detalle" class="overlay" @click.self="detalle = null">
       <div class="modal">
         <h2 class="modal-title">Detalle del gasto correctivo</h2>
+        <div v-if="esTodas" class="det-row"><span>Empresa</span><strong>{{ detalle.empresa_nombre || '—' }}</strong></div>
         <div class="det-row"><span>Vehículo</span><strong>{{ detalle.vehiculo_patente || '—' }}</strong></div>
         <div class="det-row"><span>Categoría</span><span class="badge" :style="`background:${catStyle(detalle.categoria_correctiva).bg};color:${catStyle(detalle.categoria_correctiva).text}`">{{ detalle.categoria_display }}</span></div>
         <div class="det-row"><span>Prioridad</span><span class="badge" :style="`background:${prioStyle(detalle.prioridad).bg};color:${prioStyle(detalle.prioridad).text}`">{{ prioStyle(detalle.prioridad).label }}</span></div>

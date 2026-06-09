@@ -71,10 +71,12 @@ def _sin_permiso(user, codigo):
 def _get_empresa(user, params):
     if _es_superadmin(user):
         eid = params.get('empresa_id')
-        if eid:
+        # '__todas__' (opción "Todas las empresas") no es una empresa concreta;
+        # se trata como "sin empresa" para evitar errores de casteo del pk (500).
+        if eid and eid != '__todas__':
             try:
                 return Empresa.objects.get(pk=eid)
-            except Empresa.DoesNotExist:
+            except (Empresa.DoesNotExist, ValueError, TypeError):
                 return None
         return None
     return user.empresa

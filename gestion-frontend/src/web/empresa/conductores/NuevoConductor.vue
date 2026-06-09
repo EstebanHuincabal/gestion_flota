@@ -1,10 +1,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
-import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia, soloTexto } from '../../../utils/validators.js'
+import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia, soloTexto, soloDescripcion, validarPatente, validarAnioVehiculo } from '../../../utils/validators.js'
 import InputTelefono from '../../../components/InputTelefono.vue'
 
 const router    = useRouter()
@@ -13,6 +13,13 @@ const toast     = useToast()
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
+
+const esSuperadmin = computed(() => {
+  try { return JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN' } catch { return false }
+})
+const esTodas  = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
+const empresas = ref([])
+const empresaIdForm = ref('')
 
 const form = ref({
   nombre:           '',
@@ -30,6 +37,9 @@ const form = ref({
   vehiculo_patente: '',
   vehiculo_marca: '',
   vehiculo_modelo: '',
+  vehiculo_anio: '',
+  vehiculo_tipo_combustible: 'bencina',
+  vehiculo_km_actuales: 0,
 })
 
 const asignarVehiculo = ref(false)
@@ -38,11 +48,16 @@ const vehiculosLibres = ref([])
 
 onMounted(async () => {
   try {
-    const resVehiculos = await apiFetchEmpresa('/api/empresa/vehiculos/')
+    const [resVehiculos, resEmpresas] = await Promise.all([
+      apiFetchEmpresa('/api/empresa/vehiculos/'),
+      esSuperadmin.value ? apiFetch('/api/empresas/') : Promise.resolve(null),
+    ])
     if (resVehiculos.ok) {
       const todos = await resVehiculos.json()
-      // Vehículos activos y sin conductor asignado (disponibles para asignar).
       vehiculosLibres.value = todos.filter(v => v.activo && !v.conductor_asignado)
+    }
+    if (resEmpresas?.ok) {
+      empresas.value = await resEmpresas.json()
     }
   } catch (err) {
     console.error("Error cargando datos auxiliares", err)
@@ -56,6 +71,8 @@ const nivelPassword = computed(() => {
   const r = validarPassword(form.value.password)
   return r.nivel || null
 })
+
+const formatPatente = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')
 
 const formatRut = (value) => {
   let cleaned = value.replace(/[^0-9kK]/g, '').slice(0, 9)
@@ -138,9 +155,30 @@ const guardar = async () => {
     if (errores.value.rut) return
   }
 
+  if (asignarVehiculo.value && modoAsignacion.value === 'nuevo') {
+    const patenteR = validarPatente(form.value.vehiculo_patente)
+    if (!patenteR.valido) {
+      errores.value = { vehiculo_patente: [patenteR.error] }
+      return
+    }
+    if (form.value.vehiculo_anio !== '' && form.value.vehiculo_anio !== null) {
+      const anioR = validarAnioVehiculo(form.value.vehiculo_anio)
+      if (!anioR.valido) {
+        errores.value = { vehiculo_anio: [anioR.error] }
+        return
+      }
+    }
+  }
+
+  if (esTodas.value && !empresaIdForm.value) {
+    error.value = 'Selecciona una empresa para asignar el conductor.'
+    return
+  }
+
   guardando.value = true
 
   const payload = { ...form.value }
+  if (esTodas.value) payload.empresa_id = empresaIdForm.value
   if (!asignarVehiculo.value) {
     payload.vehiculo_id = null
     payload.crear_vehiculo = false
@@ -156,9 +194,9 @@ const guardar = async () => {
   }
 
   try {
-    const res  = await apiFetchEmpresa('/api/empresa/conductores/', { 
-      method: 'POST', 
-      body: payload 
+    const res  = await apiFetchEmpresa('/api/empresa/conductores/', {
+      method: 'POST',
+      body: payload
     })
     const data = await res.json()
     if (!res.ok) {
@@ -195,6 +233,18 @@ const guardar = async () => {
       <div v-if="error" class="alert-error">{{ error }}</div>
 
       <form @submit.prevent="guardar" class="form">
+        <!-- Selector de empresa (solo SUPERADMIN en modo "Todas") -->
+        <div v-if="esTodas" class="form-section">
+          <h3 class="section-title">Empresa</h3>
+          <div class="form-group">
+            <label class="label">Empresa a la que pertenecerá el conductor</label>
+            <select v-model="empresaIdForm" class="input select" required>
+              <option value="" disabled>Seleccionar empresa…</option>
+              <option v-for="e in empresas" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+            </select>
+          </div>
+        </div>
+
         <div class="form-section">
           <h3 class="section-title">Datos Personales</h3>
           <div class="form-row">
@@ -324,19 +374,48 @@ const guardar = async () => {
 
             <!-- MODO NUEVO -->
             <div v-if="modoAsignacion === 'nuevo'" class="tab-panel">
-              <div class="form-group">
-                <label class="label">Patente</label>
-                <input v-model="form.vehiculo_patente" type="text" class="input" maxlength="10" placeholder="ABCD12" :class="{ 'input-error': errores.vehiculo_patente }"/>
-                <p v-if="errores.vehiculo_patente" class="field-error">{{ errores.vehiculo_patente[0] }}</p>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="label">Patente</label>
+                  <input :value="form.vehiculo_patente" @input="form.vehiculo_patente = formatPatente($event.target.value)"
+                    type="text" class="input" maxlength="8" placeholder="ABCD12"
+                    :class="{ 'input-error': errores.vehiculo_patente }"
+                    autocomplete="off"/>
+                  <p v-if="errores.vehiculo_patente" class="field-error">{{ errores.vehiculo_patente[0] }}</p>
+                </div>
+                <div class="form-group">
+                  <label class="label">Tipo de combustible</label>
+                  <select v-model="form.vehiculo_tipo_combustible" class="input select">
+                    <option value="bencina">Bencina</option>
+                    <option value="diesel">Diésel</option>
+                    <option value="electrico">Eléctrico</option>
+                    <option value="hibrido">Híbrido</option>
+                  </select>
+                </div>
               </div>
               <div class="form-row mt-2">
                 <div class="form-group">
                   <label class="label">Marca</label>
-                  <input v-model="form.vehiculo_marca" type="text" class="input" placeholder="Ej: Toyota" maxlength="60"/>
+                  <input v-model="form.vehiculo_marca" @input="form.vehiculo_marca = soloDescripcion(form.vehiculo_marca)"
+                    type="text" class="input" placeholder="Ej: Toyota" maxlength="60"/>
                 </div>
                 <div class="form-group">
                   <label class="label">Modelo</label>
-                  <input v-model="form.vehiculo_modelo" type="text" class="input" placeholder="Ej: Hilux" maxlength="60"/>
+                  <input v-model="form.vehiculo_modelo" @input="form.vehiculo_modelo = soloDescripcion(form.vehiculo_modelo)"
+                    type="text" class="input" placeholder="Ej: Hilux 560" maxlength="60"/>
+                </div>
+              </div>
+              <div class="form-row mt-2">
+                <div class="form-group">
+                  <label class="label">Año <span class="opcional">(opcional)</span></label>
+                  <input v-model="form.vehiculo_anio" type="number" class="input" placeholder="2020"
+                    :class="{ 'input-error': errores.vehiculo_anio }"
+                    min="1950" :max="new Date().getFullYear() + 1"/>
+                  <p v-if="errores.vehiculo_anio" class="field-error">{{ errores.vehiculo_anio[0] }}</p>
+                </div>
+                <div class="form-group">
+                  <label class="label">KM actuales</label>
+                  <input v-model="form.vehiculo_km_actuales" type="number" class="input" min="0"/>
                 </div>
               </div>
             </div>

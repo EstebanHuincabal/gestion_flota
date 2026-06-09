@@ -67,19 +67,33 @@ def tiene_permiso(user, codigo: str) -> bool:
         return False
     return plan.permisos.filter(codigo=codigo).exists()
 
+# Centinela de la opción "Todas las empresas" del SelectorEmpresa (frontend).
+# Debe coincidir con EMPRESA_TODAS de empresaActiva.js. apiFetch lo inyecta en
+# TODA URL /api/empresa/, por lo que cualquier vista que use get_empresa puede
+# recibirlo (al navegar entre módulos con "Todas" activo): se trata como sin
+# empresa concreta para evitar errores de BD al castear el pk.
+EMPRESA_TODAS = '__todas__'
+
+
 def get_empresa(request):
     user = request.user
     if user.rol == Rol.SUPERADMIN:
         empresa_id = request.query_params.get('empresa_id')
-        if not empresa_id:
+        if not empresa_id or empresa_id == EMPRESA_TODAS:
             raise PermissionError
         try:
             return Empresa.objects.get(pk=empresa_id)
-        except Empresa.DoesNotExist:
+        except (Empresa.DoesNotExist, ValueError, TypeError):
             raise PermissionError
     if not user.empresa_id:
         raise PermissionError
     return user.empresa
+
+
+def es_todas(request):
+    """True si el SUPERADMIN tiene activo el modo "Todas las empresas"."""
+    return getattr(request.user, 'rol', None) == Rol.SUPERADMIN \
+        and request.query_params.get('empresa_id') == EMPRESA_TODAS
 
 
 # ─────────────────────────────────────────
@@ -1089,7 +1103,8 @@ def usuarios_lista(request):
     estado     = request.query_params.get('estado')
     q          = request.query_params.get('q')
 
-    if empresa_id:
+    # "__todas__" (opción "Todas las empresas") = sin filtro por empresa.
+    if empresa_id and empresa_id != EMPRESA_TODAS:
         qs = qs.filter(empresa_id=empresa_id)
     if rol:
         qs = qs.filter(rol=rol)
@@ -1356,19 +1371,37 @@ def usuario_historial(request, pk):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def conductores_lista_crear(request):
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+    # Modo "Todas las empresas" (SUPERADMIN): GET agrega sin filtro de empresa;
+    # POST exige empresa concreta en request.data['empresa_id'].
+    todas = es_todas(request) and request.method == 'GET'
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            if request.user.rol == Rol.SUPERADMIN and request.method == 'POST':
+                eid = request.data.get('empresa_id')
+                if not eid or eid == EMPRESA_TODAS:
+                    return Response(
+                        {"error": "Selecciona una empresa concreta para crear el conductor."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                try:
+                    empresa = Empresa.objects.get(pk=eid)
+                except (Empresa.DoesNotExist, ValueError, TypeError):
+                    return Response({"error": "Empresa no válida."}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == 'GET':
         if not tiene_permiso(request.user, 'conductores.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        qs = Usuario.objects.filter(
-            empresa=empresa, rol=Rol.CONDUCTOR
-        ).select_related('empresa').prefetch_related(
+        qs = Usuario.objects.filter(rol=Rol.CONDUCTOR).select_related('empresa').prefetch_related(
             'asignaciones_conductor__vehiculo'
         ).order_by('email')
+        if not todas:
+            qs = qs.filter(empresa=empresa)
         return Response(ConductorListSerializer(qs, many=True).data)
 
     if not tiene_permiso(request.user, 'conductores.crear'):
@@ -1397,10 +1430,16 @@ def conductores_detalle(request, pk):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
     try:
-        empresa   = get_empresa(request)
-        conductor = Usuario.objects.prefetch_related(
-            'asignaciones_conductor__vehiculo'
-        ).get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
+        if es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            conductor = Usuario.objects.prefetch_related(
+                'asignaciones_conductor__vehiculo'
+            ).get(pk=pk, rol=Rol.CONDUCTOR)
+            empresa = conductor.empresa
+        else:
+            empresa   = get_empresa(request)
+            conductor = Usuario.objects.prefetch_related(
+                'asignaciones_conductor__vehiculo'
+            ).get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
     except Usuario.DoesNotExist:
@@ -1446,8 +1485,12 @@ def conductores_asignar(request, pk):
     if not tiene_permiso(request.user, 'conductores.asignar'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
     try:
-        empresa   = get_empresa(request)
-        conductor = Usuario.objects.get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
+        if es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            conductor = Usuario.objects.get(pk=pk, rol=Rol.CONDUCTOR)
+            empresa   = conductor.empresa
+        else:
+            empresa   = get_empresa(request)
+            conductor = Usuario.objects.get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
         vehiculo  = Vehiculo.objects.get(pk=request.data.get('vehiculo_id'), empresa=empresa)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
@@ -1512,8 +1555,12 @@ def conductores_desasignar(request, pk):
     if not tiene_permiso(request.user, 'conductores.asignar'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
     try:
-        empresa   = get_empresa(request)
-        conductor = Usuario.objects.get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
+        if es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            conductor = Usuario.objects.get(pk=pk, rol=Rol.CONDUCTOR)
+            empresa   = conductor.empresa
+        else:
+            empresa   = get_empresa(request)
+            conductor = Usuario.objects.get(pk=pk, empresa=empresa, rol=Rol.CONDUCTOR)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_400_BAD_REQUEST)
     except Usuario.DoesNotExist:
@@ -1541,19 +1588,37 @@ def conductores_desasignar(request, pk):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def vehiculos_lista_crear(request):
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+    # Modo "Todas las empresas" (SUPERADMIN): GET agrega sin filtro de empresa;
+    # POST exige empresa concreta en request.data['empresa_id'].
+    todas = es_todas(request) and request.method == 'GET'
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            if request.user.rol == Rol.SUPERADMIN and request.method == 'POST':
+                eid = request.data.get('empresa_id')
+                if not eid or eid == EMPRESA_TODAS:
+                    return Response(
+                        {"error": "Selecciona una empresa concreta para crear el vehículo."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                try:
+                    empresa = Empresa.objects.get(pk=eid)
+                except (Empresa.DoesNotExist, ValueError, TypeError):
+                    return Response({"error": "Empresa no válida."}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == 'GET':
         if not tiene_permiso(request.user, 'vehiculos.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        vehiculos = Vehiculo.objects.filter(
-            empresa=empresa
-        ).select_related('dispositivo_gps').prefetch_related(
+        vehiculos = Vehiculo.objects.select_related('dispositivo_gps', 'empresa').prefetch_related(
             'asignaciones__conductor'
         ).order_by('patente')
+        if not todas:
+            vehiculos = vehiculos.filter(empresa=empresa)
         return Response(VehiculoSerializer(vehiculos, many=True, context={'empresa': empresa, 'request': request}).data)
 
     if not tiene_permiso(request.user, 'vehiculos.crear'):
@@ -1579,8 +1644,12 @@ def vehiculos_lista_crear(request):
 @permission_classes([IsAuthenticated])
 def vehiculos_detalle(request, pk):
     try:
-        empresa  = get_empresa(request)
-        vehiculo = Vehiculo.objects.get(pk=pk, empresa=empresa)
+        if es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            vehiculo = Vehiculo.objects.get(pk=pk)
+            empresa  = vehiculo.empresa
+        else:
+            empresa  = get_empresa(request)
+            vehiculo = Vehiculo.objects.get(pk=pk, empresa=empresa)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
     except Vehiculo.DoesNotExist:
@@ -1759,18 +1828,34 @@ def generar_gasto_correctivo_de_mantencion(mantencion, usuario=None):
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def mantenciones_lista_crear(request):
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+    # Modo "Todas las empresas" (SUPERADMIN): GET agrega sin filtro de empresa;
+    # POST exige empresa concreta (via vehiculo_id que ya pertenece a una empresa).
+    todas = es_todas(request) and request.method == 'GET'
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            if request.user.rol == Rol.SUPERADMIN and request.method == 'POST':
+                # En modo "Todas", la empresa se resuelve a partir del vehículo elegido.
+                vid = request.data.get('vehiculo_id')
+                veh = Vehiculo.objects.filter(pk=vid).select_related('empresa').first()
+                if not veh:
+                    return Response({"error": "Vehículo no válido."}, status=status.HTTP_400_BAD_REQUEST)
+                empresa = veh.empresa
+            else:
+                return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == 'GET':
         if not tiene_permiso(request.user, 'mantenciones.ver'):
             return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
-        
+
         vehiculo_id  = request.query_params.get('vehiculo_id')
         estado_param = request.query_params.get('estado')
-        qs = Mantencion.objects.filter(vehiculo__empresa=empresa).select_related('vehiculo')
+        qs = Mantencion.objects.select_related('vehiculo', 'vehiculo__empresa')
+        if not todas:
+            qs = qs.filter(vehiculo__empresa=empresa)
 
         if vehiculo_id:
             qs = qs.filter(vehiculo_id=vehiculo_id)
@@ -1850,8 +1935,11 @@ def mantenciones_lista_crear(request):
 @permission_classes([IsAuthenticated])
 def mantenciones_detalle(request, pk):
     try:
-        empresa = get_empresa(request)
-        mantencion = Mantencion.objects.select_related('vehiculo').get(pk=pk, vehiculo__empresa=empresa)
+        if es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+            mantencion = Mantencion.objects.select_related('vehiculo', 'vehiculo__empresa').get(pk=pk)
+        else:
+            empresa = get_empresa(request)
+            mantencion = Mantencion.objects.select_related('vehiculo').get(pk=pk, vehiculo__empresa=empresa)
     except PermissionError:
         return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
     except Mantencion.DoesNotExist:
@@ -1983,44 +2071,47 @@ def mantenciones_detalle(request, pk):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def mantenciones_resumen(request):
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+    # Modo "Todas las empresas" (SUPERADMIN): agrega sobre todas, sin filtro.
+    todas = es_todas(request)
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
 
     if not tiene_permiso(request.user, 'mantenciones.ver'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
     from django.db.models import Sum
-    
+
+    veh_emp = {} if todas else {'vehiculo__empresa': empresa}
+
     # Costo total mes actual
     hoy = timezone.now().date()
     inicio_mes = hoy.replace(day=1)
-    
+
     costo_mes = Mantencion.objects.filter(
-        vehiculo__empresa=empresa,
         estado='realizada',
-        fecha_realizada__gte=inicio_mes
+        fecha_realizada__gte=inicio_mes,
+        **veh_emp,
     ).aggregate(total=Sum('costo'))['total'] or 0
 
     costo_total = Mantencion.objects.filter(
-        vehiculo__empresa=empresa,
-        estado='realizada'
+        estado='realizada', **veh_emp,
     ).aggregate(total=Sum('costo'))['total'] or 0
-    
+
     pendientes = Mantencion.objects.filter(
-        vehiculo__empresa=empresa,
-        estado='pendiente'
+        estado='pendiente', **veh_emp,
     ).count()
 
     en_proceso = Mantencion.objects.filter(
-        vehiculo__empresa=empresa,
-        estado='en_proceso'
+        estado='en_proceso', **veh_emp,
     ).count()
 
     realizadas = Mantencion.objects.filter(
-        vehiculo__empresa=empresa,
-        estado='realizada'
+        estado='realizada', **veh_emp,
     ).count()
 
     return Response({
@@ -2093,10 +2184,15 @@ def mantenciones_sugerencias(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def mantenciones_calendario(request):
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+    # Modo "Todas las empresas" (SUPERADMIN): sin filtro por empresa.
+    todas = es_todas(request)
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
 
     if not tiene_permiso(request.user, 'mantenciones.ver'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
@@ -2104,22 +2200,26 @@ def mantenciones_calendario(request):
     year  = request.query_params.get('year',  timezone.now().date().year)
     month = request.query_params.get('month', timezone.now().date().month)
 
+    veh_emp = {} if todas else {'vehiculo__empresa': empresa}
     qs = Mantencion.objects.filter(
-        vehiculo__empresa=empresa,
         fecha_programada__year=year,
         fecha_programada__month=month,
-    ).exclude(estado='cancelada').select_related('vehiculo').order_by('fecha_programada')
+        **veh_emp,
+    ).exclude(estado='cancelada').select_related('vehiculo', 'vehiculo__empresa').order_by('fecha_programada')
 
     result = {}
     for m in qs:
         key = m.fecha_programada.isoformat()
-        result.setdefault(key, []).append({
+        evento = {
             'id':               m.id,
             'tipo_mantencion':  m.tipo_mantencion,
             'vehiculo_patente': m.vehiculo.patente,
             'estado':           m.estado,
             'estado_display':   m.get_estado_display(),
-        })
+        }
+        if todas:
+            evento['empresa_nombre'] = m.vehiculo.empresa.nombre if m.vehiculo.empresa_id else None
+        result.setdefault(key, []).append(evento)
     return Response(result)
 
 
@@ -2182,10 +2282,15 @@ class AlertaMantencionViewSet(viewsets.ReadOnlyModelViewSet):
         if not es_superadmin(self.request.user) and not tiene_permiso(self.request.user, 'predictivo.ver'):
             return AlertaMantencion.objects.none()
         try:
-            empresa = get_empresa(self.request)
-            qs = AlertaMantencion.objects.filter(
-                mantencion_programada__vehiculo__empresa=empresa
-            ).select_related('mantencion_programada__vehiculo', 'mantencion_programada__regla')
+            # Modo "Todas las empresas" (SUPERADMIN): sin filtro por empresa.
+            todas = es_todas(self.request)
+            qs = AlertaMantencion.objects.select_related(
+                'mantencion_programada__vehiculo', 'mantencion_programada__vehiculo__empresa',
+                'mantencion_programada__regla'
+            )
+            if not todas:
+                empresa = get_empresa(self.request)
+                qs = qs.filter(mantencion_programada__vehiculo__empresa=empresa)
 
             estado = self.request.query_params.get('estado')
             nivel  = self.request.query_params.get('nivel')
@@ -2363,13 +2468,18 @@ def vehiculo_plan_detalle(request, pk):
 def predictivo_resumen(request):
     if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
         return Response({'error': 'Sin permisos.'}, status=403)
-    empresa = get_empresa(request)
-    if not empresa:
-        return Response({'error': 'Empresa no encontrada.'}, status=400)
+    # Modo "Todas las empresas" (SUPERADMIN): agrega sobre todas, sin filtro.
+    todas = es_todas(request)
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            return Response({'error': 'Empresa no encontrada.'}, status=400)
 
-    alertas_qs = AlertaMantencion.objects.filter(
-        mantencion_programada__vehiculo__empresa=empresa
-    )
+    alerta_emp = {} if todas else {'mantencion_programada__vehiculo__empresa': empresa}
+    alertas_qs = AlertaMantencion.objects.filter(**alerta_emp)
     pendientes    = alertas_qs.filter(atendida=False)
     inicio_mes    = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -2379,9 +2489,11 @@ def predictivo_resumen(request):
         'alertas_por_vencer':  pendientes.filter(nivel='por_vencer').count(),
         'atendidas_mes':       alertas_qs.filter(atendida=True, fecha_atencion__gte=inicio_mes).count(),
         'vehiculos_con_alerta': pendientes.values('mantencion_programada__vehiculo_id').distinct().count(),
-        'planes_activos':      PlanMantenimiento.objects.filter(empresa=empresa, activo=True).count(),
+        'planes_activos':      PlanMantenimiento.objects.filter(
+            activo=True, **({} if todas else {'empresa': empresa})
+        ).count(),
         'vehiculos_asignados': VehiculoPlan.objects.filter(
-            vehiculo__empresa=empresa
+            **({} if todas else {'vehiculo__empresa': empresa})
         ).values('vehiculo_id').distinct().count(),
     })
 
@@ -2391,7 +2503,11 @@ def predictivo_resumen(request):
 def predictivo_generar_alertas(request):
     if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
         return Response({'error': 'Sin permisos.'}, status=403)
-    empresa = get_empresa(request)
+    # '__todas__' / sin empresa concreta → genera para todas (filtro sin empresa).
+    try:
+        empresa = get_empresa(request)
+    except PermissionError:
+        empresa = None
 
     hoy = timezone.now().date()
     filtro = {'vehiculo__activo': True, 'plan__activo': True}

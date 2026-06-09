@@ -129,6 +129,7 @@
         <table v-else class="w-full text-sm">
           <thead>
             <tr class="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wide">
+              <th v-if="esTodas" class="px-4 py-3 text-left font-semibold">Empresa</th>
               <th class="px-4 py-3 text-left font-semibold">Nombre / Ruta</th>
               <th class="px-4 py-3 text-left font-semibold">Tipo</th>
               <th class="px-4 py-3 text-left font-semibold">Conductor</th>
@@ -144,6 +145,7 @@
             <tr v-for="ruta in rutasFiltradas" :key="ruta.id"
               @click="abrirPanel(ruta)"
               class="hover:bg-indigo-50/30 cursor-pointer transition group">
+              <td v-if="esTodas" class="px-4 py-3 font-medium text-gray-700">{{ ruta.empresa_nombre || '—' }}</td>
               <td class="px-4 py-3">
                 <p class="font-medium text-gray-900 group-hover:text-indigo-700">{{ ruta.nombre }}</p>
                 <p class="text-xs text-gray-400">
@@ -205,7 +207,7 @@
                       </svg>
                     </button>
                   </template>
-                  <template v-else-if="ruta.estado === 'activo'">
+                  <template v-else-if="!esTodas && ruta.estado === 'activo'">
                     <button @click="prepararFinalizar(ruta)" title="Finalizar"
                       class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -431,6 +433,15 @@
 
             <!-- Paso 1 — Datos generales -->
             <div v-if="paso === 1" class="space-y-4">
+              <!-- Empresa (solo SUPERADMIN en modo "Todas", al crear) -->
+              <div v-if="esTodas && !modoEdicion">
+                <label class="block text-xs font-semibold text-gray-600 mb-1">Empresa *</label>
+                <select v-model="empresaIdForm"
+                  class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                  <option value="" disabled>— Seleccionar empresa —</option>
+                  <option v-for="e in empresas.filter(e => e.id !== '__todas__')" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+                </select>
+              </div>
               <div>
                 <label class="block text-xs font-semibold text-gray-600 mb-2">Tipo de ruta</label>
                 <div class="grid grid-cols-2 gap-3">
@@ -949,7 +960,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { apiFetch as apiFetchBase } from '../../utils/api.js'
-import { apiFetchEmpresa as apiFetch, getEmpresaActiva, setEmpresaActiva } from '../../utils/empresaActiva.js'
+import { apiFetchEmpresa as apiFetch, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import MapaRuta from './MapaRuta.vue'
 import { validarRut } from '../../utils/validators.js'
 
@@ -965,6 +976,8 @@ const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 const sinEmpresa = ref(false)
 const empresas   = ref([])
 const empresaActiva = ref(getEmpresaActiva())
+// Modo "Todas las empresas": vista de solo lectura con columna de empresa.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 const mostrarDropdownEmpresa = ref(false)
 const busquedaEmpresa = ref('')
 const empresasFiltradas = computed(() =>
@@ -1048,7 +1061,8 @@ const guardando     = ref(false)
 const calculando    = ref(false)
 const calculoResult = ref(null)
 const mapaParadasRef = ref(null)   // ref al MapaRuta del paso 2
-const errorModal    = ref('')
+const errorModal     = ref('')
+const empresaIdForm  = ref('')     // empresa elegida al crear en modo "Todas"
 
 // ── Validación pre-vuelo ──────────────────────────────────────────────────
 const validando             = ref(false)
@@ -1170,15 +1184,16 @@ async function abrirPanel(ruta) {
 
 // ── Modal crear / editar ──────────────────────────────────────────────────
 function abrirModalCrear() {
-  modoEdicion.value   = false
-  editandoId.value    = null
-  form.value          = formInicial()
-  calculoResult.value = null
-  paso.value          = 1
-  paradaActiva.value  = 0
+  modoEdicion.value    = false
+  editandoId.value     = null
+  empresaIdForm.value  = ''
+  form.value           = formInicial()
+  calculoResult.value  = null
+  paso.value           = 1
+  paradaActiva.value   = 0
   coordsAbiertas.value = {}
   coordsError.value    = {}
-  modalCrear.value    = true
+  modalCrear.value     = true
 }
 
 function abrirModalEditar(ruta) {
@@ -1316,6 +1331,10 @@ async function ejecutarCalculo() {
 }
 
 async function guardarRuta() {
+  if (esTodas.value && !modoEdicion.value && !empresaIdForm.value) {
+    errorModal.value = 'Selecciona una empresa para crear la ruta.'
+    return
+  }
   guardando.value  = true
   errorModal.value = ''
   const payload = {
@@ -1330,6 +1349,7 @@ async function guardarRuta() {
       tipo: p.tipo, orden: i, nombre: p.nombre, direccion: p.direccion,
       lat: p.latitud, lng: p.longitud, notas: p.notas || '',
     })),
+    ...(esTodas.value && !modoEdicion.value ? { empresa_id: empresaIdForm.value } : {}),
   }
   const url    = modoEdicion.value ? `/api/empresa/rutas/${editandoId.value}/` : '/api/empresa/rutas/'
   const method = modoEdicion.value ? 'PUT' : 'POST'
@@ -1904,7 +1924,7 @@ onMounted(async () => {
     const res = await apiFetchBase('/api/empresas/')
     if (res.ok) {
       const data = await res.json()
-      empresas.value = Array.isArray(data) ? data : []
+      empresas.value = conOpcionTodas(Array.isArray(data) ? data : [])
     }
   }
   await Promise.all([cargarRutas(), cargarVehiculos(), cargarConductores()])

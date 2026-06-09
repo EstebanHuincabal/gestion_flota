@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { useToast } from '../../../utils/useToast.js'
 
 const router = useRouter()
@@ -19,6 +19,8 @@ const mostrarDropdown  = ref(false)
 const busqueda         = ref('')
 const cargandoEmpresas = ref(false)
 const sinEmpresa       = computed(() => esSuperadmin && !empresaActiva.value)
+// Modo "Todas las empresas": solo lectura (no generar alertas).
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 const empresasFiltradas = computed(() => {
   if (!busqueda.value.trim()) return empresas.value
   const q = busqueda.value.toLowerCase()
@@ -375,7 +377,7 @@ onMounted(async () => {
     cargandoEmpresas.value = true
     try {
       const res = await apiFetch('/api/empresas/')
-      if (res.ok) empresas.value = (await res.json()).filter(e => e.estado === 'activa')
+      if (res.ok) empresas.value = conOpcionTodas((await res.json()).filter(e => e.estado === 'activa'))
     } finally { cargandoEmpresas.value = false }
   }
   cargarTodo()
@@ -504,7 +506,7 @@ onUnmounted(() => {
                 <div class="progress-fill" :class="alerta.nivel === 'vencida' ? 'fill-red' : 'fill-yellow'" :style="{ width: Math.min(alerta.pct_avance, 100) + '%' }"/>
               </div>
             </div>
-            <div v-if="!alerta.atendida" class="alert-actions">
+            <div v-if="!esTodas && !alerta.atendida" class="alert-actions">
               <button class="btn-outline-sm" @click="router.push({ path: ruta('/mantenciones/nueva'), query: { vehiculo: alerta.vehiculo_id, tipo: alerta.tipo_mantencion, presupuesto: alerta.costo_estimado || '' } })">Programar</button>
               <button class="btn-primary-sm" @click="openAtenderModal(alerta)">Registrar</button>
             </div>
@@ -620,7 +622,7 @@ onUnmounted(() => {
                 <button class="btn-danger-sm" @click="eliminarPlan(plan)">Sí</button>
                 <button class="btn-outline-sm" @click="planAEliminar = null">No</button>
               </div>
-              <template v-else>
+              <template v-else-if="!esTodas">
                 <button class="btn-outline-sm" @click="abrirEditarPlan(plan)">Editar</button>
                 <button class="btn-danger-sm" @click="planAEliminar = plan.id">Eliminar</button>
               </template>

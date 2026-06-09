@@ -26,15 +26,30 @@ def _es_superadmin(user):
     return getattr(user, 'rol', None) == Rol.SUPERADMIN
 
 
+# Centinela "Todas las empresas" del SelectorEmpresa (frontend). Debe coincidir con
+# EMPRESA_TODAS de empresaActiva.js. Solo lectura para SUPERADMIN.
+EMPRESA_TODAS = '__todas__'
+
+
+def _eid_de(params, fallback=None):
+    eid = params.get('empresa_id') if hasattr(params, 'get') else None
+    if not eid and fallback and hasattr(fallback, 'get'):
+        eid = fallback.get('empresa_id')
+    return eid
+
+
+def _es_todas(user, params, fallback=None):
+    return _es_superadmin(user) and _eid_de(params, fallback) == EMPRESA_TODAS
+
+
 def _get_empresa(user, params, fallback=None):
     if _es_superadmin(user):
-        eid = params.get('empresa_id') if hasattr(params, 'get') else None
-        if not eid and fallback and hasattr(fallback, 'get'):
-            eid = fallback.get('empresa_id')
-        if eid:
+        eid = _eid_de(params, fallback)
+        # '__todas__' no es una empresa concreta (bloquea escrituras y evita 500).
+        if eid and eid != EMPRESA_TODAS:
             try:
                 return Empresa.objects.get(pk=eid)
-            except Empresa.DoesNotExist:
+            except (Empresa.DoesNotExist, ValueError, TypeError):
                 return None
         return None
     return user.empresa
@@ -56,8 +71,8 @@ def _estado_peor(estados):
     return min(estados, key=lambda s: _PEOR.get(s, 99))
 
 
-def _doc_dict(doc):
-    return {
+def _doc_dict(doc, con_empresa=False):
+    data = {
         'id':                doc.id,
         'entidad':           doc.entidad,
         'tipo':              doc.tipo,
@@ -77,6 +92,10 @@ def _doc_dict(doc):
         'version_anterior_id': doc.version_anterior_id,
         'created_at':        doc.created_at.isoformat(),
     }
+    if con_empresa:
+        data['empresa_id']     = doc.empresa_id
+        data['empresa_nombre'] = doc.empresa.nombre if doc.empresa_id else None
+    return data
 
 
 def _build_resumen(qs):
@@ -172,6 +191,9 @@ def _qs_empresa(user, params):
         else:
             qs = Documento.objects.filter(conductor=user)
         return qs, None
+    # Modo "Todas las empresas" (SUPERADMIN, solo lectura): sin filtro por empresa.
+    if _es_todas(user, params):
+        return Documento.objects.all(), None
     empresa = _get_empresa(user, params)
     if not empresa:
         return None, None
@@ -184,6 +206,7 @@ class DocumentosListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        todas = _es_todas(request.user, request.query_params)
         qs, empresa = _qs_empresa(request.user, request.query_params)
         if qs is None:
             return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -202,14 +225,14 @@ class DocumentosListView(APIView):
         if buscar:
             qs = qs.filter(Q(tipo__icontains=buscar) | Q(nombre_archivo__icontains=buscar))
 
-        qs = qs.select_related('vehiculo', 'conductor', 'subido_por')
+        qs = qs.select_related('vehiculo', 'conductor', 'subido_por', 'empresa')
         docs = list(qs.order_by('-created_at'))
 
         if estado:
             docs = [d for d in docs if d.estado() == estado]
 
         return Response({
-            'documentos': [_doc_dict(d) for d in docs],
+            'documentos': [_doc_dict(d, con_empresa=todas) for d in docs],
             'resumen':    _build_resumen(qs),
         })
 

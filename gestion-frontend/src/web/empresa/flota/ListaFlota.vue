@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch, safeJsonParse } from '../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 import { useToast } from '../../../utils/useToast.js'
@@ -35,6 +35,8 @@ const empresaActiva    = ref(getEmpresaActiva())
 const cargandoEmpresas = ref(false)
 const mostrarDropdown  = ref(false)
 const busqueda         = ref('')
+// Modo "Todas las empresas": vista de solo lectura con columna de empresa.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 
 const empresasFiltradas = computed(() => {
   if (!busqueda.value.trim()) return empresas.value
@@ -49,7 +51,7 @@ const cargarEmpresas = async () => {
     const res = await apiFetch('/api/empresas/')
     if (res.ok) {
       const data = await res.json()
-      empresas.value = Array.isArray(data) ? data : []
+      empresas.value = conOpcionTodas(Array.isArray(data) ? data : [])
     }
   } catch {} finally {
     cargandoEmpresas.value = false
@@ -357,6 +359,7 @@ onMounted(async () => {
       <table class="tabla-vehiculos">
         <thead>
           <tr>
+            <th v-if="esTodas">Empresa</th>
             <th>Patente</th>
             <th>Vehículo</th>
             <th>Año</th>
@@ -369,6 +372,7 @@ onMounted(async () => {
         </thead>
         <tbody>
           <tr v-for="v in vehiculos" :key="v.id" :class="{ inactivo: !v.activo }">
+            <td v-if="esTodas" class="td-empresa">{{ v.empresa_nombre || '—' }}</td>
             <td class="td-patente">
               <div class="patente-cell">
                 <div class="veh-thumb">

@@ -67,19 +67,28 @@ def _tiene_permiso(user, codigo: str) -> bool:
     return plan.permisos.filter(codigo=codigo).exists()
 
 
+def _es_todas(request):
+    """True si el SUPERADMIN pidió ver "Todas las empresas" (solo lectura)."""
+    return request.user.rol == Rol.SUPERADMIN \
+        and (request.query_params.get('empresa_id') or request.data.get('empresa_id')) == '__todas__'
+
+
 def _get_empresa(request):
     if request.user.rol == Rol.SUPERADMIN:
-        eid = request.query_params.get('empresa_id') or request.data.get('empresa_id')
-        if eid:
+        body_eid  = request.data.get('empresa_id')
+        query_eid = request.query_params.get('empresa_id')
+        # Body tiene prioridad sobre query param cuando trae empresa concreta.
+        eid = body_eid if (body_eid and body_eid != '__todas__') else query_eid
+        if eid and eid != '__todas__':
             try:
                 return Empresa.objects.get(pk=eid)
-            except Empresa.DoesNotExist:
+            except (Empresa.DoesNotExist, ValueError, TypeError):
                 return None
         return None
     return request.user.empresa
 
 
-def _ruta_dict(ruta, detalle=False):
+def _ruta_dict(ruta, detalle=False, con_empresa=False):
     paradas_qs = list(ruta.paradas.order_by('orden'))
     origen_nombre  = next((p.nombre for p in paradas_qs if p.tipo == 'origen'),  '')
     destino_nombre = next((p.nombre for p in paradas_qs if p.tipo == 'destino'), '')
@@ -112,6 +121,10 @@ def _ruta_dict(ruta, detalle=False):
         'notas':            ruta.notas,
         'created_at':       _iso(ruta.created_at),
     }
+
+    if con_empresa:
+        d['empresa_id']     = ruta.empresa_id
+        d['empresa_nombre'] = ruta.empresa.nombre if ruta.empresa_id else None
 
     if detalle:
         d['polyline'] = ruta.polyline or []
@@ -460,13 +473,16 @@ class RutasListView(APIView):
     def get(self, request):
         if not _tiene_permiso(request.user, 'rutas.ver'):
             return Response({'error': 'Sin permisos.'}, status=403)
-        empresa = _get_empresa(request)
-        if not empresa:
+        # Modo "Todas las empresas" (SUPERADMIN, solo lectura): sin filtro por empresa.
+        ver_todas = _es_todas(request)
+        empresa = None if ver_todas else _get_empresa(request)
+        if not ver_todas and not empresa:
             return Response({'error': 'Empresa no encontrada.'}, status=404)
+        emp_filter = {} if ver_todas else {'empresa': empresa}
 
         qs = (Ruta.objects
-              .filter(empresa=empresa)
-              .select_related('conductor', 'vehiculo')
+              .filter(**emp_filter)
+              .select_related('conductor', 'vehiculo', 'empresa')
               .prefetch_related('paradas'))
 
         estado       = request.query_params.get('estado')
@@ -487,20 +503,20 @@ class RutasListView(APIView):
 
         from django.db.models import Sum
         hoy   = date.today()
-        todas = Ruta.objects.filter(empresa=empresa)
-        mes   = todas.filter(fecha_programada__year=hoy.year, fecha_programada__month=hoy.month)
+        base  = Ruta.objects.filter(**emp_filter)
+        mes   = base.filter(fecha_programada__year=hoy.year, fecha_programada__month=hoy.month)
 
         resumen = {
-            'total':              todas.count(),
-            'activas':            todas.filter(estado='activo').count(),
-            'pendientes':         todas.filter(estado='pendiente').count(),
-            'finalizadas':        todas.filter(estado='finalizado').count(),
-            'canceladas':         todas.filter(estado='cancelado').count(),
+            'total':              base.count(),
+            'activas':            base.filter(estado='activo').count(),
+            'pendientes':         base.filter(estado='pendiente').count(),
+            'finalizadas':        base.filter(estado='finalizado').count(),
+            'canceladas':         base.filter(estado='cancelado').count(),
             'km_mes':             float(mes.aggregate(km=Sum('distancia_km'))['km'] or 0),
             'finalizadas_mes':    mes.filter(estado='finalizado').count(),
         }
 
-        return Response({'rutas': [_ruta_dict(r) for r in qs], 'resumen': resumen})
+        return Response({'rutas': [_ruta_dict(r, con_empresa=ver_todas) for r in qs], 'resumen': resumen})
 
     def post(self, request):
         if not _tiene_permiso(request.user, 'rutas.crear'):
@@ -625,14 +641,15 @@ class RutaDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _get_ruta(self, request, ruta_id):
-        empresa = _get_empresa(request)
-        if not empresa:
-            return None, Response({'error': 'Empresa no encontrada.'}, status=404)
+        qs = Ruta.objects.select_related('conductor', 'vehiculo').prefetch_related('paradas')
         try:
-            ruta = (Ruta.objects
-                    .select_related('conductor', 'vehiculo')
-                    .prefetch_related('paradas')
-                    .get(pk=ruta_id, empresa=empresa))
+            if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+                ruta = qs.get(pk=ruta_id)
+            else:
+                empresa = _get_empresa(request)
+                if not empresa:
+                    return None, Response({'error': 'Empresa no encontrada.'}, status=404)
+                ruta = qs.get(pk=ruta_id, empresa=empresa)
             return ruta, None
         except Ruta.DoesNotExist:
             return None, Response({'error': 'Ruta no encontrada.'}, status=404)
@@ -654,7 +671,8 @@ class RutaDetailView(APIView):
         if ruta.estado not in ('borrador', 'pendiente'):
             return Response({'error': 'Solo se pueden editar rutas en borrador o pendiente.'}, status=400)
 
-        empresa = _get_empresa(request)
+        # Para SUPERADMIN en "Todas": la empresa viene del propio registro.
+        empresa = ruta.empresa if _es_todas(request) else _get_empresa(request)
         data    = request.data
 
         for campo in ('nombre', 'descripcion', 'notas', 'tipo'):
@@ -719,9 +737,12 @@ class RutaIniciarView(APIView):
     def post(self, request, ruta_id):
         if not _tiene_permiso(request.user, 'rutas.crear'):
             return Response({'error': 'Sin permisos.'}, status=403)
-        empresa = _get_empresa(request)
         try:
-            ruta = Ruta.objects.select_related('vehiculo').get(pk=ruta_id, empresa=empresa)
+            if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+                ruta = Ruta.objects.select_related('vehiculo').get(pk=ruta_id)
+            else:
+                empresa = _get_empresa(request)
+                ruta = Ruta.objects.select_related('vehiculo').get(pk=ruta_id, empresa=empresa)
         except Ruta.DoesNotExist:
             return Response({'error': 'Ruta no encontrada.'}, status=404)
 
@@ -766,9 +787,12 @@ class RutaFinalizarView(APIView):
     def post(self, request, ruta_id):
         if not _tiene_permiso(request.user, 'rutas.crear'):
             return Response({'error': 'Sin permisos.'}, status=403)
-        empresa = _get_empresa(request)
         try:
-            ruta = Ruta.objects.select_related('vehiculo', 'conductor').get(pk=ruta_id, empresa=empresa)
+            if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+                ruta = Ruta.objects.select_related('vehiculo', 'conductor').get(pk=ruta_id)
+            else:
+                empresa = _get_empresa(request)
+                ruta = Ruta.objects.select_related('vehiculo', 'conductor').get(pk=ruta_id, empresa=empresa)
         except Ruta.DoesNotExist:
             return Response({'error': 'Ruta no encontrada.'}, status=404)
 
@@ -822,9 +846,12 @@ class RutaCancelarView(APIView):
     def post(self, request, ruta_id):
         if not _tiene_permiso(request.user, 'rutas.crear'):
             return Response({'error': 'Sin permisos.'}, status=403)
-        empresa = _get_empresa(request)
         try:
-            ruta = Ruta.objects.get(pk=ruta_id, empresa=empresa)
+            if _es_todas(request) and request.user.rol == Rol.SUPERADMIN:
+                ruta = Ruta.objects.get(pk=ruta_id)
+            else:
+                empresa = _get_empresa(request)
+                ruta = Ruta.objects.get(pk=ruta_id, empresa=empresa)
         except Ruta.DoesNotExist:
             return Response({'error': 'Ruta no encontrada.'}, status=404)
 

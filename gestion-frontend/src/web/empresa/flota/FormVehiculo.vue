@@ -1,9 +1,10 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
+import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
-import { validarPatente, validarAnioVehiculo } from '../../../utils/validators.js'
+import { validarPatente, validarAnioVehiculo, soloDescripcion } from '../../../utils/validators.js'
 
 const props = defineProps({ modo: { type: String, default: 'nuevo' } })
 const router = useRouter()
@@ -16,6 +17,13 @@ const cargando  = ref(props.modo === 'editar')
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
+
+const esSuperadmin = computed(() => {
+  try { return JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN' } catch { return false }
+})
+const esTodas       = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
+const empresas      = ref([])
+const empresaIdForm = ref('')
 
 const form = ref({
   patente: '',
@@ -76,6 +84,11 @@ const guardar = async () => {
     }
   }
 
+  if (esTodas.value && props.modo !== 'editar' && !empresaIdForm.value) {
+    error.value = 'Selecciona una empresa para registrar el vehículo.'
+    return
+  }
+
   guardando.value = true
   try {
     const url     = props.modo === 'editar' ? `/api/empresa/vehiculos/${vehiculoId}/` : '/api/empresa/vehiculos/'
@@ -92,8 +105,10 @@ const guardar = async () => {
       body.append('tipo_combustible', form.value.tipo_combustible)
       body.append('km_actuales',      form.value.km_actuales)
       body.append('foto',             fotoFile.value, fotoFile.value.name)
+      if (esTodas.value && props.modo !== 'editar') body.append('empresa_id', empresaIdForm.value)
     } else {
       body = { ...form.value, anio: form.value.anio || null }
+      if (esTodas.value && props.modo !== 'editar') body.empresa_id = empresaIdForm.value
     }
     const res  = await apiFetchEmpresa(url, { method, body })
     const data    = await res.json()
@@ -111,6 +126,10 @@ const guardar = async () => {
 
 onMounted(async () => {
   if (props.modo === 'editar') await cargarVehiculo()
+  if (props.modo !== 'editar' && esSuperadmin.value) {
+    const res = await apiFetch('/api/empresas/')
+    if (res.ok) empresas.value = await res.json()
+  }
 })
 </script>
 
@@ -130,6 +149,15 @@ onMounted(async () => {
     <div v-else class="card">
       <div v-if="error" class="alert-error">{{ error }}</div>
       <form @submit.prevent="guardar" class="form">
+
+        <!-- Selector de empresa (solo SUPERADMIN en modo "Todas", creación) -->
+        <div v-if="esTodas && modo !== 'editar'" class="form-group" style="margin-bottom:1.25rem">
+          <label class="label">Empresa</label>
+          <select v-model="empresaIdForm" class="input select" required>
+            <option value="" disabled>Seleccionar empresa…</option>
+            <option v-for="e in empresas" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+          </select>
+        </div>
 
         <div class="form-row">
           <div class="form-group">
@@ -153,11 +181,13 @@ onMounted(async () => {
         <div class="form-row">
           <div class="form-group">
             <label class="label">Marca</label>
-            <input v-model="form.marca" type="text" class="input" placeholder="Ej: Toyota" autocomplete="off" maxlength="60"/>
+            <input v-model="form.marca" @input="form.marca = soloDescripcion(form.marca)"
+              type="text" class="input" placeholder="Ej: Toyota" autocomplete="off" maxlength="60"/>
           </div>
           <div class="form-group">
             <label class="label">Modelo</label>
-            <input v-model="form.modelo" type="text" class="input" placeholder="Ej: Hilux" autocomplete="off" maxlength="60"/>
+            <input v-model="form.modelo" @input="form.modelo = soloDescripcion(form.modelo)"
+              type="text" class="input" placeholder="Ej: Hilux 560" autocomplete="off" maxlength="60"/>
           </div>
         </div>
 

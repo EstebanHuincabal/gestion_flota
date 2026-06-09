@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../../utils/permisos.js'
 import { useToast } from '../../../../utils/useToast.js'
 import ConfirmModal from '../../../../components/ConfirmModal.vue'
@@ -15,6 +15,8 @@ const esSuperadmin = JSON.parse(localStorage.getItem('usuario') || '{}').rol ===
 
 // ── Selector de empresa (solo SUPERADMIN) ─────────────────
 const empresaActiva    = ref(getEmpresaActiva())
+// Modo "Todas las empresas": vista de solo lectura con columna de empresa.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 const empresas         = ref([])
 const cargandoEmpresas = ref(false)
 const mostrarDropdown  = ref(false)
@@ -32,7 +34,7 @@ const cargarEmpresas = async () => {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } finally {
     cargandoEmpresas.value = false
   }
@@ -329,6 +331,7 @@ onMounted(async () => {
         <table class="table">
           <thead>
             <tr>
+              <th v-if="esTodas">Empresa</th>
               <th>Vehículo</th>
               <th>Tipo / Descripción</th>
               <th>Programada para</th>
@@ -341,6 +344,7 @@ onMounted(async () => {
           </thead>
           <tbody>
             <tr v-for="m in mantencionesFiltradas" :key="m.id">
+              <td v-if="esTodas" class="font-medium">{{ m.empresa_nombre || '—' }}</td>
               <td>
                 <strong>{{ m.vehiculo_patente }}</strong>
                 <span class="text-xs text-muted block">{{ m.vehiculo_descripcion }}</span>
@@ -405,7 +409,7 @@ onMounted(async () => {
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                   </button>
                   <button
-                    v-if="m.estado === 'pendiente'"
+                    v-if="!esTodas && m.estado === 'pendiente'"
                     class="btn-icon"
                     title="Marcar En Proceso"
                     @click="marcarEnProceso(m)"

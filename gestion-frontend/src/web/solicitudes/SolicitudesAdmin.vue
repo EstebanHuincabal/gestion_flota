@@ -1,11 +1,13 @@
 ﻿<script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { apiFetch } from '../../utils/api.js'
-import { getEmpresaActiva, setEmpresaActiva, clearEmpresaActiva } from '../../utils/empresaActiva.js'
+import { getEmpresaActiva, setEmpresaActiva, clearEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 
 // ── Selector de empresa ──────────────────────────────────────────────────────
 const empresas            = ref([])
 const empresaSeleccionada = ref(null)
+// Modo "Todas las empresas": solo lectura (sin aprobar/rechazar ni WebSocket).
+const esTodas = computed(() => empresaSeleccionada.value?.id === EMPRESA_TODAS)
 const busquedaEmpresa     = ref('')
 const cargandoEmpresas    = ref(false)
 const mostrarDropdown     = ref(false)
@@ -20,7 +22,7 @@ async function cargarEmpresas() {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } catch {
     empresas.value = []
   } finally {
@@ -293,7 +295,9 @@ watch(empresaSeleccionada, (nueva) => {
     filtroBuscar.value     = ''
     filtroFechaDesde.value = ''
     filtroFechaHasta.value = ''
-    conectarWS(nueva.id)
+    // En modo "Todas" no hay canal WebSocket único por empresa: solo carga.
+    if (nueva.id === EMPRESA_TODAS) desconectarWS()
+    else conectarWS(nueva.id)
     cargar(true)
   }
 })
@@ -506,6 +510,7 @@ onUnmounted(() => {
         <table v-else class="sc-table">
           <thead>
             <tr>
+              <th v-if="esTodas">Empresa</th>
               <th>Conductor</th>
               <th>Tipo</th>
               <th>Título</th>
@@ -518,6 +523,7 @@ onUnmounted(() => {
           </thead>
           <tbody>
             <tr v-for="sol in solicitudes" :key="sol.id" :class="{ 'row-pendiente': sol.estado === 'pendiente' }">
+              <td v-if="esTodas" class="td-empresa">{{ sol.empresa_nombre || '—' }}</td>
               <td>
                 <div class="conductor-cell">
                   <div class="conductor-avatar">{{ sol.conductor_iniciales || '?' }}</div>

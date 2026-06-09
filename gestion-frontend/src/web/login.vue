@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { initEmpresaActivaDefault } from '../utils/empresaActiva.js'
 
 const router = useRouter()
 
@@ -117,6 +118,8 @@ const handleLogin = async () => {
       }
       sessionStorage.setItem('plan_nombre',   data.user.plan_nombre   || '')
       sessionStorage.setItem('plan_permisos', JSON.stringify(data.user.plan_permisos || []))
+      // SUPERADMIN entra con "Todas las empresas" preseleccionada.
+      initEmpresaActivaDefault()
       const destino = data.user.rol === 'SUPERADMIN' ? '/dashboard' : (data.user.rol === 'USUARIO' ? '/empresa/dashboard' : '/login')
       router.push(destino)
     } else {

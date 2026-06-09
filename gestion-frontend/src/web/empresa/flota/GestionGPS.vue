@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch, safeJsonParse } from '../../../utils/api.js'
 import { tienePermiso } from '../../../utils/permisos.js'
-import { getEmpresaActiva, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { getEmpresaActiva, useEmpresaNav, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 import SelectorEmpresa from '../../../components/SelectorEmpresa.vue'
 
@@ -22,6 +22,9 @@ const esSuperadmin = computed(() => {
 })
 const empresaActiva = ref(getEmpresaActiva())
 const sinEmpresa = computed(() => esSuperadmin.value && !empresaActiva.value)
+// Modo "Todas las empresas": vista de solo lectura (la gestión exige una empresa
+// concreta, así que se ocultan las acciones y se muestra la columna Empresa).
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 
 const MODELOS = [
   { value: 'emulador',  label: 'Emulador NMEA' },
@@ -91,14 +94,24 @@ onMounted(async () => {
 })
 
 // ── Modal alta / edición ──────────────────────────────────────────────────────
-const modalForm   = ref(false)
-const editandoId  = ref(null)
-const form        = ref({ imei: '', modelo: 'emulador', modelo_otro: '', activo: true })
-const guardando   = ref(false)
+const modalForm      = ref(false)
+const editandoId     = ref(null)
+const form           = ref({ imei: '', modelo: 'emulador', modelo_otro: '', activo: true })
+const guardando      = ref(false)
+const empresaIdForm  = ref('')   // empresa elegida en el form cuando esTodas
+const listaEmpresas  = ref([])
+
+async function cargarListaEmpresas() {
+  if (!esSuperadmin.value || listaEmpresas.value.length) return
+  const res = await apiFetch('/api/empresas/')
+  if (res.ok) listaEmpresas.value = await res.json()
+}
 
 function abrirCrear() {
-  editandoId.value = null
+  editandoId.value    = null
+  empresaIdForm.value = ''
   form.value = { imei: '', modelo: 'emulador', modelo_otro: '', activo: true }
+  if (esTodas.value) cargarListaEmpresas()
   modalForm.value = true
 }
 
@@ -114,7 +127,10 @@ async function guardar() {
     toast('error', 'El IMEI es obligatorio y no puede superar los 20 caracteres.')
     return
   }
-  // Cuando la marca es "Otro" hay que anotar el nombre del modelo.
+  if (esTodas.value && !editandoId.value && !empresaIdForm.value) {
+    toast('error', 'Selecciona una empresa para registrar el dispositivo.')
+    return
+  }
   const modeloOtro = (form.value.modelo_otro || '').trim()
   if (form.value.modelo === 'otro' &&
       (modeloOtro.length < MODELO_OTRO_MIN || modeloOtro.length > MODELO_OTRO_MAX)) {
@@ -127,7 +143,9 @@ async function guardar() {
       ? `/api/empresa/gps/dispositivos/${editandoId.value}/`
       : '/api/empresa/gps/dispositivos/'
     const method = editandoId.value ? 'PUT' : 'POST'
-    const res = await apiFetch(url, { method, body: { ...form.value, imei, modelo_otro: modeloOtro } })
+    const body   = { ...form.value, imei, modelo_otro: modeloOtro }
+    if (esTodas.value && !editandoId.value) body.empresa_id = empresaIdForm.value
+    const res = await apiFetch(url, { method, body })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       toast('error', err.error || 'No se pudo guardar el dispositivo.')
@@ -350,6 +368,7 @@ async function desasignar() {
         <table class="w-full text-sm">
           <thead>
             <tr class="text-left text-gray-500 border-b border-gray-100 bg-gray-50">
+              <th v-if="esTodas" class="px-4 py-3 font-semibold">Empresa</th>
               <th class="px-4 py-3 font-semibold">IMEI</th>
               <th class="px-4 py-3 font-semibold">Modelo</th>
               <th class="px-4 py-3 font-semibold">Vehículo asignado</th>
@@ -359,6 +378,7 @@ async function desasignar() {
           </thead>
           <tbody>
             <tr v-for="d in dispositivos" :key="d.id" class="border-b border-gray-50 hover:bg-gray-50/60">
+              <td v-if="esTodas" class="px-4 py-3 text-gray-700 font-medium">{{ d.empresa_nombre || '—' }}</td>
               <td class="px-4 py-3 font-mono text-gray-700">{{ d.imei }}</td>
               <td class="px-4 py-3 text-gray-600">{{ d.modelo_display }}</td>
               <td class="px-4 py-3">
@@ -404,6 +424,16 @@ async function desasignar() {
         <h2 class="text-lg font-bold text-gray-800 mb-4">
           {{ editandoId ? 'Editar dispositivo' : 'Registrar dispositivo' }}
         </h2>
+
+        <!-- Empresa (solo SUPERADMIN en modo "Todas", al crear) -->
+        <template v-if="esTodas && !editandoId">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">Empresa *</label>
+          <select v-model="empresaIdForm"
+            class="w-full mb-4 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none">
+            <option value="" disabled>— Seleccionar empresa —</option>
+            <option v-for="e in listaEmpresas.filter(x => x.id !== '__todas__')" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+          </select>
+        </template>
 
         <label class="block text-sm font-semibold text-gray-700 mb-1">IMEI</label>
         <input v-model="form.imei" type="text" maxlength="20" inputmode="numeric"

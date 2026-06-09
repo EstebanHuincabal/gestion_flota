@@ -1,7 +1,7 @@
 ﻿<script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { apiFetch } from '../../utils/api.js'
-import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva } from '../../utils/empresaActiva.js'
+import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import { useToast } from '../../utils/useToast.js'
 
 const toast = useToast()
@@ -9,6 +9,8 @@ const toast = useToast()
 // ── Empresa selector (SUPERADMIN)
 const esSuperadmin     = JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN'
 const empresaActiva    = ref(getEmpresaActiva())
+// Modo "Todas las empresas": vista de solo lectura con columna de empresa.
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 const empresas         = ref([])
 const cargandoEmpresas = ref(false)
 const mostrarDropdown  = ref(false)
@@ -26,7 +28,7 @@ async function cargarEmpresas() {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } finally {
     cargandoEmpresas.value = false
   }
@@ -65,8 +67,9 @@ const modalRenovar = ref(null)   // doc a renovar
 const confirmEliminar = ref(null)
 
 // ── Form de subida/edición
-const editandoId = ref(null)
-const guardando  = ref(false)
+const editandoId        = ref(null)
+const empresaDocForm    = ref('')   // empresa elegida en el form cuando esTodas
+const guardando         = ref(false)
 const form = ref({
   entidad: 'vehiculo',
   vehiculo_id: '',
@@ -170,7 +173,8 @@ async function cargarAuxiliares() {
 
 // ── Subir / editar documento
 function abrirNuevo() {
-  editandoId.value = null
+  editandoId.value   = null
+  empresaDocForm.value = ''
   form.value = { entidad: 'vehiculo', vehiculo_id: '', conductor_id: '', tipo: '', fecha_emision: '', fecha_vencimiento: '', archivo: null, notas: '' }
   archivoPreview.value = null
   errForm.value = {}
@@ -220,6 +224,7 @@ watch(() => form.value.entidad, () => { form.value.tipo = '' })
 
 function validarForm() {
   const err = {}
+  if (esTodas.value && !editandoId.value && !empresaDocForm.value) err.empresaDoc = 'Selecciona una empresa.'
   if (!form.value.tipo) err.tipo = 'Selecciona un tipo.'
   if (form.value.entidad === 'vehiculo' && !form.value.vehiculo_id) err.vehiculo_id = 'Selecciona un vehículo.'
   if (form.value.entidad === 'conductor' && !form.value.conductor_id) err.conductor_id = 'Selecciona un conductor.'
@@ -251,7 +256,9 @@ async function guardarDocumento() {
       ? `/api/empresa/documentos/${editandoId.value}/`
       : '/api/empresa/documentos/'
 
-    const empresaId = esSuperadmin ? empresaActiva.value?.id : undefined
+    const empresaId = esTodas.value
+      ? empresaDocForm.value
+      : (esSuperadmin ? empresaActiva.value?.id : undefined)
 
     let body
     if (form.value.archivo) {
@@ -628,6 +635,7 @@ onMounted(async () => {
           <table class="tabla">
             <thead>
               <tr>
+                <th v-if="esTodas">Empresa</th>
                 <th>Tipo</th>
                 <th>Documento</th>
                 <th>Asociado a</th>
@@ -640,6 +648,7 @@ onMounted(async () => {
             </thead>
             <tbody>
               <tr v-for="doc in docsFiltrados" :key="doc.id">
+                <td v-if="esTodas" class="font-medium">{{ doc.empresa_nombre || '—' }}</td>
                 <td>
                   <span class="badge" :style="doc.entidad === 'vehiculo'
                     ? 'background:#EEF2FF;color:#4338CA'
@@ -703,6 +712,16 @@ onMounted(async () => {
             <button class="btn-close" @click="modalSubir = false">✕</button>
           </div>
           <div class="modal-body">
+            <!-- Empresa (solo SUPERADMIN en modo "Todas", al crear) -->
+            <div v-if="esTodas && !editandoId" class="field">
+              <label class="label">Empresa *</label>
+              <select v-model="empresaDocForm" class="input" :class="errForm.empresaDoc && 'input-error'">
+                <option value="" disabled>— Seleccionar empresa —</option>
+                <option v-for="e in empresas.filter(e => e.id !== '__todas__')" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+              </select>
+              <p v-if="errForm.empresaDoc" class="field-err">{{ errForm.empresaDoc }}</p>
+            </div>
+
             <!-- Entidad -->
             <div class="field">
               <label class="label">Entidad *</label>

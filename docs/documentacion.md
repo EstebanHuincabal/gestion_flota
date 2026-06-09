@@ -1,6 +1,6 @@
 # Sistema de Gestión de Flota — Documentación Técnica
 
-> **Versión:** 3.0 · **Última actualización:** Junio 2026  
+> **Versión:** 3.1 · **Última actualización:** Junio 2026  
 > **Stack:** Django 5 · Vue 3 · Capacitor 8 · PostgreSQL · JWT
 
 ---
@@ -19,13 +19,17 @@
     - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
     - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
     - 9.15 [Solicitudes de Conductores (USUARIO + SUPERADMIN)](#915-solicitudes-de-conductores-panel-web)
+    - 9.16 [Geolocalización GPS (Traccar)](#916-geolocalización-gps-traccar)
 10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
 11. [Modelo de datos](#11-modelo-de-datos)
 12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
 13. [Sistema de notificaciones](#13-sistema-de-notificaciones)
 14. [Alertas de interfaz (Toasts)](#14-alertas-de-interfaz-toasts)
-15. [Variables de entorno](#15-variables-de-entorno)
-16. [Manejo de errores (v2.5)](#16-manejo-de-errores-v25)
+15. [Sistema de emails transaccionales](#15-sistema-de-emails-transaccionales)
+16. [Variables de entorno](#16-variables-de-entorno)
+17. [Manejo de errores](#17-manejo-de-errores-v25)
+18. [Pasarela de pago Transbank y suscripciones](#18-pasarela-de-pago-transbank-y-suscripciones)
+19. [Notas técnicas y apéndices](#19-notas-técnicas-y-apéndices)
 
 ---
 
@@ -1188,6 +1192,65 @@ GPS físico ──(protocolo del fabricante)──▶ Traccar ──(forward JSO
 
 ---
 
+### 9.17 Selector de empresa del SUPERADMIN y opción «Todas las empresas»
+
+Los módulos del panel SUPERADMIN dejan elegir de qué empresa ver los datos. Hay dos
+implementaciones de selector que comparten el mismo estado (`empresaActiva` en
+`sessionStorage`): el componente compartido `SelectorEmpresa.vue` (Gestión GPS, Mapa de
+flota, Gastos correctivos) y selectores inline propios de cada módulo (Conductores,
+Flota, Documentos, Mantenciones, Rutas, Solicitudes, Predictivo). En todos, `apiFetch`
+inyecta `?empresa_id=X` en toda URL `/api/empresa/`.
+
+**Opción «Todas las empresas»:** el dropdown incluye una entrada fija (`OPCION_TODAS`,
+helper `conOpcionTodas()` en `empresaActiva.js`) que selecciona el centinela
+`empresa_id=__todas__` (constante `EMPRESA_TODAS`, replicada en el backend). Viaja por la
+misma tubería que una empresa normal, de modo que el backend decide filtrar (o no) por
+empresa. Cubre todos los módulos con selector: conductores, flota, documentos,
+mantenciones (programados/calendario/historial), rutas, solicitudes, predictivo,
+calendario global, GPS y gastos correctivos.
+
+- **Lectura y escritura habilitadas.** En modo «Todas» se muestran datos de todas las
+  empresas y los botones de crear/editar/eliminar permanecen visibles.
+  - **Crear:** los formularios de creación muestran un selector de empresa obligatorio
+    cuando `esTodas`. El `empresa_id` concreto elegido se envía en el body del POST.
+    Módulos con selector de empresa en el form: `NuevoConductor.vue`, `FormVehiculo.vue`,
+    `Documentos.vue` (modal inline), `Rutas.vue` (paso 1 del modal). En mantenciones la
+    empresa se resuelve automáticamente desde el vehículo elegido.
+  - **Editar/eliminar:** los botones aparecen directamente; el `empresa_id` viene del
+    propio registro y el backend resuelve la empresa desde él.
+- **Identificación de origen.** En modo «Todas», las respuestas incluyen
+  `empresa_nombre` por fila y las tablas/popups muestran una columna/línea de empresa.
+- **Tiempo real en el mapa.** El WebSocket de GPS es por empresa (canal
+  `gps_{empresa_id}`), por lo que en modo «Todas» `MapaFlota.vue` no abre WS y refresca
+  las posiciones por *polling* periódico (cada 20 s).
+- **Presupuesto en correctivos.** El presupuesto mensual es por empresa: en modo «Todas»
+  no aplica y el KPI de impacto se muestra como «no aplica al ver todas las empresas».
+
+**Backend (filtrado condicional + escritura):** cada vista de lectura detecta el
+centinela con `es_todas(request)` (`views.py`) o su equivalente local y omite el filtro
+`empresa=` cuando corresponde, agregando `empresa_nombre` por fila. Los endpoints de
+detalle (`conductores_detalle`, `vehiculos_detalle`, `mantenciones_detalle`,
+`RutaDetailView`, `SolicitudDetailView`, `SolicitudAprobarView`, `SolicitudRechazarView`)
+resuelven la empresa desde el propio registro cuando el query param es `__todas__`,
+permitiendo editar y eliminar. Los POST de creación en modo «Todas» aceptan `empresa_id`
+en el body (nunca `__todas__`; devuelven 400 si llega el centinela). El `_get_empresa()`
+de rutas prioriza `request.data['empresa_id']` sobre el query param.
+
+**Endpoints con soporte completo (lectura + escritura) en modo «Todas»:**
+`conductores_lista_crear`, `conductores_detalle`, `conductores_asignar`,
+`conductores_desasignar`, `vehiculos_lista_crear`, `vehiculos_detalle`,
+`mantenciones_lista_crear`, `mantenciones_detalle`, `RutasListView`, `RutaDetailView`,
+`RutaIniciarView`, `RutaFinalizarView`, `RutaCancelarView`, `SolicitudesListView`,
+`SolicitudDetailView`, `SolicitudAprobarView`, `SolicitudRechazarView`,
+`DocumentosListView`, GPS y gastos correctivos.
+
+**Frontend:** `SelectorEmpresa.vue` · `empresaActiva.js`
+(`EMPRESA_TODAS`, `esEmpresaTodas`, `OPCION_TODAS`, `conOpcionTodas`) + selectores inline
+de cada módulo. Los `v-if="!esTodas"` sobre botones de acción fueron eliminados; los
+formularios de creación muestran un `<select>` de empresa cuando `esTodas`.
+
+---
+
 ## 10. Referencia de la API REST
 
 Todos los endpoints (excepto `/api/login/` y `/api/token/refresh/`) requieren el header:
@@ -1392,36 +1455,13 @@ muestra la foto si existe, o el ícono de camión como fallback. La pueden subir
 #### Cambio de plan self-service (upgrade/downgrade)
 
 El usuario (rol USUARIO) cambia de plan sin intervención del SUPERADMIN vía
-`POST /api/empresa/cambiar-plan/` (`{plan_id}`). Requiere suscripción **activa y
-vigente**. El backend detecta el tipo por precio:
+`POST /api/empresa/cambiar-plan/` (`{plan_id}`). El backend detecta el tipo por
+precio: **upgrade** (inmediato, cobra la diferencia prorrateada), **downgrade**
+(diferido al fin del período) o **lateral** (cambio directo).
 
-- **Upgrade** (plan más caro): cambio **inmediato**. Se cobra solo la diferencia
-  **prorrateada** por los días restantes del período (`diferencia × días / 30`).
-  **No requiere tarjeta guardada**: si la empresa tiene tarjeta OneClick se cobra
-  al instante; si no, el backend devuelve `{tipo:'upgrade_webpay', url}` y el
-  frontend redirige a **Webpay Plus** por la diferencia. El upgrade se aplica al
-  confirmarse el pago en `PagoRetornoView` (marcado con `proracion_upgrade` en
-  `respuesta_tb`, **sin reiniciar** el período). El precio completo del nuevo plan
-  aplica en la próxima renovación.
-- **Downgrade** (plan más barato): **diferido**. Se guarda en
-  `Suscripcion.plan_programado` + `fecha_cambio_programado = fecha_fin_periodo`;
-  el cliente conserva su plan hasta vencer. Se puede revertir con
-  `/cancelar-cambio-plan/`. El cron `verificar_suscripciones` lo aplica al vencer
-  (o el autocobro renueva ya en el plan nuevo). Helper reutilizable:
-  `aplicar_downgrade_programado(sus)`.
-- **Lateral** (mismo precio): cambio directo inmediato.
-- **Límites**: al bajar, el exceso queda en solo-lectura — `verificar_limite_plan`
-  bloquea **crear** nuevos recursos hasta volver bajo el límite (no se borra nada).
-
-Frontend: `MiPlanTab.vue` (botón "Mejorar"/"Cambiar" por plan, modal con la
-proración o la fecha de aplicación, y banner para cancelar un cambio programado).
-
-**Autoría de pagos confirmados en el retorno de Transbank:** el retorno de Webpay
-(`PagoRetornoView`) es un request **sin sesión** (lo llama Transbank), por lo que no
-hay usuario autenticado. Para no perder quién originó la operación,
-`PagoTransbank.iniciado_por` guarda el usuario que **inició** el pago; al confirmarse,
-ese usuario se usa como `CambioPlan.cambiado_por` y en `registrar_log(usuario=...)`.
-El autocobro automático (cron) deja `iniciado_por = null` = realizado por el sistema.
+> El flujo completo — proración, cobro OneClick vs. Webpay Plus, aplicación
+> diferida del downgrade y autoría de los pagos — está documentado en detalle en
+> [§18. Pasarela de pago Transbank y suscripciones](#18-pasarela-de-pago-transbank-y-suscripciones).
 
 ### Configuración
 
@@ -1644,7 +1684,7 @@ El componente `AppToast.vue` escucha este evento globalmente y muestra la alerta
 
 ---
 
-## 16. Sistema de emails transaccionales
+## 15. Sistema de emails transaccionales
 
 ### Arquitectura
 
@@ -1684,7 +1724,7 @@ La configuración SMTP es **dinámica** — se almacena cifrada en la base de da
 
 ---
 
-## 15. Variables de entorno
+## 16. Variables de entorno
 
 ### Archivo centralizado
 
@@ -1705,7 +1745,11 @@ Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No 
 | `FRONTEND_URL` | No | Django | URL pública del frontend para links en emails (por defecto: `http://localhost:7183`) |
 | `TRANSBANK_ENVIRONMENT` | No | Django | `integration` (por defecto) o `production` |
 | `TRANSBANK_COMMERCE_CODE` | No | Django | Código de comercio Webpay Plus |
-| `TRANSBANK_API_KEY` | No | Django | API key de Transbank |
+| `TRANSBANK_API_KEY` | No | Django | API key de Transbank (Webpay Plus + OneClick) |
+| `ONECLICK_COMMERCE_CODE` | No | Django | Código de comercio mall de Webpay OneClick |
+| `ONECLICK_CHILD_CODE` | No | Django | Código de tienda hija (child) de OneClick |
+
+> Detalle completo de la pasarela de pago en [§18](#18-pasarela-de-pago-transbank-y-suscripciones).
 
 ### Configuración CORS
 
@@ -1743,7 +1787,7 @@ quedó en el historial de Git y limpiar el historial (BFG / git-filter-repo).
 
 ---
 
-## 16. Manejo de errores (v2.5)
+## 17. Manejo de errores (v2.5)
 
 Sistema profesional de manejo de errores implementado para garantizar estabilidad en pruebas QA y producción.
 
@@ -1844,8 +1888,254 @@ Todos los accesos a `localStorage`/`sessionStorage` del router guard usan `safeJ
 
 ---
 
+## 18. Pasarela de pago Transbank y suscripciones
 
-## App conductor — Banners y safe-area (barra de estado)
+Toda la facturación SaaS de la plataforma se procesa con **Transbank** (la pasarela
+de pago chilena). El sistema usa **dos productos** de Transbank, ambos a través del
+SDK oficial `transbank-sdk`:
+
+| Producto | Uso en la plataforma |
+|---|---|
+| **Webpay Plus** | Pago puntual (one-shot): el usuario es redirigido al formulario de Transbank, ingresa su tarjeta y vuelve. Se usa para el **primer pago / reactivación** y para el **cobro de la proración** de un upgrade cuando la empresa no tiene tarjeta guardada. |
+| **Webpay OneClick Mall** | Tarjeta **inscrita** una sola vez para **cobros recurrentes sin intervención del usuario**: renovación automática mensual, cobro inmediato de proración de upgrade. |
+
+> Todo el código de pagos vive en `g_de_flota/views_planes.py`. El cobro recurrente
+> automático lo dispara el cron `verificar_suscripciones` (ver §18.6).
+
+### 18.1 Configuración (variables de entorno)
+
+El comportamiento (ambiente de integración vs. producción) se controla por env vars,
+leídas en `settings.py`:
+
+| Variable | Descripción |
+|---|---|
+| `TRANSBANK_ENVIRONMENT` | `integration` (por defecto) o `production`. Selecciona `IntegrationType.TEST` o `IntegrationType.LIVE` en el SDK. |
+| `TRANSBANK_COMMERCE_CODE` | Código de comercio de **Webpay Plus**. |
+| `TRANSBANK_API_KEY` | API key (llave secreta) de Transbank — compartida por Webpay Plus y OneClick. |
+| `ONECLICK_COMMERCE_CODE` | Código de comercio **mall** de OneClick (el padre que agrupa las tiendas hijas). |
+| `ONECLICK_CHILD_CODE` | Código de **tienda hija** (child) de OneClick por la que se cursa el cobro real. |
+
+En el ambiente de **integración**, si las variables están vacías el SDK usa los
+códigos públicos de prueba de Transbank. **No se debe** dejar `TRANSBANK_ENVIRONMENT=production`
+sin credenciales reales. Las funciones `_get_webpay_transaction()`,
+`_get_oneclick_inscription()` y `_get_oneclick_transaction()` centralizan la
+construcción de cada cliente del SDK según el ambiente.
+
+### 18.2 Modelos involucrados
+
+| Modelo | Rol |
+|---|---|
+| `Suscripcion` | Estado de la suscripción de la empresa (1:1 con `Empresa`). Campos clave: `estado` (`pendiente`/`activa`/`gracia`/`suspendida`/`cancelada`), `fecha_fin_periodo`, `plan`, y para el downgrade diferido `plan_programado` + `fecha_cambio_programado`. |
+| `PagoTransbank` | Registro de **cada** transacción (aprobada o no). Campos: `token`, `orden_compra` (únicos), `monto`, `estado`, `plan_nombre`, `respuesta_tb` (JSON con la respuesta cruda del SDK), `fecha_pago` e `iniciado_por` (quién originó el pago). |
+| `TarjetaGuardada` | Tarjeta inscrita con OneClick (1:1 con `Empresa`). Guarda `tbk_user` (token de cobro de Transbank), `username_tb`, `last_4` y `card_type`. **Nunca** almacena el número de tarjeta real. |
+
+### 18.3 Flujo de Webpay Plus (pago puntual)
+
+```
+USUARIO                  Backend (Django)                 Transbank
+  │  POST /api/pago/iniciar/  │                               │
+  │ ─────────────────────────▶│  tx.create(buy_order, amount, │
+  │                           │           return_url) ───────▶│
+  │                           │◀───────── {token, url} ───────│
+  │                           │  crea PagoTransbank(estado=   │
+  │                           │           'iniciado')         │
+  │◀──── {url, token} ────────│                               │
+  │                                                           │
+  │ ───────── redirige el navegador a la url de Webpay ──────▶│
+  │ ◀──────── el usuario paga en el formulario de Transbank ──│
+  │                                                           │
+  │ ◀─ Transbank redirige a /api/pago/retorno/?token_ws=… ────│
+  │  GET /api/pago/retorno/   │                               │
+  │ ─────────────────────────▶│  tx.commit(token_ws) ────────▶│
+  │                           │◀──── response_code = 0 ───────│
+  │                           │  PagoTransbank.estado=        │
+  │                           │  'aprobado'; activa la sus.;  │
+  │                           │  fecha_fin_periodo = +30 días │
+  │◀── redirect a /empresa/pago/exitoso ──│                   │
+```
+
+Puntos relevantes de `PagoIniciarView` y `PagoRetornoView`:
+
+- **Bloqueo anti-doble-pago:** `PagoIniciarView` rechaza iniciar un pago si la
+  suscripción activa aún tiene **más de 7 días** de vigencia.
+- **`PagoRetornoView` es público y sin sesión** (lo invoca el navegador tras volver
+  de Transbank). Es `csrf_exempt` y acepta `token_ws` por GET (`?token_ws=`) o POST.
+- **Idempotencia:** si el `PagoTransbank` ya está `aprobado`/`rechazado`, no se vuelve
+  a confirmar (evita doble commit) y se redirige al resultado correspondiente.
+- **Cuotas no permitidas:** si el usuario eligió pagar en cuotas (`installments_number > 1`),
+  el pago se **reembolsa** (`tx.refund`) y se marca rechazado.
+- **Resultado:** con `response_code == 0` se aprueba, se activa la suscripción
+  (`estado='activa'`, `fecha_fin_periodo = now + 30 días`), se sincroniza
+  `Empresa.plan`, se notifica in-app y por email (`email_pago_aprobado`). En caso
+  contrario se marca rechazado y se envía `email_pago_rechazado`. Errores del SDK
+  dejan el pago en `fallido` y registran log de SEGURIDAD.
+- Al confirmar redirige al frontend a `/empresa/pago/exitoso?orden=…` o
+  `/empresa/pago/fallido?error=…`.
+
+### 18.4 Flujo de OneClick Mall (tarjeta guardada)
+
+**Inscripción de la tarjeta** (una sola vez):
+
+1. `POST /api/empresa/tarjeta/inscribir/` → `inscription.start(username, email, response_url)`
+   devuelve `{url, token}`; el frontend redirige al formulario de Transbank. No se
+   permite inscribir si ya existe una `TarjetaGuardada`.
+2. El usuario ingresa su tarjeta en Transbank y vuelve a
+   `GET /api/empresa/tarjeta/retorno/` (`TarjetaInscripcionRetornoView`, pública,
+   `csrf_exempt`).
+3. El backend llama a `inscription.finish(token)`; si `response_code == 0` guarda la
+   `TarjetaGuardada` con el `tbk_user`, `last_4` y `card_type`, y redirige al frontend.
+4. `GET /api/empresa/tarjeta/` informa el estado; `POST /api/empresa/tarjeta/eliminar/`
+   la desinscribe (`inscription.delete`) y borra el registro.
+
+**Cobro con la tarjeta guardada:** se hace con `MallTransaction.authorize(...)` usando
+`username_tb` + `tbk_user`, una **orden padre** (`parent_buy_order`) y un detalle hijo
+con `commerce_code = ONECLICK_CHILD_CODE`, el `amount` y `installments_number=1`. Si el
+`response_code` del detalle es `0`, el cobro se aprobó y se crea un `PagoTransbank`
+aprobado con `respuesta_tb.via` indicando el origen (`oneclick` / `proracion_upgrade` /
+`autocobro`).
+
+### 18.5 Cambio de plan self-service: upgrades y downgrades
+
+Endpoint: `POST /api/empresa/cambiar-plan/` (`cambiar_plan_self_service`). Requiere rol
+`USUARIO`, empresa asignada y una **suscripción activa y vigente** (si no, responde
+`SIN_SUSCRIPCION_ACTIVA`). El backend compara `precio_mensual` del plan actual vs. el
+solicitado y decide el tipo:
+
+> **Nota de implementación:** la vista **no** usa `@transaction.atomic` a propósito.
+> Hace llamadas HTTP a Transbank (~2-3 s) que no deben correr dentro de una
+> transacción; con SQLite mantener el lock de escritura durante esa espera provoca
+> *"database is locked"* frente al polling concurrente del frontend.
+
+#### Upgrade (plan más caro) — inmediato y prorrateado
+
+El cambio se aplica **al instante**. Solo se cobra la **diferencia prorrateada** por
+los días que faltan hasta el vencimiento del período ya pagado:
+
+```
+monto = round( (precio_nuevo − precio_actual) × días_restantes / 30 )
+```
+
+calculado en `_proracion_upgrade(sus, plan_nuevo)` (`DIAS_CICLO = 30`). Según la
+situación de la empresa:
+
+| Caso | Comportamiento |
+|---|---|
+| **Sin diferencia que cobrar** (p. ej. último día, `monto ≤ 0`) | Se aplica el upgrade directo, sin cobro. |
+| **Con tarjeta OneClick guardada** | `_cobrar_oneclick(...)` cobra la diferencia al instante; si se aprueba, se aplica el plan. Si Transbank rechaza → `COBRO_RECHAZADO`. |
+| **Sin tarjeta guardada** | `_iniciar_webpay_proracion(...)` crea una transacción Webpay Plus por la diferencia y devuelve `{tipo:'upgrade_webpay', url}`; el frontend redirige a Transbank. El upgrade se aplica **al confirmarse** el pago en `PagoRetornoView`. |
+
+El pago por Webpay de una proración se marca al iniciarlo con
+`respuesta_tb = {'proracion_upgrade': True, 'plan_id': …}`. En el retorno,
+`PagoRetornoView` detecta ese marcador y aplica el cambio de plan **sin reiniciar el
+período** (`fecha_fin_periodo` no se toca) — a diferencia de un pago de renovación
+normal, que sí extiende 30 días. El precio completo del nuevo plan recién se cobra en
+la **próxima renovación**.
+
+#### Downgrade (plan más barato) — diferido al fin del período
+
+El cambio **no es inmediato**: el cliente conserva el plan que pagó hasta que venza.
+Se programa guardando en la suscripción:
+
+```python
+sus.plan_programado          = plan_nuevo            # el plan inferior
+sus.fecha_cambio_programado  = sus.fecha_fin_periodo # cuándo se aplica
+```
+
+El downgrade efectivo ocurre por **una** de estas dos vías (lo que pase primero):
+
+1. **Autocobro de renovación** (cron, 3 días antes de vencer, con tarjeta guardada):
+   `_cobrar_automatico` cobra ya el **plan nuevo** (`plan_programado or plan`) y, tras
+   aprobarse, llama a `aplicar_downgrade_programado(sus)` — el cliente renueva
+   directamente en su plan ajustado.
+2. **Vencimiento sin autocobro** (cron): al detectar `fecha_cambio_programado <= ahora`,
+   el cron aplica `aplicar_downgrade_programado(sus)`.
+
+El helper reutilizable `aplicar_downgrade_programado(sus)` cambia el plan, deja
+registro en `CambioPlan`, limpia `plan_programado`/`fecha_cambio_programado` y devuelve
+el plan aplicado. El usuario puede **revertir** un downgrade aún no aplicado con
+`POST /api/empresa/cancelar-cambio-plan/`.
+
+#### Cambio lateral (mismo precio)
+
+Se aplica de inmediato sin cobro (`_aplicar_cambio_plan` + notificación).
+
+#### Límites del plan tras bajar
+
+Al bajar de plan, el **exceso de recursos queda en solo-lectura**: nada se borra, pero
+`verificar_limite_plan` bloquea **crear** nuevos recursos hasta volver por debajo del
+nuevo límite.
+
+#### Autoría de los pagos confirmados sin sesión
+
+El retorno de Webpay (`PagoRetornoView`) es un request **sin usuario autenticado** (lo
+abre Transbank). Para no perder quién originó la operación, `PagoTransbank.iniciado_por`
+guarda el usuario que **inició** el pago; al confirmarse, ese usuario se usa como
+`CambioPlan.cambiado_por` y en `registrar_log(usuario=...)`. El autocobro automático
+(cron) deja `iniciado_por = null` (= realizado por el sistema).
+
+**Frontend:** `MiPlanTab.vue` — botón "Mejorar"/"Cambiar" por plan, modal con la
+proración (upgrade) o la fecha de aplicación (downgrade) y banner para cancelar un
+cambio programado.
+
+### 18.6 Ciclo de vida de la suscripción (cron `verificar_suscripciones`)
+
+Comando de gestión pensado para correr **diariamente** (p. ej. `0 9 * * *`):
+
+```bash
+python manage.py verificar_suscripciones
+```
+
+Recorre las suscripciones y aplica, según los días para vencer:
+
+| Situación | Acción |
+|---|---|
+| `pendiente` (sin primer pago) a 3/7/14/30 días de creada | Recordatorio in-app + email para completar el pago |
+| `activa` y **vencida** (`días ≤ 0`) | Pasa a **`gracia`** + email `email_suscripcion_gracia` |
+| `gracia` superado `dias_gracia_pago` y `bloqueo_automatico=True` | **Suspende** la empresa (`estado='suspendida'`) + email |
+| `activa`, faltan **3 días** y hay tarjeta guardada | **Autocobro** OneClick de la renovación (`_cobrar_automatico`) |
+| `activa`, faltan 30/15/7/1 días | Recordatorio de vencimiento (in-app + `email_suscripcion_vence`) |
+| `plan_programado` con `fecha_cambio_programado` vencida | Aplica el **downgrade diferido** |
+
+El autocobro: si se aprueba, crea `PagoTransbank` aprobado, aplica el downgrade
+programado si lo había, y renueva (`estado='activa'`, `fecha_fin_periodo = +30 días`).
+Si la tarjeta es rechazada o falla el SDK, **no** renueva y notifica al admin para que
+pague manualmente. Toda la cadena de emails va envuelta en `try/except` para no
+interrumpir el cron.
+
+### 18.7 Endpoints de pago y suscripción
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/api/pago/iniciar/` | Inicia un pago. `usar_tarjeta=false` → Webpay Plus (`{url, token}`); `usar_tarjeta=true` → cobro OneClick directo |
+| `GET/POST` | `/api/pago/retorno/` | Retorno de Webpay (público, sin sesión). Confirma con `tx.commit` y redirige al frontend |
+| `GET` | `/api/pago/historial/` | Historial de pagos aprobados (USUARIO ve su empresa; SUPERADMIN con `?empresa_id=`) |
+| `POST` | `/api/empresa/cambiar-plan/` | Cambio de plan self-service (upgrade/downgrade/lateral) |
+| `POST` | `/api/empresa/cancelar-cambio-plan/` | Cancela un downgrade programado aún no aplicado |
+| `GET` | `/api/empresa/suscripcion/` | Estado de la suscripción de la empresa |
+| `GET/PUT` | `/api/admin/suscripciones/` · `/<id>/` | Listar / modificar suscripciones (SUPERADMIN) |
+| `GET` | `/api/empresa/tarjeta/` | Estado de la tarjeta OneClick guardada |
+| `POST` | `/api/empresa/tarjeta/inscribir/` | Inicia inscripción OneClick (`{url, token}`) |
+| `GET/POST` | `/api/empresa/tarjeta/retorno/` | Retorno de la inscripción (público). Guarda la `TarjetaGuardada` |
+| `POST` | `/api/empresa/tarjeta/eliminar/` | Desinscribe y elimina la tarjeta guardada |
+| `GET` | `/api/terminos/` · `/api/admin/terminos/` | Términos y condiciones (público / edición SUPERADMIN) |
+| `POST` | `/api/empresa/terminos/aceptar/` | Registra la aceptación de términos por la empresa |
+
+### 18.8 Trazabilidad y logs
+
+Cada operación de pago deja un `LogAuditoria` (acciones: `pago_iniciado`,
+`pago_aprobado`, `pago_oneclick`, `pago_error`, `oneclick_error`,
+`upgrade_self_service`, `upgrade_webpay_aprobado`, `downgrade_programado`,
+`downgrade_cancelado`, `pago_manual_registrado`, etc.). El `PagoTransbank.respuesta_tb`
+conserva la respuesta cruda del SDK para auditoría/soporte. Ver §9.11 (Auditoría) para
+las etiquetas de cada acción.
+
+---
+
+## 19. Notas técnicas y apéndices
+
+Notas puntuales de implementación que complementan las secciones anteriores.
+
+### App conductor — Banners y safe-area (barra de estado)
 
 En `app_conductor/src/views/Rutas/ListaRutas.vue`, los banners de alerta que se
 renderizan **por encima** del header (vehículo en mantención y mantención próxima)
@@ -1862,7 +2152,7 @@ Solución:
 
 ---
 
-## Vite — Ruido "ws proxy error: ECONNRESET" en dev
+### Vite — Ruido "ws proxy error: ECONNRESET" en dev
 
 El proxy `/ws` de `gestion-frontend/vite.config.js` reenvía el WebSocket del mapa
 en vivo a daphne (`ws://127.0.0.1:8000`). En desarrollo, daphne corta esas
@@ -1877,7 +2167,7 @@ ignora los `ECONNRESET` esperados y sigue mostrando cualquier otro error. Cambia
 
 ---
 
-## Validación "solo texto" en nombres y apellidos
+### Validación "solo texto" en nombres y apellidos
 
 Se agregó la función `soloTexto(valor)` a `src/utils/validators.js` (panel web) y a
 `app_conductor/src/utils/validators.js` (app conductor). Filtra el valor dejando
@@ -1900,7 +2190,7 @@ nombre de plan (legítimamente llevan números o símbolos).
 
 ---
 
-## Sanitización server-side en el registro público de empresa
+### Sanitización server-side en el registro público de empresa
 
 El filtro `soloTexto` del frontend es cosmético y se puede saltar llamando la API
 directamente, así que `AutoRegistroView` (`views_publico.py`, POST
@@ -1920,7 +2210,7 @@ en esos formularios, habría que aplicar `sanitizar_nombre` ahí también.
 
 ---
 
-## Sanitización en la edición/creación de empresas (EmpresaSerializer)
+### Sanitización en la edición/creación de empresas (EmpresaSerializer)
 
 Las funciones `sanitizar_nombre` y `sanitizar_texto` se movieron al módulo
 compartido `g_de_flota/sanitizers.py` y se reutilizan desde `views_publico.py`
@@ -1938,7 +2228,7 @@ los métodos `create`/`update` persisten directamente el dato ya saneado.
 
 ---
 
-## Sanitización completa en serializers de personas y vehículos
+### Sanitización completa en serializers de personas y vehículos
 
 Se añadió `validar_nombre_persona(valor, etiqueta)` a `g_de_flota/sanitizers.py`:
 sanea con `sanitizar_nombre`, aplica `.title()` y lanza `ValidationError` si el
@@ -1963,7 +2253,7 @@ Resumen de la cobertura server-side de sanitización:
 
 ---
 
-## Unicidad de razón social case-insensitive
+### Unicidad de razón social case-insensitive
 
 El campo `Empresa.nombre` es `unique=True` a nivel de BD, pero ese constraint
 distingue mayúsculas/minúsculas: "Transportes del Norte S.A" y "...S.a" se
@@ -1977,7 +2267,7 @@ capa de aplicación con `nombre__iexact`:
 
 ---
 
-## Capitalización de datos de empresa al guardar
+### Capitalización de datos de empresa al guardar
 
 Los campos de texto de empresa (nombre, dirección, comuna, ciudad) se capitalizan
 con `.title()` tras sanear, siguiendo el mismo patrón ya usado en conductores
@@ -1989,7 +2279,7 @@ capitalizado no afecta la detección de duplicados.
 
 ---
 
-## Nombres de persona: rechazar en vez de limpiar a medias
+### Nombres de persona: rechazar en vez de limpiar a medias
 
 `validar_nombre_persona` (sanitizers.py) ahora **rechaza** cualquier nombre/apellido
 que contenga dígitos o símbolos, en lugar de borrarlos silenciosamente. Compara el
@@ -2005,7 +2295,7 @@ siguen permitiendo números a propósito.
 
 ---
 
-## Módulo de Avisos internos
+### Módulo de Avisos internos
 
 Permite comunicación directa por correo + campanita in-app entre admins y conductores, sin abrir Gmail — el sistema envía solo vía el SMTP configurado en `ConfiguracionSistema`.
 

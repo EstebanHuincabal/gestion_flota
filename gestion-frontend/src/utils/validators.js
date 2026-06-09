@@ -107,13 +107,13 @@ export function validarPatente(patente) {
 }
 
 // ── Licencia de conducir (Chile) ─────────────────────────────────────────────
-// Formato: 3 letras + 10 dígitos (ej: ABC1234567890). Debe coincidir con el
-// backend (serializers.LICENCIA_PATRON). Campo opcional: vacío se considera válido.
+// Formatos válidos: 0-3 letras opcionales + 10 dígitos. Debe coincidir con
+// el backend (serializers.LICENCIA_PATRON). Campo opcional: vacío es válido.
 export function validarLicencia(licencia) {
   const v = (licencia || '').trim().toUpperCase()
   if (!v) return { valido: true, error: '' }
-  if (!/^[A-Z]{3}\d{10}$/.test(v)) {
-    return { valido: false, error: 'Formato inválido. Debe ser 3 letras y 10 dígitos. Ej: ABC1234567890.' }
+  if (!/^[A-Z]{0,3}\d{10}$/.test(v)) {
+    return { valido: false, error: 'Formato inválido. Ej: ABC1234567890, AB1234567890, A1234567890 o 1234567890.' }
   }
   return { valido: true, error: '' }
 }
@@ -180,6 +180,14 @@ export function validarNombre(texto, min = 2, max = 255) {
 export function soloTexto(valor) {
   if (valor === null || valor === undefined) return ''
   return String(valor).replace(/[^\p{L}\s'-]/gu, '')
+}
+
+// ── Solo descripción (marca/modelo de vehículo, etc.) ─────────────────────────
+// Como soloTexto pero admite dígitos. Para campos donde el valor puede incluir
+// números: "Hilux 560", "Serie 3", "208 GTi". Bloquea símbolos especiales.
+export function soloDescripcion(valor) {
+  if (valor === null || valor === undefined) return ''
+  return String(valor).replace(/[^\p{L}\d\s'.\-()]/gu, '')
 }
 
 // ── Longitud de texto ─────────────────────────────────────────────────────────

@@ -372,11 +372,12 @@ def plan_uso(request):
 
     if _es_superadmin(user):
         empresa_id = request.query_params.get('empresa_id')
-        if not empresa_id:
+        # El uso de plan es por empresa: "__todas__" no aplica.
+        if not empresa_id or empresa_id == '__todas__':
             return Response({"error": "Se requiere empresa_id."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             empresa = Empresa.objects.select_related('plan').get(pk=empresa_id)
-        except Empresa.DoesNotExist:
+        except (Empresa.DoesNotExist, ValueError, TypeError):
             return Response({"error": "Empresa no encontrada."}, status=status.HTTP_404_NOT_FOUND)
     else:
         if not user.empresa_id:
@@ -1268,11 +1269,11 @@ class PagoHistorialView(APIView):
 
         if request.user.rol == 'SUPERADMIN':
             empresa_id = request.query_params.get('empresa_id')
-            if not empresa_id:
+            if not empresa_id or empresa_id == '__todas__':
                 return Response({'error': 'Se requiere empresa_id.'}, status=400)
             try:
                 empresa = Empresa.objects.get(id=empresa_id)
-            except Empresa.DoesNotExist:
+            except (Empresa.DoesNotExist, ValueError, TypeError):
                 return Response({'error': 'Empresa no encontrada.'}, status=404)
         else:
             empresa = request.user.empresa

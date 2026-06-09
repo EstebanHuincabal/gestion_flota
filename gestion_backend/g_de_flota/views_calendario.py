@@ -16,12 +16,28 @@ from .models import (
 )
 
 
+EMPRESA_TODAS = '__todas__'
+
+
 def _empresa_id(request):
-    """Devuelve el empresa_id del contexto: query param (SUPERADMIN) o perfil (USUARIO)."""
+    """Devuelve el empresa_id del contexto: query param (SUPERADMIN) o perfil (USUARIO).
+
+    Devuelve None para "Todas las empresas" o valores no numéricos (evita 500).
+    """
     if request.user.rol == Rol.SUPERADMIN:
         eid = request.query_params.get('empresa_id')
-        return int(eid) if eid else None
+        if not eid or eid == EMPRESA_TODAS:
+            return None
+        try:
+            return int(eid)
+        except (ValueError, TypeError):
+            return None
     return request.user.empresa_id
+
+
+def _es_todas(request):
+    return request.user.rol == Rol.SUPERADMIN \
+        and request.query_params.get('empresa_id') == EMPRESA_TODAS
 
 
 @api_view(['GET'])
@@ -57,9 +73,17 @@ def calendario_eventos(request):
         ultimo = _cal.monthrange(hoy.year, hoy.month)[1]
         hasta = hoy.replace(day=ultimo)
 
+    # Modo "Todas las empresas" (SUPERADMIN, solo lectura): sin filtro por empresa.
+    todas = _es_todas(request)
     empresa_id = _empresa_id(request)
-    if not empresa_id:
+    if not todas and not empresa_id:
         return Response({'error': 'Empresa no identificada.'}, status=400)
+    emp_f = {} if todas else {'empresa_id': empresa_id}
+    veh_f = {} if todas else {'vehiculo__empresa_id': empresa_id}
+
+    def _suf(nombre):
+        """Sufijo con el nombre de la empresa (solo en modo "Todas")."""
+        return f' · {nombre}' if (todas and nombre) else ''
 
     eventos = []
 
@@ -73,8 +97,8 @@ def calendario_eventos(request):
     }
     rutas = (
         Ruta.objects
-        .filter(empresa_id=empresa_id)
-        .select_related('conductor', 'vehiculo')
+        .filter(**emp_f)
+        .select_related('conductor', 'vehiculo', 'empresa')
     )
     # Rutas por fecha_programada (pendiente / borrador)
     for r in rutas.filter(
@@ -89,7 +113,7 @@ def calendario_eventos(request):
             'tipo':      'ruta',
             'subtipo':   r.estado,
             'titulo':    r.nombre,
-            'subtitulo': f'{conductor_nombre} · {vehiculo_label}',
+            'subtitulo': f'{conductor_nombre} · {vehiculo_label}' + _suf(r.empresa.nombre if r.empresa_id else None),
             'fecha':     r.fecha_programada.isoformat(),
             'hora':      hora,
             'color':     COLOR_RUTA.get(r.estado, 'indigo'),
@@ -105,7 +129,7 @@ def calendario_eventos(request):
             'tipo':      'ruta',
             'subtipo':   'activo',
             'titulo':    r.nombre,
-            'subtitulo': f'En curso · {conductor_nombre}',
+            'subtitulo': f'En curso · {conductor_nombre}' + _suf(r.empresa.nombre if r.empresa_id else None),
             'fecha':     r.fecha_inicio.date().isoformat(),
             'hora':      r.fecha_inicio.strftime('%H:%M'),
             'color':     'green',
@@ -124,7 +148,7 @@ def calendario_eventos(request):
             'tipo':      'ruta',
             'subtipo':   r.estado,
             'titulo':    r.nombre,
-            'subtitulo': f'{r.get_estado_display()} · {conductor_nombre}',
+            'subtitulo': f'{r.get_estado_display()} · {conductor_nombre}' + _suf(r.empresa.nombre if r.empresa_id else None),
             'fecha':     r.fecha_fin.date().isoformat(),
             'hora':      r.fecha_fin.strftime('%H:%M'),
             'color':     COLOR_RUTA.get(r.estado, 'slate'),
@@ -135,8 +159,8 @@ def calendario_eventos(request):
     # ── 2. MANTENCIONES ─────────────────────────────────────────────────────────
     mantenciones = (
         Mantencion.objects
-        .filter(vehiculo__empresa_id=empresa_id)
-        .select_related('vehiculo')
+        .filter(**veh_f)
+        .select_related('vehiculo', 'vehiculo__empresa')
     )
     COLOR_MANT = {
         'pendiente':  'orange',
@@ -152,7 +176,7 @@ def calendario_eventos(request):
             'tipo':      'mantencion',
             'subtipo':   m.estado,
             'titulo':    m.tipo_mantencion,
-            'subtitulo': f'{m.vehiculo.patente} · {m.get_estado_display()}',
+            'subtitulo': f'{m.vehiculo.patente} · {m.get_estado_display()}' + _suf(m.vehiculo.empresa.nombre if m.vehiculo.empresa_id else None),
             'fecha':     m.fecha_programada.isoformat(),
             'hora':      None,
             'color':     COLOR_MANT.get(m.estado, 'orange'),
@@ -171,7 +195,7 @@ def calendario_eventos(request):
             'tipo':      'mantencion',
             'subtipo':   'realizada',
             'titulo':    m.tipo_mantencion,
-            'subtitulo': f'{m.vehiculo.patente} · Completada',
+            'subtitulo': f'{m.vehiculo.patente} · Completada' + _suf(m.vehiculo.empresa.nombre if m.vehiculo.empresa_id else None),
             'fecha':     m.fecha_realizada.isoformat(),
             'hora':      None,
             'color':     'blue',
@@ -182,8 +206,8 @@ def calendario_eventos(request):
     # ── 3. MANTENCIONES PREDICTIVAS ─────────────────────────────────────────────
     mp_qs = (
         MantencionProgramada.objects
-        .filter(vehiculo__empresa_id=empresa_id, estado='activa')
-        .select_related('vehiculo', 'regla')
+        .filter(estado='activa', **veh_f)
+        .select_related('vehiculo', 'vehiculo__empresa', 'regla')
     )
     for mp in mp_qs.filter(fecha_siguiente__range=(desde, hasta)):
         dias_rest = (mp.fecha_siguiente - hoy).days
@@ -194,7 +218,7 @@ def calendario_eventos(request):
             'tipo':      'mantencion_predictiva',
             'subtipo':   'vencida' if dias_rest < 0 else 'proxima',
             'titulo':    mp.regla.tipo,
-            'subtitulo': f'{mp.vehiculo.patente} · {label}',
+            'subtitulo': f'{mp.vehiculo.patente} · {label}' + _suf(mp.vehiculo.empresa.nombre if mp.vehiculo.empresa_id else None),
             'fecha':     mp.fecha_siguiente.isoformat(),
             'hora':      None,
             'color':     color,
@@ -204,9 +228,9 @@ def calendario_eventos(request):
 
     # ── 4. DOCUMENTOS — vencimientos ────────────────────────────────────────────
     docs_qs = Documento.objects.filter(
-        empresa_id=empresa_id,
         fecha_vencimiento__isnull=False,
-    ).select_related('vehiculo', 'conductor')
+        **emp_f,
+    ).select_related('vehiculo', 'conductor', 'empresa')
 
     # Margen extendido: mostramos documentos que vencen dentro de los próximos 60 días
     # y los que vencieron en los últimos 30 días (para no perder historial)
@@ -240,7 +264,7 @@ def calendario_eventos(request):
             'tipo':      'documento',
             'subtipo':   subtipo,
             'titulo':    doc.get_tipo_display(),
-            'subtitulo': f'{entidad_label} · {estado_label}',
+            'subtitulo': f'{entidad_label} · {estado_label}' + _suf(doc.empresa.nombre if doc.empresa_id else None),
             'fecha':     doc.fecha_vencimiento.isoformat(),
             'hora':      None,
             'color':     color,
@@ -257,8 +281,8 @@ def calendario_eventos(request):
     }
     solic_qs = (
         SolicitudConductor.objects
-        .filter(empresa_id=empresa_id)
-        .select_related('conductor')
+        .filter(**emp_f)
+        .select_related('conductor', 'empresa')
     )
     for s in solic_qs.filter(created_at__date__range=(desde, hasta)):
         conductor_nombre = s.conductor.nombre if s.conductor else '—'
@@ -267,7 +291,7 @@ def calendario_eventos(request):
             'tipo':      'solicitud',
             'subtipo':   s.estado,
             'titulo':    s.titulo,
-            'subtitulo': f'{conductor_nombre} · {s.get_tipo_display()} · {s.get_estado_display()}',
+            'subtitulo': f'{conductor_nombre} · {s.get_tipo_display()} · {s.get_estado_display()}' + _suf(s.empresa.nombre if s.empresa_id else None),
             'fecha':     s.created_at.date().isoformat(),
             'hora':      s.created_at.strftime('%H:%M'),
             'color':     COLOR_SOL.get(s.estado, 'purple'),

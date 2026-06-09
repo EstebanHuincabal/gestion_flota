@@ -480,6 +480,8 @@ class MantencionSerializer(serializers.ModelSerializer):
     foto_comprobante_url  = serializers.SerializerMethodField()
     confirmado_conductor  = serializers.BooleanField(read_only=True)
     fecha_confirmacion    = serializers.DateTimeField(read_only=True)
+    # Origen de la fila, usado por el SUPERADMIN en el modo "Todas las empresas".
+    empresa_nombre        = serializers.CharField(source='vehiculo.empresa.nombre', read_only=True, default=None)
 
     class Meta:
         model = Mantencion
@@ -490,6 +492,7 @@ class MantencionSerializer(serializers.ModelSerializer):
             'fecha_realizada', 'kilometraje_realizado',
             'estado', 'estado_display', 'costo',
             'foto_comprobante_url', 'confirmado_conductor', 'fecha_confirmacion',
+            'empresa_nombre',
         ]
 
     def get_vehiculo_descripcion(self, obj):
@@ -583,8 +586,8 @@ class ConductorDetalleSerializer(ConductorListSerializer):
 # Formato de licencia de conducir chilena: 3 letras + 10 dígitos (ej: ABC1234567890).
 # Fuente única compartida por el panel web (estos serializers) y la app móvil
 # (views_conductor.py importa estas constantes para validar igual).
-LICENCIA_PATRON = r'^[A-Z]{3}\d{10}$'
-LICENCIA_ERROR  = 'Formato inválido. Debe ser 3 letras y 10 dígitos. Ej: ABC1234567890.'
+LICENCIA_PATRON = r'^[A-Z]{0,3}\d{10}$'
+LICENCIA_ERROR  = 'Formato inválido. Puede tener hasta 3 letras seguidas de 10 dígitos. Ej: ABC1234567890, AB1234567890, A1234567890 o 1234567890.'
 
 
 def validar_formato_licencia(value):
@@ -606,11 +609,14 @@ class ConductorCrearSerializer(serializers.Serializer):
     licencia        = serializers.CharField(required=False, allow_blank=True)
 
     # Opciones de asignación inicial
-    vehiculo_id          = serializers.IntegerField(required=False, allow_null=True)
-    crear_vehiculo       = serializers.BooleanField(default=False)
-    vehiculo_patente     = serializers.CharField(required=False, allow_blank=True)
-    vehiculo_marca       = serializers.CharField(required=False, allow_blank=True)
-    vehiculo_modelo      = serializers.CharField(required=False, allow_blank=True)
+    vehiculo_id               = serializers.IntegerField(required=False, allow_null=True)
+    crear_vehiculo            = serializers.BooleanField(default=False)
+    vehiculo_patente          = serializers.CharField(required=False, allow_blank=True)
+    vehiculo_marca            = serializers.CharField(required=False, allow_blank=True)
+    vehiculo_modelo           = serializers.CharField(required=False, allow_blank=True)
+    vehiculo_anio             = serializers.IntegerField(required=False, allow_null=True)
+    vehiculo_tipo_combustible = serializers.CharField(required=False, allow_blank=True, default='bencina')
+    vehiculo_km_actuales      = serializers.IntegerField(required=False, default=0)
 
     def validate_nombre(self, value):
         return validar_nombre_persona(value, 'El nombre')
@@ -690,6 +696,9 @@ class ConductorCrearSerializer(serializers.Serializer):
         v_patente         = validated_data.pop('vehiculo_patente', None)
         v_marca           = validated_data.pop('vehiculo_marca', '')
         v_modelo          = validated_data.pop('vehiculo_modelo', '')
+        v_anio            = validated_data.pop('vehiculo_anio', None)
+        v_combustible     = validated_data.pop('vehiculo_tipo_combustible', 'bencina')
+        v_km              = validated_data.pop('vehiculo_km_actuales', 0)
 
         nombre_completo = ' '.join(p for p in [nombre, ap_paterno, ap_materno] if p)
         user = Usuario.objects.create_user(
@@ -728,11 +737,14 @@ class ConductorCrearSerializer(serializers.Serializer):
         if crear_vehiculo:
             try:
                 nuevo_v = Vehiculo.objects.create(
-                    patente = v_patente,
-                    marca   = v_marca,
-                    modelo  = v_modelo,
-                    empresa = empresa,
-                    activo  = True
+                    patente          = v_patente,
+                    marca            = sanitizar_texto(v_marca).title() if v_marca else '',
+                    modelo           = sanitizar_texto(v_modelo).title() if v_modelo else '',
+                    anio             = v_anio,
+                    tipo_combustible = v_combustible or 'bencina',
+                    km_actuales      = v_km or 0,
+                    empresa          = empresa,
+                    activo           = True,
                 )
                 final_vehiculo_id = nuevo_v.id
             except Exception:
@@ -830,12 +842,15 @@ class VehiculoSerializer(serializers.ModelSerializer):
     conductor_asignado = serializers.SerializerMethodField()
     gps_asociado       = serializers.SerializerMethodField()
     foto_url           = serializers.SerializerMethodField()
+    # Origen de la fila, usado por el SUPERADMIN en el modo "Todas las empresas".
+    empresa_nombre     = serializers.CharField(source='empresa.nombre', read_only=True)
 
     class Meta:
         model  = Vehiculo
         fields = ['id', 'patente', 'marca', 'modelo',
                   'anio', 'tipo_combustible', 'km_actuales',
-                  'conductor_asignado', 'gps_asociado', 'foto', 'foto_url', 'activo']
+                  'conductor_asignado', 'gps_asociado', 'foto', 'foto_url', 'activo',
+                  'empresa_nombre']
         read_only_fields = ['id']
         extra_kwargs = {'foto': {'write_only': True, 'required': False}}
 
@@ -1225,6 +1240,8 @@ class SolicitudConductorSerializer(serializers.ModelSerializer):
     tiene_foto          = serializers.SerializerMethodField()
     foto_url            = serializers.SerializerMethodField()
     checklist           = serializers.SerializerMethodField()
+    # Origen de la fila, usado por el SUPERADMIN en el modo "Todas las empresas".
+    empresa_nombre      = serializers.CharField(source='empresa.nombre', read_only=True, default=None)
 
     class Meta:
         model  = SolicitudConductor
@@ -1233,7 +1250,7 @@ class SolicitudConductorSerializer(serializers.ModelSerializer):
             'prioridad', 'prioridad_display', 'estado', 'estado_display',
             'foto_url', 'tiene_foto', 'respuesta',
             'conductor', 'conductor_nombre', 'conductor_iniciales',
-            'vehiculo', 'vehiculo_patente',
+            'vehiculo', 'vehiculo_patente', 'empresa_nombre',
             'respondido_por', 'respondido_por_nombre', 'respondido_at',
             'created_at', 'updated_at', 'extra', 'checklist',
         ]

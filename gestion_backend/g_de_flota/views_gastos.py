@@ -28,18 +28,31 @@ def _tiene_permiso(user, codigo: str) -> bool:
     return plan.permisos.filter(codigo=codigo).exists()
 
 
+# Centinela de la opción "Todas las empresas" del SelectorEmpresa (frontend).
+# Debe coincidir con EMPRESA_TODAS de empresaActiva.js.
+EMPRESA_TODAS = '__todas__'
+
+
+def _empresa_id_param(request):
+    return request.query_params.get('empresa_id') or request.data.get('empresa_id')
+
+
+def _es_todas(request):
+    """True si el SUPERADMIN pidió ver todas las empresas a la vez (solo lectura)."""
+    return request.user.rol == Rol.SUPERADMIN and _empresa_id_param(request) == EMPRESA_TODAS
+
+
 def _get_empresa(request):
     if request.user.rol == Rol.SUPERADMIN:
-        eid = (
-            request.query_params.get('empresa_id')
-            or request.data.get('empresa_id')
-        )
-        if eid:
-            try:
-                return Empresa.objects.get(pk=eid)
-            except Empresa.DoesNotExist:
-                return None
-        return None
+        eid = _empresa_id_param(request)
+        # El centinela "__todas__" no es una empresa concreta: las escrituras
+        # quedan bloqueadas (el caller responde "Empresa no encontrada").
+        if not eid or eid == EMPRESA_TODAS:
+            return None
+        try:
+            return Empresa.objects.get(pk=eid)
+        except (Empresa.DoesNotExist, ValueError, TypeError):
+            return None
     return request.user.empresa
 
 
@@ -794,7 +807,7 @@ def _validar_comprobante(archivo):
     return None
 
 
-def _gasto_correctivo_dict(g, cond_map=None):
+def _gasto_correctivo_dict(g, cond_map=None, con_empresa=False):
     # marca/modelo del vehículo (ya viene con select_related, sin query extra).
     modelo = ''
     if g.vehiculo:
@@ -827,6 +840,9 @@ def _gasto_correctivo_dict(g, cond_map=None):
         'tiene_comprobante':    bool(g.comprobante),
         'registrado_por':       g.registrado_por.nombre if g.registrado_por else None,
         'created_at':           g.created_at.isoformat(),
+        # Solo en modo "Todas las empresas": identifica el origen de cada fila.
+        **({'empresa_id': g.empresa_id,
+            'empresa_nombre': g.empresa.nombre if g.empresa_id else None} if con_empresa else {}),
     }
 
 
@@ -836,9 +852,13 @@ class GastosCorrectivosList(APIView):
     def get(self, request):
         if not _tiene_permiso(request.user, 'correctivos.ver'):
             return Response({'error': 'Sin permisos para ver correctivos.'}, status=403)
-        empresa = _get_empresa(request)
-        if not empresa:
+        # Modo "Todas las empresas" (solo SUPERADMIN): se omite el filtro de empresa
+        # y los totales se agregan sobre todas. emp_filter centraliza esa decisión.
+        todas = _es_todas(request)
+        empresa = None if todas else _get_empresa(request)
+        if not todas and not empresa:
             return Response({'error': 'Empresa no encontrada.'}, status=400)
+        emp_filter = {} if todas else {'empresa': empresa}
 
         mes  = request.query_params.get('mes')
         anio = request.query_params.get('anio')
@@ -846,13 +866,13 @@ class GastosCorrectivosList(APIView):
         cat  = request.query_params.get('categoria_correctiva')
         prio = request.query_params.get('prioridad')
 
-        base = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=True)
+        base = GastoOperativo.objects.filter(es_correctivo=True, **emp_filter)
         if mes and anio:
             base = base.filter(fecha__month=int(mes), fecha__year=int(anio))
         elif anio:
             base = base.filter(fecha__year=int(anio))
 
-        qs = base.select_related('vehiculo', 'registrado_por')
+        qs = base.select_related('vehiculo', 'registrado_por', 'empresa')
         if vid:  qs = qs.filter(vehiculo_id=vid)
         if cat:  qs = qs.filter(categoria_correctiva=cat)
         if prio: qs = qs.filter(prioridad_correctiva=prio)
@@ -866,12 +886,13 @@ class GastosCorrectivosList(APIView):
             if asig.conductor_id:
                 cond_map[asig.vehiculo_id] = asig.conductor.nombre or asig.conductor.email
 
-        gastos = [_gasto_correctivo_dict(g, cond_map) for g in qs.order_by('-fecha', '-created_at')]
+        gastos = [_gasto_correctivo_dict(g, cond_map, con_empresa=todas)
+                  for g in qs.order_by('-fecha', '-created_at')]
         total_correctivos = int(qs.aggregate(t=Sum('monto'))['t'] or 0)
 
         # Total NORMAL del período (denominador del impacto): gasto operativo no
         # correctivo. La regla: el impacto se calcula sobre el gasto normal.
-        normal_qs = GastoOperativo.objects.filter(empresa=empresa, es_correctivo=False)
+        normal_qs = GastoOperativo.objects.filter(es_correctivo=False, **emp_filter)
         if mes and anio:
             normal_qs = normal_qs.filter(fecha__month=int(mes), fecha__year=int(anio))
         elif anio:
@@ -933,16 +954,17 @@ class GastosCorrectivosList(APIView):
             m_e = hoy.month - i; a_e = hoy.year
             if m_e <= 0: m_e += 12; a_e -= 1
             tc = int(GastoOperativo.objects.filter(
-                empresa=empresa, es_correctivo=True, fecha__month=m_e, fecha__year=a_e
+                es_correctivo=True, fecha__month=m_e, fecha__year=a_e, **emp_filter
             ).aggregate(t=Sum('monto'))['t'] or 0)
             tn = int(GastoOperativo.objects.filter(
-                empresa=empresa, es_correctivo=False, fecha__month=m_e, fecha__year=a_e
+                es_correctivo=False, fecha__month=m_e, fecha__year=a_e, **emp_filter
             ).aggregate(t=Sum('monto'))['t'] or 0)
             evolucion.append({'mes': f"{_MS[m_e-1]} {str(a_e)[2:]}",
                               'total_correctivo': tc, 'total_normal': tn})
 
+        # El presupuesto es por empresa: no aplica en el modo "Todas".
         presupuesto_mensual = None
-        if mes and anio:
+        if not todas and mes and anio:
             try:
                 p = PresupuestoMensual.objects.get(empresa=empresa, mes=int(mes), anio=int(anio))
                 presupuesto_mensual = {'id': p.id, 'monto': int(p.monto)}
