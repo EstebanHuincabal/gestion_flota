@@ -564,10 +564,10 @@ Registro de mantenciones por vehículo con soporte de estados (`pendiente`, `en_
 
 Sistema basado en reglas para programar mantenciones preventivas. Cada empresa crea **Planes de Mantenimiento** con **Reglas** (tipo, intervalo en días, umbral de alerta, prioridad, canal de notificación). Los vehículos se asignan a planes, generando `MantencionProgramada` con fechas calculadas automáticamente.
 
-Un proceso de generación de alertas evalúa las fechas próximas y crea `AlertaMantencion` para notificar a los responsables.
+Un proceso de generación de alertas evalúa las fechas próximas y crea `AlertaMantencion` para notificar a los responsables. Esta evaluación corre **automáticamente todos los días** vía el scheduler (`evaluar_mantenciones_predictivas`, ver §18.8) y también puede dispararse manualmente con el botón "Evaluar ahora".
 
 **Vista:** `MantencionPredictiva.vue`  
-**Endpoints clave:** `GET /api/empresa/predictivo/resumen/` · `POST /api/empresa/predictivo/generar-alertas/`
+**Endpoints clave:** `GET /api/empresa/predictivo/resumen/` · `POST /api/empresa/predictivo/generar-alertas/` (botón "Evaluar ahora", mismo cálculo que el comando de gestión `evaluar_mantenciones_predictivas`)
 
 ### 9.7 Documentos
 
@@ -2367,5 +2367,48 @@ El usuario puede ocultarlo permanentemente (`localStorage: pwa_install_dismissed
 `beforeinstallprompt` sin HTTPS. Cuando se configure HTTPS (sslip.io + Certbot,
 ver `DEPLOY.md`), el modo directo se activará automáticamente sin tocar este
 código.
+
+---
+
+### Scheduler de tareas periódicas (Ofelia)
+
+Antes de este cambio, los comandos de gestión "pensados para correr a diario"
+(`evaluar_mantenciones_predictivas`, `verificar_suscripciones`) **no se
+ejecutaban nunca en producción** — no había cron en el host ni servicio
+equivalente en `docker-compose.yml`. Resultado: las alertas de mantenimiento
+predictivo (`AlertaMantencion`) solo se creaban/actualizaban si un usuario
+entraba a "Predictivo" y apretaba "Evaluar ahora" (o al asignar un plan nuevo),
+y `verificar_suscripciones` (vencimientos, cobro automático, suspensión por
+mora) tampoco corría sola.
+
+Se agregó un servicio `scheduler` (imagen `mcuadros/ofelia`) a
+`docker-compose.yml`, configurado vía labels en el servicio `backend`:
+
+```yaml
+backend:
+  labels:
+    ofelia.enabled: "true"
+    ofelia.job-exec.evaluar-mantenciones.schedule: "0 0 8 * * *"
+    ofelia.job-exec.evaluar-mantenciones.command: "python manage.py evaluar_mantenciones_predictivas"
+    ofelia.job-exec.verificar-suscripciones.schedule: "0 0 9 * * *"
+    ofelia.job-exec.verificar-suscripciones.command: "python manage.py verificar_suscripciones"
+
+scheduler:
+  image: mcuadros/ofelia:latest
+  command: daemon --docker
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+  depends_on:
+    - backend
+  restart: unless-stopped
+```
+
+Ofelia corre `docker exec` sobre el contenedor `backend` según el horario de
+cada label (formato cron con segundos: `seg min hora día mes día-semana`). No
+requiere cron en el host ni dependencias nuevas en la imagen del backend. El
+contenedor `scheduler` necesita acceso de solo lectura al socket de Docker
+(`/var/run/docker.sock`) para poder ejecutar esos comandos.
+
+Para ver si los jobs corrieron: `docker compose logs scheduler`.
 
 ---

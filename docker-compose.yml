@@ -70,6 +70,27 @@ services:
              python manage.py collectstatic --noinput &&
              daphne -b 0.0.0.0 -p 8000 gestion_backend.asgi:application"
     restart: unless-stopped
+    # Tareas programadas, ejecutadas por el servicio "scheduler" (Ofelia) dentro
+    # de este mismo contenedor. Sin esto, los comandos de gestión periódicos
+    # (alertas de mantenimiento predictivo, ciclo de vida de suscripciones)
+    # nunca se ejecutan en producción.
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.evaluar-mantenciones.schedule: "0 0 8 * * *"
+      ofelia.job-exec.evaluar-mantenciones.command: "python manage.py evaluar_mantenciones_predictivas"
+      ofelia.job-exec.verificar-suscripciones.schedule: "0 0 9 * * *"
+      ofelia.job-exec.verificar-suscripciones.command: "python manage.py verificar_suscripciones"
+
+  # Programador de tareas: dispara los comandos de gestión periódicos definidos
+  # como labels en otros servicios (ver "backend"). No requiere cron en el host.
+  scheduler:
+    image: mcuadros/ofelia:latest
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
 
   frontend:
     build: ./gestion-frontend

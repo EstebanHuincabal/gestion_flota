@@ -174,6 +174,9 @@ cat backup_YYYYMMDD.sql | docker compose exec -T db psql -U gsdm_user -d Gestion
 - Si cambias `ENCRYPTION_KEY`, los datos cifrados (RUT, email, patente, GPS, etc.) dejan de ser legibles. **No la cambies una vez en producción.**
 - WebSockets (`/ws/`) funcionan sobre el mismo puerto 80 gracias al proxy de Nginx.
 - El frontend en producción llama a `/api/` con rutas relativas → mismo origen, sin CORS.
+- El servicio `scheduler` (Ofelia) ejecuta a diario `evaluar_mantenciones_predictivas` (08:00) y
+  `verificar_suscripciones` (09:00) dentro del contenedor `backend`. Para revisar si corrieron:
+  `docker compose logs scheduler`. Detalle en `docs/documentacion.md` (§ Scheduler de tareas periódicas).
 
 ---
 
