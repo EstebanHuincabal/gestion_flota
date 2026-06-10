@@ -257,7 +257,7 @@ onMounted(cargar)
 .not-fecha  { font-size:.7rem; color:#9CA3AF; flex-shrink:0; white-space:nowrap; }
 .not-card-msg {
   font-size:.8125rem; color:#6B7280; line-height:1.45;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
 .not-dot { flex-shrink:0; width:.5rem; height:.5rem; border-radius:50%; background:#6366F1; margin-top:.4rem; }
 

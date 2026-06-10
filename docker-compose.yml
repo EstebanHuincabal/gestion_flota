@@ -58,6 +58,7 @@ services:
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - ./gestion_backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
     depends_on:
       db:
         condition: service_healthy

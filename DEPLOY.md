@@ -36,6 +36,9 @@ scp -r . usuario@157.180.85.17:/opt/gestion_flota
 rsync -avz --exclude='node_modules' --exclude='.git' \
   --exclude='db.sqlite3*' --exclude='media' \
   . usuario@157.180.85.17:/opt/gestion_flota
+
+# IMPORTANTE: Asegúrate de que el archivo de Firebase esté en el servidor:
+# scp gestion_backend/serviceAccountKey.json usuario@157.180.85.17:/opt/gestion_flota/gestion_backend/
 ```
 
 ---

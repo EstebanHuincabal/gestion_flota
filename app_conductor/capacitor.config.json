@@ -1,5 +1,5 @@
 {
-  "appId": "com.gestionflota.conductor",
+  "appId": "com.appconductor.app",
   "appName": "Flota Conductor",
   "webDir": "dist",
   "server": {
