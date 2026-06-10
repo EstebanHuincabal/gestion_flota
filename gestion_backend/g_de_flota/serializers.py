@@ -1,5 +1,6 @@
 import re
 import hashlib
+from django.utils import timezone
 from rest_framework import serializers
 from .models import (
     Empresa, Usuario, Rol, Permiso, normalizar_rut, REGIONES_CHILE,
@@ -1193,9 +1194,40 @@ class PlanMantenimientoSerializer(serializers.ModelSerializer):
             regla_id = regla_data.pop('id', None)
             regla = instance.reglas.filter(id=regla_id).first() if regla_id else None
             if regla:
+                nuevo_intervalo = regla_data.get('intervalo_dias')
+                cambio_intervalo = nuevo_intervalo is not None and nuevo_intervalo != regla.intervalo_dias
                 for campo, valor in regla_data.items():
                     setattr(regla, campo, valor)
                 regla.save()
+
+                if cambio_intervalo:
+                    # get_or_create solo fija fecha_siguiente al crear la
+                    # MantencionProgramada, así que cambiar el intervalo de
+                    # la regla no se reflejaba en los vehículos que ya
+                    # tenían el plan asignado. Recalcular desde fecha_ultima.
+                    hoy = timezone.now().date()
+                    for prog in regla.mantenciones_programadas.filter(estado='activa'):
+                        prog.fecha_siguiente = prog.fecha_ultima + timezone.timedelta(days=nuevo_intervalo)
+                        prog.save(update_fields=['fecha_siguiente'])
+
+                        # Las alertas ya generadas guardan dias_restantes/pct_avance
+                        # como snapshot: hay que actualizarlas (o eliminarlas si el
+                        # nuevo intervalo las deja fuera del umbral) para que el
+                        # cambio se vea reflejado sin esperar al próximo "Evaluar ahora".
+                        alerta = prog.alertas.filter(atendida=False).first()
+                        if alerta:
+                            dias_restantes = (prog.fecha_siguiente - hoy).days
+                            if dias_restantes <= regla.umbral_alerta_dias:
+                                dias_transcurridos = (hoy - prog.fecha_ultima).days
+                                alerta.nivel = 'vencida' if dias_restantes <= 0 else 'por_vencer'
+                                alerta.dias_restantes = dias_restantes
+                                alerta.pct_avance = (
+                                    round(dias_transcurridos / nuevo_intervalo * 100, 2)
+                                    if nuevo_intervalo > 0 else 100.0
+                                )
+                                alerta.save()
+                            else:
+                                alerta.delete()
             else:
                 regla = ReglaMantenimiento.objects.create(plan=instance, **regla_data)
             vigentes.add(regla.id)

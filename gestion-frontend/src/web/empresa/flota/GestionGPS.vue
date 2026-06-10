@@ -101,6 +101,7 @@ const editandoId     = ref(null)
 const form           = ref({ imei: '', modelo: 'emulador', modelo_otro: '', activo: true })
 const guardando      = ref(false)
 const empresaIdForm  = ref('')   // empresa elegida en el form cuando esTodas
+const editandoEmpresaId = ref(null) // empresa del dispositivo que se edita (modo "Todas")
 const listaEmpresas  = ref([])
 
 async function cargarListaEmpresas() {
@@ -119,6 +120,7 @@ function abrirCrear() {
 
 function abrirEditar(d) {
   editandoId.value = d.id
+  editandoEmpresaId.value = d.empresa_id ?? null
   form.value = { imei: d.imei, modelo: d.modelo, modelo_otro: d.modelo_otro || '', activo: d.activo }
   modalForm.value = true
 }
@@ -143,6 +145,7 @@ async function guardar() {
   try {
     const url    = editandoId.value
       ? `/api/empresa/gps/dispositivos/${editandoId.value}/`
+        + (esTodas.value ? `?empresa_id=${editandoEmpresaId.value}` : '')
       : '/api/empresa/gps/dispositivos/'
     const method = editandoId.value ? 'PUT' : 'POST'
     const body   = { ...form.value, imei, modelo_otro: modeloOtro }
@@ -193,7 +196,9 @@ async function copiarClave() {
 
 async function regenerarClave(d) {
   try {
-    const res = await apiFetch(`/api/empresa/gps/dispositivos/${d.id}/regenerar-clave/`, { method: 'POST' })
+    const url = `/api/empresa/gps/dispositivos/${d.id}/regenerar-clave/`
+      + (esTodas.value ? `?empresa_id=${d.empresa_id}` : '')
+    const res = await apiFetch(url, { method: 'POST' })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       toast('error', err.error || 'No se pudo regenerar la clave.')
@@ -235,7 +240,9 @@ async function confirmarRegenerar() {
 
 async function setActivo(d, activo) {
   try {
-    const res = await apiFetch(`/api/empresa/gps/dispositivos/${d.id}/`, {
+    const url = `/api/empresa/gps/dispositivos/${d.id}/`
+      + (esTodas.value ? `?empresa_id=${d.empresa_id}` : '')
+    const res = await apiFetch(url, {
       method: 'PUT',
       body: { activo },
     })

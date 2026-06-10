@@ -2373,10 +2373,16 @@ def simulador_vencimientos(request):
     if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
         return Response({"error": "Sin permisos."}, status=status.HTTP_403_FORBIDDEN)
 
-    try:
-        empresa = get_empresa(request)
-    except PermissionError:
-        return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
+    # Modo "Todas las empresas" (SUPERADMIN): el vehículo puede ser de
+    # cualquier empresa, no se filtra (solo lectura).
+    todas = es_todas(request)
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            return Response({"error": "Sin empresa asignada."}, status=status.HTTP_403_FORBIDDEN)
 
     vehiculo_id = request.query_params.get('vehiculo_id')
     meses = int(request.query_params.get('meses', 3))
@@ -2385,7 +2391,10 @@ def simulador_vencimientos(request):
         return Response({"error": "vehiculo_id es requerido."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        vehiculo = Vehiculo.objects.get(id=vehiculo_id, empresa=empresa)
+        filtro = {'id': vehiculo_id}
+        if not todas:
+            filtro['empresa'] = empresa
+        vehiculo = Vehiculo.objects.get(**filtro)
     except Vehiculo.DoesNotExist:
         return Response({"error": "Vehículo no encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
