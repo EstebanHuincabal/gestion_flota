@@ -219,6 +219,20 @@ function pedirDesactivar(d) {
   confirmDesactivar.value = true
 }
 
+// ── Regenerar clave (con confirmación) ──────────────────────────────────────
+const confirmRegenerar = ref(false)
+
+function pedirRegenerar(d) {
+  objetivo.value = d
+  confirmRegenerar.value = true
+}
+
+async function confirmarRegenerar() {
+  const d = objetivo.value
+  confirmRegenerar.value = false
+  if (d) await regenerarClave(d)
+}
+
 async function setActivo(d, activo) {
   try {
     const res = await apiFetch(`/api/empresa/gps/dispositivos/${d.id}/`, {
@@ -407,7 +421,7 @@ async function desasignar() {
                     class="px-2.5 py-1 text-xs rounded-md bg-amber-50 text-amber-700 hover:bg-amber-100">Desasignar</button>
                   <button @click="abrirEditar(d)"
                     class="px-2.5 py-1 text-xs rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200">Editar</button>
-                  <button @click="regenerarClave(d)" title="Generar una nueva clave de ingesta"
+                  <button @click="pedirRegenerar(d)" title="Generar una nueva clave de ingesta"
                     class="px-2.5 py-1 text-xs rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100">Clave</button>
                   <button v-if="d.activo" @click="pedirDesactivar(d)"
                     class="px-2.5 py-1 text-xs rounded-md bg-red-50 text-red-600 hover:bg-red-100">Desactivar</button>
@@ -553,6 +567,15 @@ async function desasignar() {
       :mensaje="`¿Quitar el vehículo asignado al dispositivo ${objetivo?.imei}?`"
       @confirmar="desasignar"
       @cancelar="confirmDesasignar = false"
+    />
+    <ConfirmModal
+      v-if="confirmRegenerar"
+      titulo="Regenerar clave de ingesta"
+      :mensaje="`Se generará una nueva clave para ${objetivo?.imei}. La clave anterior dejará de funcionar de inmediato y el dispositivo no podrá enviar posiciones hasta que cargues la nueva en él. ¿Continuar?`"
+      label-ok="Regenerar"
+      peligroso
+      @confirmar="confirmarRegenerar"
+      @cancelar="confirmRegenerar = false"
     />
   </div>
 </template>

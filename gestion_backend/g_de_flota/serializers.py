@@ -1134,23 +1134,43 @@ from .models import (
 )
 
 class ReglaMantenimientoSerializer(serializers.ModelSerializer):
+    # Editable (no read_only) para poder identificar, al editar un plan, qué
+    # reglas ya existían y así actualizarlas en vez de borrarlas y recrearlas.
+    id = serializers.IntegerField(required=False)
+
     class Meta:
         model = ReglaMantenimiento
-        fields = ['id', 'tipo', 'prioridad', 'intervalo_dias', 'umbral_alerta_dias', 
+        fields = ['id', 'tipo', 'prioridad', 'intervalo_dias', 'umbral_alerta_dias',
                   'canal', 'escalar_sin_respuesta', 'bloquear_despacho', 'costo_estimado']
 
 class PlanMantenimientoSerializer(serializers.ModelSerializer):
     reglas = ReglaMantenimientoSerializer(many=True, read_only=False)
+    empresa_nombre = serializers.CharField(source='empresa.nombre', read_only=True)
 
     class Meta:
         model = PlanMantenimiento
-        fields = ['id', 'nombre', 'descripcion', 'activo', 'created_at', 'reglas']
+        fields = ['id', 'nombre', 'descripcion', 'activo', 'created_at', 'reglas', 'empresa_nombre']
+
+    def validate_nombre(self, value):
+        value = sanitizar_texto(value).title()
+        if not value:
+            raise serializers.ValidationError("El nombre del plan es obligatorio.")
+        if len(value) > 30:
+            raise serializers.ValidationError("El nombre no puede superar los 30 caracteres.")
+        return value
+
+    def validate_descripcion(self, value):
+        value = sanitizar_texto(value)
+        if len(value) > 100:
+            raise serializers.ValidationError("La descripción no puede superar los 100 caracteres.")
+        return value
 
     def create(self, validated_data):
         reglas_data = validated_data.pop('reglas', [])
         empresa = validated_data.pop('empresa', None) or self.context['request'].user.empresa
         plan = PlanMantenimiento.objects.create(empresa=empresa, **validated_data)
         for regla_data in reglas_data:
+            regla_data.pop('id', None)
             ReglaMantenimiento.objects.create(plan=plan, **regla_data)
         return plan
 
@@ -1161,20 +1181,35 @@ class PlanMantenimientoSerializer(serializers.ModelSerializer):
         instance.activo = validated_data.get('activo', instance.activo)
         instance.save()
 
-        # Update o create reglas
-        # Por simplicidad, si se envían reglas se eliminan las actuales y se recrean (o se puede hacer más fino)
-        instance.reglas.all().delete()
+        # Actualiza las reglas existentes (por id) en vez de borrarlas y
+        # recrearlas: ReglaMantenimiento es FK de MantencionProgramada
+        # (on_delete=CASCADE), que a su vez es FK de AlertaMantencion
+        # (CASCADE). Recrear las reglas borraba en cascada el progreso y las
+        # alertas de los vehículos que ya tenían el plan asignado, aunque la
+        # regla en sí no hubiera cambiado (p. ej. al solo renombrar el plan).
+        vigentes = set()
         for regla_data in reglas_data:
-            ReglaMantenimiento.objects.create(plan=instance, **regla_data)
+            regla_id = regla_data.pop('id', None)
+            regla = instance.reglas.filter(id=regla_id).first() if regla_id else None
+            if regla:
+                for campo, valor in regla_data.items():
+                    setattr(regla, campo, valor)
+                regla.save()
+            else:
+                regla = ReglaMantenimiento.objects.create(plan=instance, **regla_data)
+            vigentes.add(regla.id)
+
+        instance.reglas.exclude(id__in=vigentes).delete()
         return instance
 
 class VehiculoPlanSerializer(serializers.ModelSerializer):
     vehiculo_patente = serializers.CharField(source='vehiculo.patente', read_only=True)
     plan_nombre = serializers.CharField(source='plan.nombre', read_only=True)
+    vehiculo_empresa = serializers.CharField(source='vehiculo.empresa.nombre', read_only=True)
 
     class Meta:
         model = VehiculoPlan
-        fields = ['id', 'vehiculo', 'vehiculo_patente', 'plan', 'plan_nombre', 'fecha_asignacion']
+        fields = ['id', 'vehiculo', 'vehiculo_patente', 'plan', 'plan_nombre', 'vehiculo_empresa', 'fecha_asignacion']
 
 class MantencionProgramadaSerializer(serializers.ModelSerializer):
     vehiculo_patente = serializers.CharField(source='vehiculo.patente', read_only=True)

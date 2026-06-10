@@ -96,6 +96,21 @@ def es_todas(request):
         and request.query_params.get('empresa_id') == EMPRESA_TODAS
 
 
+def _top_marcas(queryset, limite):
+    """Cuenta vehículos por marca agrupando sin distinguir mayúsculas/minúsculas
+    ni espacios extra. `marca` está cifrado (Fernet, IV aleatorio), por lo que
+    un GROUP BY a nivel SQL nunca agrupa filas iguales: cada una tiene un
+    ciphertext distinto. Por eso se descifra (lectura normal del ORM) y se
+    cuenta en Python."""
+    grupos = {}
+    for marca in queryset.values_list('marca', flat=True):
+        nombre = (marca or '').strip() or 'Sin marca'
+        clave = nombre.lower()
+        grupo = grupos.setdefault(clave, {'marca': nombre, 'total': 0})
+        grupo['total'] += 1
+    return sorted(grupos.values(), key=lambda g: -g['total'])[:limite]
+
+
 # ─────────────────────────────────────────
 # Auth & Dashboard Global
 # ─────────────────────────────────────────
@@ -306,14 +321,7 @@ def dashboard_global_view(request):
     ]
 
     # ── S4: Top 10 marcas de vehículos en toda la plataforma ─────
-    top_marcas_qs = (
-        Vehiculo.objects.values('marca')
-        .annotate(total=Count('id')).order_by('-total')[:10]
-    )
-    top_marcas_global = [
-        {'marca': r['marca'] or 'Sin marca', 'total': r['total']}
-        for r in top_marcas_qs
-    ]
+    top_marcas_global = _top_marcas(Vehiculo.objects.all(), 10)
 
     # ── S5: Usuarios activos últimos 30 días (por día) ───────────
     hace_30 = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -435,14 +443,9 @@ def empresa_dashboard_view(request):
             'docs_vencer':    docs_pv,
             'mant_pendiente': mant_pend,
         }
-        marcas_qs = (
-            Vehiculo.objects.filter(empresa=empresa)
-            .values('marca').annotate(total=Count('id')).order_by('-total')[:8]
+        charts['marcas_flota'] = _top_marcas(
+            Vehiculo.objects.filter(empresa=empresa), 8
         )
-        charts['marcas_flota'] = [
-            {'marca': r['marca'] or 'Sin marca', 'total': r['total']}
-            for r in marcas_qs
-        ]
 
     # ── MANTENIMIENTO ─────────────────────────────────────────────
     if p_mant:
@@ -2228,6 +2231,7 @@ def mantenciones_calendario(request):
 # ─────────────────────────────────────────
 
 from rest_framework import viewsets
+from rest_framework.exceptions import ValidationError
 from .models import (
     PlanMantenimiento, VehiculoPlan, ReglaMantenimiento,
     MantencionProgramada, AlertaMantencion, Vehiculo, EstadoMantencion
@@ -2242,6 +2246,9 @@ class PlanMantenimientoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        # Modo "Todas las empresas" (SUPERADMIN): GET agrega sin filtro de empresa.
+        if es_todas(self.request) and self.request.method == 'GET':
+            return PlanMantenimiento.objects.select_related('empresa').prefetch_related('reglas')
         try:
             empresa = get_empresa(self.request)
             return PlanMantenimiento.objects.filter(empresa=empresa).prefetch_related('reglas')
@@ -2258,7 +2265,16 @@ class PlanMantenimientoViewSet(viewsets.ModelViewSet):
                 self.permission_denied(request, message="Sin permisos.")
 
     def perform_create(self, serializer):
-        empresa = get_empresa(self.request)
+        if es_todas(self.request):
+            try:
+                empresa = Empresa.objects.get(pk=self.request.data.get('empresa_id'))
+            except (Empresa.DoesNotExist, ValueError, TypeError):
+                raise ValidationError({'empresa_id': 'Selecciona una empresa válida.'})
+        else:
+            try:
+                empresa = get_empresa(self.request)
+            except PermissionError:
+                raise ValidationError({'empresa_id': 'Empresa no encontrada.'})
         serializer.save(empresa=empresa)
         registrar_log('ACTIVIDAD', 'crear_plan_mantenimiento', self.request,
                       detalle={"plan_id": serializer.instance.id})
@@ -2412,14 +2428,21 @@ from .serializers import VehiculoPlanSerializer
 def vehiculo_planes_lista_crear(request):
     if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.ver'):
         return Response({'error': 'Sin permisos.'}, status=403)
-    empresa = get_empresa(request)
-    if not empresa:
-        return Response({'error': 'Empresa no encontrada.'}, status=400)
+
+    # Modo "Todas las empresas" (SUPERADMIN): GET agrega sin filtro de empresa.
+    todas = es_todas(request) and request.method == 'GET'
+    if todas:
+        empresa = None
+    else:
+        try:
+            empresa = get_empresa(request)
+        except PermissionError:
+            return Response({'error': 'Empresa no encontrada.'}, status=400)
 
     if request.method == 'GET':
-        qs = VehiculoPlan.objects.filter(
-            vehiculo__empresa=empresa
-        ).select_related('vehiculo', 'plan')
+        qs = VehiculoPlan.objects.select_related('vehiculo', 'vehiculo__empresa', 'plan')
+        if not todas:
+            qs = qs.filter(vehiculo__empresa=empresa)
         return Response(VehiculoPlanSerializer(qs, many=True).data)
 
     if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
@@ -2453,7 +2476,10 @@ def vehiculo_planes_lista_crear(request):
 def vehiculo_plan_detalle(request, pk):
     if not es_superadmin(request.user) and not tiene_permiso(request.user, 'predictivo.gestionar'):
         return Response({'error': 'Sin permisos.'}, status=403)
-    empresa = get_empresa(request)
+    try:
+        empresa = get_empresa(request)
+    except PermissionError:
+        return Response({'error': 'Empresa no encontrada.'}, status=400)
     try:
         asig = VehiculoPlan.objects.get(id=pk, vehiculo__empresa=empresa)
     except VehiculoPlan.DoesNotExist:

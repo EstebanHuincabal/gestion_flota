@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { clearEmpresaActiva } from '../utils/empresaActiva.js'
 import NotificacionesBell from '../components/NotificacionesBell.vue'
+import InstallPwaPrompt from '../components/InstallPwaPrompt.vue'
 import SessionWarningModal from '../components/SessionWarningModal.vue'
 import { useSessionTimer } from '../utils/useSessionTimer.js'
 
@@ -447,6 +448,7 @@ onUnmounted(() => {
         </button>
         <div class="top-bar-spacer"/>
         <div class="top-bar-right">
+          <InstallPwaPrompt />
           <NotificacionesBell />
           <div class="session-info">
             <div class="session-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>

@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { apiFetch, safeJsonParse } from '../../utils/api.js'
 import NotificacionesBell from '../../components/NotificacionesBell.vue'
+import InstallPwaPrompt from '../../components/InstallPwaPrompt.vue'
 import PlanUsageBanner from './PlanUsageBanner.vue'
 import BannerSuscripcion from './BannerSuscripcion.vue'
 import LimitePlanModal from '../planes/LimitePlanModal.vue'
@@ -390,6 +391,7 @@ const cerrarSesion = () => {
     <main class="main-content">
       <header class="topbar">
         <div class="topbar-right">
+          <InstallPwaPrompt />
           <NotificacionesBell />
           <div class="session-pill">
             <div class="session-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>

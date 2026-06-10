@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../utils/api.js'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { useToast } from '../../../utils/useToast.js'
+import { soloDescripcion, validarLongitud } from '../../../utils/validators.js'
 import { usePaginacion } from '../../../composables/usePaginacion.js'
 import PaginacionTabla from '../../../components/PaginacionTabla.vue'
 
@@ -69,6 +70,8 @@ const alertasFiltroNivel  = ref('')
 const alertasFiltroEstado = ref('pendiente')
 const cargandoAlertas     = ref(false)
 const generando           = ref(false)
+
+const { pagina: paginaAlertas, totalPaginas: totalPaginasAlertas, total: totalAlertas, paginado: paginadoAlertas, irA: irAAlertas } = usePaginacion(alertas, 20)
 
 const fetchAlertas = async () => {
   cargandoAlertas.value = true
@@ -146,11 +149,14 @@ function defaultRegla() {
   return { tipo: '', intervalo_dias: 90, umbral_alerta_dias: 15, prioridad: 'media', costo_estimado: 0, escalar_sin_respuesta: false, bloquear_despacho: false, canal: 'email' }
 }
 
-const nuevoPlan = ref({ nombre: '', descripcion: '', activo: true, reglas: [defaultRegla()] })
+const nuevoPlan = ref({ nombre: '', descripcion: '', activo: true, reglas: [defaultRegla()], empresa_id: '' })
+
+// Empresas reales (sin la opción "Todas") para el selector del formulario de planes.
+const empresasParaSelector = computed(() => empresas.value.filter(e => e.id !== EMPRESA_TODAS))
 
 const abrirNuevoPlan = () => {
   planEditando.value  = null
-  nuevoPlan.value     = { nombre: '', descripcion: '', activo: true, reglas: [defaultRegla()] }
+  nuevoPlan.value     = { nombre: '', descripcion: '', activo: true, reglas: [defaultRegla()], empresa_id: '' }
   mostrarFormPlan.value = true
 }
 
@@ -168,6 +174,12 @@ const abrirEditarPlan = (plan) => {
 const resetFormPlan = () => { mostrarFormPlan.value = false; planEditando.value = null }
 
 const guardarPlan = async () => {
+  const nombreResult = validarLongitud(nuevoPlan.value.nombre.trim(), 1, 30)
+  if (!nombreResult.valido) { toast.error(`Nombre del plan: ${nombreResult.error}`); return }
+
+  const descResult = validarLongitud(nuevoPlan.value.descripcion.trim(), 0, 100)
+  if (!descResult.valido) { toast.error(`Descripción: ${descResult.error}`); return }
+
   guardando.value = true
   try {
     const url    = planEditando.value ? `/api/empresa/planes-mantenimiento/${planEditando.value}/` : '/api/empresa/planes-mantenimiento/'
@@ -178,7 +190,7 @@ const guardarPlan = async () => {
       resetFormPlan(); fetchPlanes()
     } else {
       const d = await res.json()
-      toast.error(d.error || d.nombre?.[0] || 'Error al guardar')
+      toast.error(d.error || d.nombre?.[0] || d.descripcion?.[0] || d.empresa_id?.[0] || 'Error al guardar')
     }
   } catch { toast.error('Error de conexión') } finally { guardando.value = false }
 }
@@ -488,7 +500,7 @@ onUnmounted(() => {
 
         <div v-if="cargandoAlertas" class="loading"><div class="spinner"/> Cargando alertas...</div>
         <div v-else class="card list-card">
-          <div v-for="alerta in alertas" :key="alerta.id" class="alert-row">
+          <div v-for="alerta in paginadoAlertas" :key="alerta.id" class="alert-row">
             <div class="alert-main">
               <div class="alert-top">
                 <span class="patente-tag">{{ alerta.vehiculo_patente }}</span>
@@ -516,6 +528,14 @@ onUnmounted(() => {
             </div>
           </div>
           <div v-if="!alertas.length" class="empty-msg">No hay alertas para mostrar.</div>
+          <PaginacionTabla
+            v-if="alertas.length"
+            :pagina="paginaAlertas"
+            :total-paginas="totalPaginasAlertas"
+            :total="totalAlertas"
+            :por-pagina="20"
+            @update:pagina="irAAlertas"
+          />
         </div>
       </div>
 
@@ -530,14 +550,26 @@ onUnmounted(() => {
           <div v-if="mostrarFormPlan" class="card form-card">
             <h3 class="form-card-title">{{ planEditando ? 'Editar Plan' : 'Crear Plan de Mantenimiento' }}</h3>
             <form @submit.prevent="guardarPlan" class="form">
+              <div class="form-row" v-if="esTodas && !planEditando">
+                <div class="form-group">
+                  <label class="label">Empresa *</label>
+                  <select v-model="nuevoPlan.empresa_id" class="input select" required>
+                    <option value="" disabled>— Seleccionar empresa —</option>
+                    <option v-for="emp in empresasParaSelector" :key="emp.id" :value="emp.id">{{ emp.nombre }}</option>
+                  </select>
+                </div>
+              </div>
+
               <div class="form-row">
                 <div class="form-group">
                   <label class="label">Nombre del plan *</label>
-                  <input v-model="nuevoPlan.nombre" type="text" class="input" placeholder="Ej: Plan semestral" required/>
+                  <input v-model="nuevoPlan.nombre" @input="nuevoPlan.nombre = soloDescripcion(nuevoPlan.nombre)"
+                    type="text" class="input" placeholder="Ej: Plan semestral" maxlength="30" required/>
                 </div>
                 <div class="form-group">
                   <label class="label">Descripción</label>
-                  <input v-model="nuevoPlan.descripcion" type="text" class="input" placeholder="Opcional"/>
+                  <input v-model="nuevoPlan.descripcion" @input="nuevoPlan.descripcion = soloDescripcion(nuevoPlan.descripcion)"
+                    type="text" class="input" placeholder="Opcional" maxlength="100"/>
                 </div>
               </div>
 
@@ -609,6 +641,7 @@ onUnmounted(() => {
               <h3 class="plan-nombre">{{ plan.nombre }}</h3>
               <span class="plan-estado" :class="plan.activo ? 'estado-activo' : 'estado-inactivo'">{{ plan.activo ? 'Activo' : 'Inactivo' }}</span>
             </div>
+            <p v-if="esTodas" class="plan-empresa">{{ plan.empresa_nombre }}</p>
             <p class="plan-desc">{{ plan.descripcion || 'Sin descripción' }}</p>
             <div class="plan-reglas">
               <span class="reglas-titulo">{{ plan.reglas.length }} regla{{ plan.reglas.length !== 1 ? 's' : '' }}</span>
@@ -670,7 +703,17 @@ onUnmounted(() => {
 
           <!-- ── Panel izquierdo: selección ─────────────────── -->
           <div class="asig-panel-left">
-            <div class="card form-card">
+            <div v-if="esTodas" class="card form-card">
+              <h3 class="form-card-title">Asignar plan a vehículos</h3>
+              <div class="asig-placeholder">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                <p>Selecciona una empresa específica para asignar planes a sus vehículos.</p>
+              </div>
+            </div>
+            <div v-else class="card form-card">
               <h3 class="form-card-title">Asignar plan a vehículos</h3>
 
               <!-- 1. Selector de plan -->
@@ -745,14 +788,16 @@ onUnmounted(() => {
                 <thead>
                   <tr>
                     <th>Vehículo</th>
+                    <th v-if="esTodas">Empresa</th>
                     <th>Plan</th>
                     <th>Alertas</th>
-                    <th></th>
+                    <th v-if="!esTodas"></th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="asig in paginadoAsig" :key="asig.id">
                     <td class="font-med">{{ asig.vehiculo_patente }}</td>
+                    <td v-if="esTodas">{{ asig.vehiculo_empresa }}</td>
                     <td>{{ asig.plan_nombre }}</td>
                     <td>
                       <span v-if="alertasPorVehiculo[asig.vehiculo_patente]?.vencidas" class="asig-badge asig-badge-red">
@@ -763,7 +808,7 @@ onUnmounted(() => {
                       </span>
                       <span v-else class="asig-badge asig-badge-green">OK</span>
                     </td>
-                    <td>
+                    <td v-if="!esTodas">
                       <button class="btn-danger-sm" @click="eliminarAsignacion(asig)">Quitar</button>
                     </td>
                   </tr>
@@ -934,6 +979,7 @@ onUnmounted(() => {
 .estado-activo { background: #D1FAE5; color: #065F46; }
 .estado-inactivo { background: #F3F4F6; color: #6B7280; }
 .plan-desc { font-size: 0.8125rem; color: #6B7280; margin: 0; }
+.plan-empresa { font-size: 0.75rem; font-weight: 600; color: #534AB7; margin: 0; }
 .plan-reglas { background: #F9FAFB; border-radius: 10px; padding: 0.75rem 1rem; }
 .reglas-titulo { font-size: 0.75rem; font-weight: 700; color: #374151; display: block; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .reglas-lista { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }

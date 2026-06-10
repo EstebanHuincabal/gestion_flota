@@ -2336,3 +2336,36 @@ Asignados a todos los planes por defecto. Aparecen en Gestión de Permisos bajo 
 - `app_conductor/src/components/BottomNav.vue` — ítem "Avisos" en la nav
 
 ---
+
+### Soporte PWA en gestion-frontend ("Instalar app")
+
+`gestion-frontend` es una PWA instalable mediante `vite-plugin-pwa`
+(`vite.config.js`): genera `manifest.webmanifest` y un service worker
+(`registerType: 'autoUpdate'`). El manifest excluye `/api`, `/admin`, `/ws`,
+`/media` y `/static` del precaching/`navigateFallback` para no interferir con el
+backend ni los WebSockets.
+
+**Iconos**: generados con `@vite-pwa/assets-generator` a partir de
+`pwa-icon-source.svg` (fondo `#534AB7`, color de marca de la app conductor).
+Para regenerarlos tras cambiar el SVG fuente: `npx pwa-assets-generator` (copia
+el resultado de la raíz a `public/`).
+
+**Botón "Instalar app"**: `src/components/InstallPwaPrompt.vue`, agregado en la
+barra superior de `web/Base.vue` y `web/empresa/EmpresaLayout.vue`. Tiene dos
+modos:
+- **Directo**: si el navegador dispara `beforeinstallprompt` (requiere HTTPS),
+  muestra un botón "Instalar" que llama a `deferredPrompt.prompt()`.
+- **Instrucciones**: si tras 1.5s no llega ese evento (HTTP actual en
+  producción, o navegadores sin soporte), muestra el paso a paso manual según
+  el navegador/SO detectado (iOS, Android, Chrome/Edge escritorio) para crear
+  un acceso directo.
+
+El usuario puede ocultarlo permanentemente (`localStorage: pwa_install_dismissed`).
+
+**Pendiente**: en producción (`http://157.180.85.17`, HTTP sobre IP) el modo
+"Directo" no se activa — el navegador no registra el service worker ni dispara
+`beforeinstallprompt` sin HTTPS. Cuando se configure HTTPS (sslip.io + Certbot,
+ver `DEPLOY.md`), el modo directo se activará automáticamente sin tocar este
+código.
+
+---
