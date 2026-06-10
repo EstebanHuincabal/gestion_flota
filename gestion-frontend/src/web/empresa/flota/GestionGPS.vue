@@ -258,9 +258,11 @@ async function desactivar() {
 }
 
 // ── Asignar vehículo ──────────────────────────────────────────────────────────
-const modalAsignar = ref(false)
-const asignarId    = ref(null)
-const vehiculoSel  = ref('')
+const modalAsignar     = ref(false)
+const asignarId        = ref(null)
+const asignarEmpresaId = ref(null)
+const asignarEmpresaNombre = ref('')
+const vehiculoSel      = ref('')
 
 const dispositivosFiltrados = computed(() => dispositivos.value)
 const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(dispositivosFiltrados, 20)
@@ -271,11 +273,19 @@ const vehiculosLibres = computed(() => {
   const ocupados = new Set(
     dispositivos.value.filter(d => d.vehiculo_id).map(d => d.vehiculo_id)
   )
-  return vehiculos.value.filter(v => !ocupados.has(v.id))
+  let libres = vehiculos.value.filter(v => !ocupados.has(v.id))
+  // Modo "Todas": el dispositivo pertenece a una empresa concreta, así que solo
+  // se pueden asignar vehículos de esa misma empresa.
+  if (esTodas.value && asignarEmpresaId.value) {
+    libres = libres.filter(v => v.empresa_id === asignarEmpresaId.value)
+  }
+  return libres
 })
 
 function abrirAsignar(d) {
   asignarId.value = d.id
+  asignarEmpresaId.value = d.empresa_id ?? null
+  asignarEmpresaNombre.value = d.empresa_nombre || ''
   vehiculoSel.value = ''
   modalAsignar.value = true
 }
@@ -286,7 +296,9 @@ async function asignar() {
     return
   }
   try {
-    const res = await apiFetch(`/api/empresa/gps/dispositivos/${asignarId.value}/asignar/`, {
+    const url = `/api/empresa/gps/dispositivos/${asignarId.value}/asignar/`
+      + (esTodas.value ? `?empresa_id=${asignarEmpresaId.value}` : '')
+    const res = await apiFetch(url, {
       method: 'POST',
       body: { vehiculo_id: vehiculoSel.value },
     })
@@ -317,7 +329,9 @@ async function desasignar() {
   confirmDesasignar.value = false
   if (!d) return
   try {
-    const res = await apiFetch(`/api/empresa/gps/dispositivos/${d.id}/desasignar/`, { method: 'POST' })
+    const url = `/api/empresa/gps/dispositivos/${d.id}/desasignar/`
+      + (esTodas.value ? `?empresa_id=${d.empresa_id}` : '')
+    const res = await apiFetch(url, { method: 'POST' })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       toast('error', err.error || 'No se pudo desasignar.')
@@ -507,6 +521,16 @@ async function desasignar() {
     <div v-if="modalAsignar" class="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" @click.self="modalAsignar = false">
       <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
         <h2 class="text-lg font-bold text-gray-800 mb-4">Asignar vehículo</h2>
+
+        <!-- Empresa del dispositivo (solo SUPERADMIN en modo "Todas") -->
+        <template v-if="esTodas">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">Empresa</label>
+          <select disabled
+            class="w-full mb-4 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-500">
+            <option>{{ asignarEmpresaNombre || '—' }}</option>
+          </select>
+        </template>
+
         <label class="block text-sm font-semibold text-gray-700 mb-1">Vehículo</label>
         <select v-model="vehiculoSel"
           class="w-full mb-6 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-400 outline-none">

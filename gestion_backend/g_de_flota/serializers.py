@@ -843,6 +843,7 @@ class VehiculoSerializer(serializers.ModelSerializer):
     gps_asociado       = serializers.SerializerMethodField()
     foto_url           = serializers.SerializerMethodField()
     # Origen de la fila, usado por el SUPERADMIN en el modo "Todas las empresas".
+    empresa_id         = serializers.IntegerField(read_only=True)
     empresa_nombre     = serializers.CharField(source='empresa.nombre', read_only=True)
 
     class Meta:
@@ -850,7 +851,7 @@ class VehiculoSerializer(serializers.ModelSerializer):
         fields = ['id', 'patente', 'marca', 'modelo',
                   'anio', 'tipo_combustible', 'km_actuales',
                   'conductor_asignado', 'gps_asociado', 'foto', 'foto_url', 'activo',
-                  'empresa_nombre']
+                  'empresa_id', 'empresa_nombre']
         read_only_fields = ['id']
         extra_kwargs = {'foto': {'write_only': True, 'required': False}}
 

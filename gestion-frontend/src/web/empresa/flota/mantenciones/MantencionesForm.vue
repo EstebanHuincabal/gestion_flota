@@ -101,7 +101,7 @@ const cargarTipo = (valor) => {
 
 const cargarEmpresas = async () => {
   if (!esSuperadmin) return
-  const res = await apiFetch('/api/clientes/empresas/')
+  const res = await apiFetch('/api/empresas/')
   if (res.ok) empresas.value = await res.json()
 }
 
