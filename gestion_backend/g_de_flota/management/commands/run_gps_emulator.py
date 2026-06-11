@@ -41,6 +41,9 @@ class Command(BaseCommand):
         parser.add_argument('--desviar', action='store_true', default=False,
                             help='Modo prueba: alterna 5 ticks en ruta / 5 ticks fuera de ruta '
                                  'para verificar las alertas de desviación en el mapa.')
+        parser.add_argument('--velocidad', type=float, default=None,
+                            help='Fuerza una velocidad fija en km/h (ej: 140). '
+                                 'Útil para probar alertas de exceso de velocidad.')
 
     def handle(self, *args, **opts):
         qs = DispositivoGPS.objects.filter(activo=True, vehiculo__isnull=False)
@@ -77,6 +80,7 @@ class Command(BaseCommand):
                 api_key=d.api_key,
                 traccar_url=opts['traccar'],
                 desviar=opts['desviar'],
+                velocidad_fija=opts['velocidad'],
             )
             emu.connect()
             emuladores.append(emu)
@@ -98,6 +102,10 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(
                 '⚠ Modo --desviar activo: cada 5 ticks el vehículo saldrá ~333 m de la ruta '
                 'para probar las alertas de desviación.'
+            ))
+        if opts['velocidad'] is not None:
+            self.stdout.write(self.style.WARNING(
+                f'⚠ Velocidad fija: {opts["velocidad"]} km/h en todos los ticks.'
             ))
         self.stdout.write(self.style.NOTICE(
             f'{len(emuladores)} emulador(es) activos. Ctrl+C para detener.\n'

@@ -244,4 +244,22 @@ class GPSConsumer(AsyncWebsocketConsumer):
             'patente':     event['patente'],
         }))
 
+    async def speed_alert(self, event):
+        """Alerta: vehículo supera el límite legal de velocidad."""
+        await self.send(text_data=json.dumps({
+            'type':        'speed_alert',
+            'vehiculo_id': event['vehiculo_id'],
+            'patente':     event['patente'],
+            'velocidad':   event['velocidad'],
+            'limite':      event['limite'],
+        }))
+
+    async def speed_normal(self, event):
+        """Vehículo volvió a velocidad dentro del límite."""
+        await self.send(text_data=json.dumps({
+            'type':        'speed_normal',
+            'vehiculo_id': event['vehiculo_id'],
+            'patente':     event['patente'],
+        }))
+
 

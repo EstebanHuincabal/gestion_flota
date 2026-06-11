@@ -95,7 +95,8 @@ class NMEAEmulatorAdapter(IGPSProvider):
 
     def __init__(self, imei: str, api_url: str, intervalo_seg: int = 5,
                  ruta_puntos: Optional[list] = None, api_key: str = '',
-                 traccar_url: str = '', desviar: bool = False):
+                 traccar_url: str = '', desviar: bool = False,
+                 velocidad_fija: Optional[float] = None):
         self.imei          = imei
         self.api_url       = api_url.rstrip('/')
         self.intervalo_seg = intervalo_seg
@@ -126,6 +127,8 @@ class NMEAEmulatorAdapter(IGPSProvider):
         # Modo prueba: alterna 5 ticks en ruta / 5 ticks fuera de ruta (~350 m)
         self.desviar          = desviar
         self._tick_count      = 0
+        # Velocidad fija para pruebas (None = aleatoria entre 20-70 km/h)
+        self.velocidad_fija   = velocidad_fija
 
     @staticmethod
     def _submuestrear(puntos: list, max_puntos: int = 40) -> list:
@@ -242,7 +245,7 @@ class NMEAEmulatorAdapter(IGPSProvider):
             self._tick_count += 1
             if (self._tick_count // 5) % 2 == 1:
                 lat += 0.003
-        velocidad = round(random.uniform(20, 70), 1)
+        velocidad = round(self.velocidad_fija if self.velocidad_fija is not None else random.uniform(20, 70), 1)
 
         # Trama NMEA (se reparsea para validar el ciclo generar→parsear)
         trama = _generar_gprmc(lat, lng, velocidad)

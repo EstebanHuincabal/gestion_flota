@@ -29,6 +29,17 @@ const marcadores = {}                  // vehiculo_id → L.marker
 const rutasLayers = {}                 // vehiculo_id → L.polyline (trazado de la ruta activa)
 const mostrarRutas = ref(true)         // toggle de visibilidad de las rutas
 const alertasDesviacion = ref({})      // vehiculo_id → {patente, distancia_m, ruta_nombre}
+const alertasVelocidad  = ref({})      // vehiculo_id → {patente, velocidad, limite}
+
+function cerrarAlerta(vid) {
+  const { [vid]: _, ...resto } = alertasDesviacion.value
+  alertasDesviacion.value = resto
+}
+
+function cerrarAlertaVelocidad(vid) {
+  const { [vid]: _, ...resto } = alertasVelocidad.value
+  alertasVelocidad.value = resto
+}
 let ws          = null
 let reconnectTimer = null
 let reconnectDelay = 1000
@@ -164,9 +175,13 @@ async function cargarLeaflet() {
   })
 }
 
-function iconoVehiculo(estado, desviando = false) {
-  const color = desviando ? '#F59E0B' : colorEstado(estado)
-  const ring  = desviando ? `<circle cx="15" cy="15" r="14" fill="none" stroke="#F59E0B" stroke-width="2" opacity="0.5"/>` : ''
+function iconoVehiculo(estado, desviando = false, excesoVelocidad = false) {
+  const color = excesoVelocidad ? '#DC2626' : desviando ? '#F59E0B' : colorEstado(estado)
+  const ring  = excesoVelocidad
+    ? `<circle cx="15" cy="15" r="14" fill="none" stroke="#DC2626" stroke-width="2" opacity="0.6"/>`
+    : desviando
+      ? `<circle cx="15" cy="15" r="14" fill="none" stroke="#F59E0B" stroke-width="2" opacity="0.5"/>`
+      : ''
   return window.L.divIcon({
     className: '',
     html: `<svg width="44" height="44" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
@@ -212,10 +227,10 @@ function pintarMarcador(v) {
   const existente = marcadores[v.vehiculo_id]
   if (existente) {
     existente.setLatLng([v.latitud, v.longitud])
-    existente.setIcon(iconoVehiculo(v.estado, v.desviando))
+    existente.setIcon(iconoVehiculo(v.estado, v.desviando, v.exceso_velocidad))
     existente.getPopup()?.setContent(popupHtml(v))
   } else {
-    const m = window.L.marker([v.latitud, v.longitud], { icon: iconoVehiculo(v.estado, v.desviando) })
+    const m = window.L.marker([v.latitud, v.longitud], { icon: iconoVehiculo(v.estado, v.desviando, v.exceso_velocidad) })
       .bindPopup(popupHtml(v))
       .addTo(mapa)
     marcadores[v.vehiculo_id] = m
@@ -359,6 +374,24 @@ function conectarWS() {
           vehiculos.value[idx] = { ...vehiculos.value[idx], desviando: false }
           pintarMarcador(vehiculos.value[idx])
         }
+      } else if (msg.type === 'speed_alert') {
+        alertasVelocidad.value = {
+          ...alertasVelocidad.value,
+          [msg.vehiculo_id]: { patente: msg.patente, velocidad: msg.velocidad, limite: msg.limite },
+        }
+        const idx = vehiculos.value.findIndex(v => v.vehiculo_id === msg.vehiculo_id)
+        if (idx >= 0) {
+          vehiculos.value[idx] = { ...vehiculos.value[idx], exceso_velocidad: true }
+          pintarMarcador(vehiculos.value[idx])
+        }
+      } else if (msg.type === 'speed_normal') {
+        const { [msg.vehiculo_id]: _rem, ...resto } = alertasVelocidad.value
+        alertasVelocidad.value = resto
+        const idx = vehiculos.value.findIndex(v => v.vehiculo_id === msg.vehiculo_id)
+        if (idx >= 0) {
+          vehiculos.value[idx] = { ...vehiculos.value[idx], exceso_velocidad: false }
+          pintarMarcador(vehiculos.value[idx])
+        }
       }
     } catch { /* ignorar mensajes mal formados */ }
   }
@@ -492,28 +525,6 @@ onUnmounted(() => {
       <p class="text-gray-500">Selecciona una empresa para ver su flota en el mapa.</p>
     </div>
 
-    <!-- Banner de desviaciones activas -->
-    <div v-if="Object.keys(alertasDesviacion).length" class="mb-3 flex flex-col gap-1.5">
-      <div
-        v-for="(alerta, vid) in alertasDesviacion"
-        :key="vid"
-        class="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-300 rounded-xl text-sm"
-      >
-        <svg class="w-5 h-5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>
-        <span class="font-semibold text-amber-800">{{ alerta.patente }}</span>
-        <span class="text-amber-700">se alejó <strong>{{ alerta.distancia_m }} m</strong> de la ruta "{{ alerta.ruta_nombre }}"</span>
-        <button
-          @click="() => { const {[vid]: _, ...r} = alertasDesviacion.value; alertasDesviacion.value = r }"
-          class="ml-auto text-amber-400 hover:text-amber-600 transition"
-          title="Cerrar alerta"
-        >✕</button>
-      </div>
-    </div>
-
-    <template v-else>
     <div class="flex gap-4" style="height: 72vh;">
 
       <!-- ── Panel lateral de vehículos ─────────────────────────────────────── -->
@@ -549,9 +560,10 @@ onUnmounted(() => {
                      seleccionado === v.vehiculo_id ? 'bg-indigo-50/70' : '']"
           >
             <div class="flex items-center gap-2 mb-1">
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: v.desviando ? '#F59E0B' : colorEstado(v.estado) }"></span>
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: v.exceso_velocidad ? '#DC2626' : v.desviando ? '#F59E0B' : colorEstado(v.estado) }"></span>
               <span class="font-semibold text-gray-800 text-sm">{{ v.patente }}</span>
-              <span v-if="v.desviando" class="text-[10px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full shrink-0">Fuera de ruta</span>
+              <span v-if="v.exceso_velocidad" class="text-[10px] font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full shrink-0">Exceso vel.</span>
+              <span v-else-if="v.desviando" class="text-[10px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full shrink-0">Fuera de ruta</span>
               <span v-else class="text-xs text-gray-400 truncate">{{ [v.marca, v.modelo].filter(Boolean).join(' ') }}</span>
             </div>
             <div class="pl-[1.1rem] space-y-0.5">
@@ -579,10 +591,77 @@ onUnmounted(() => {
         <div v-if="cargando" class="absolute inset-0 z-[5] flex items-center justify-center bg-gray-50/80">
           <span class="text-sm text-gray-500">Cargando mapa...</span>
         </div>
+
+        <!-- Alertas flotantes sobre el mapa (esquina superior derecha) -->
+        <div class="absolute top-3 right-3 z-[1000] flex flex-col gap-2 w-72 pointer-events-none">
+          <div
+            v-for="(alerta, vid) in alertasDesviacion"
+            :key="`dev-${vid}`"
+            class="flex items-center bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden pointer-events-auto"
+          >
+            <div class="w-1 self-stretch bg-amber-400 shrink-0"></div>
+            <div class="flex items-center gap-2.5 px-3 py-2.5 flex-1 min-w-0">
+              <div class="flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 shrink-0">
+                <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+                </svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-[10px] font-semibold text-amber-500 uppercase tracking-wide leading-none mb-0.5">Fuera de ruta</p>
+                <p class="text-xs text-gray-800 truncate">
+                  <span class="font-semibold">{{ alerta.patente }}</span>
+                  <span class="text-gray-400"> · {{ alerta.distancia_m }} m de "{{ alerta.ruta_nombre }}"</span>
+                </p>
+              </div>
+            </div>
+            <button
+              @click="cerrarAlerta(String(vid))"
+              class="px-2.5 self-stretch flex items-center text-gray-300 hover:text-gray-500 hover:bg-gray-50 transition shrink-0"
+              title="Cerrar alerta"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+
+          <div
+            v-for="(alerta, vid) in alertasVelocidad"
+            :key="`vel-${vid}`"
+            class="flex items-center bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden pointer-events-auto"
+          >
+            <div class="w-1 self-stretch bg-red-500 shrink-0"></div>
+            <div class="flex items-center gap-2.5 px-3 py-2.5 flex-1 min-w-0">
+              <div class="flex items-center justify-center w-8 h-8 rounded-full bg-red-100 shrink-0">
+                <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-[10px] font-semibold text-red-500 uppercase tracking-wide leading-none mb-0.5">Exceso de velocidad</p>
+                <p class="text-xs text-gray-800 truncate">
+                  <span class="font-semibold">{{ alerta.patente }}</span>
+                  <span class="text-gray-400"> · {{ alerta.velocidad }} km/h</span>
+                  <span class="text-red-400"> (lím. {{ alerta.limite }})</span>
+                </p>
+              </div>
+            </div>
+            <button
+              @click="cerrarAlertaVelocidad(String(vid))"
+              class="px-2.5 self-stretch flex items-center text-gray-300 hover:text-gray-500 hover:bg-gray-50 transition shrink-0"
+              title="Cerrar alerta"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
         <div id="mapa-flota" style="height: 100%; width: 100%;"></div>
       </div>
 
     </div>
-    </template>
   </div>
 </template>

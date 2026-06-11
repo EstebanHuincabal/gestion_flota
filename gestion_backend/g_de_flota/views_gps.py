@@ -186,6 +186,11 @@ COOLDOWN_NOTIF_S    = 300   # segundos mínimos entre notificaciones del mismo v
 # para dev y para despliegues con un único worker (gunicorn -w 1 / daphne).
 _estado_desviacion = {}   # vehiculo_id → {'desviado': bool, 'ultima_notif': datetime|None}
 
+UMBRAL_VELOCIDAD_KMPH = 120  # límite máximo legal en Chile (autopistas, Ley 18.290)
+COOLDOWN_VELOCIDAD_S  = 120  # segundos mínimos entre notificaciones por vehículo
+
+_estado_velocidad: dict = {}  # vehiculo_id → {'excediendo': bool, 'ultima_notif': datetime|None}
+
 
 def _haversine_m(lat1, lon1, lat2, lon2):
     """Distancia en metros entre dos puntos geográficos (Haversine)."""
@@ -313,6 +318,58 @@ def _verificar_desviacion_ruta(dispositivo, lat, lng):
                 'patente':     dispositivo.vehiculo.patente,
             })
         _estado_desviacion[vid] = {'desviado': False, 'ultima_notif': estado.get('ultima_notif')}
+
+
+def _verificar_exceso_velocidad(dispositivo, vel):
+    """Detecta si el vehículo supera el límite legal máximo chileno y emite alertas."""
+    vid = dispositivo.vehiculo_id
+    if not vid:
+        return
+    if not _empresa_tiene_gps(dispositivo.empresa):
+        _estado_velocidad.pop(vid, None)
+        return
+
+    estado = _estado_velocidad.get(vid, {'excediendo': False, 'ultima_notif': None})
+    ahora  = timezone.now()
+
+    if vel > UMBRAL_VELOCIDAD_KMPH:
+        ya_notificado = (
+            estado['ultima_notif'] is not None and
+            (ahora - estado['ultima_notif']).total_seconds() < COOLDOWN_VELOCIDAD_S
+        )
+        if not ya_notificado:
+            patente = dispositivo.vehiculo.patente
+            _broadcast_evento_gps(dispositivo.empresa_id, {
+                'type':        'speed_alert',
+                'vehiculo_id': vid,
+                'patente':     patente,
+                'velocidad':   round(vel),
+                'limite':      UMBRAL_VELOCIDAD_KMPH,
+            })
+            try:
+                from .notificaciones import notificar_admins_empresa
+                notificar_admins_empresa(
+                    dispositivo.empresa,
+                    TipoNotificacion.ACTIVIDAD,
+                    f'Exceso de velocidad: {patente}',
+                    f'{patente} circula a {round(vel)} km/h (límite {UMBRAL_VELOCIDAD_KMPH} km/h).',
+                    url_accion='/empresa/mapa',
+                    extra={'vehiculo_id': vid},
+                    permiso='gps.ver',
+                )
+            except Exception:
+                pass
+            _estado_velocidad[vid] = {'excediendo': True, 'ultima_notif': ahora}
+        else:
+            _estado_velocidad[vid] = {**estado, 'excediendo': True}
+    else:
+        if estado.get('excediendo'):
+            _broadcast_evento_gps(dispositivo.empresa_id, {
+                'type':        'speed_normal',
+                'vehiculo_id': vid,
+                'patente':     dispositivo.vehiculo.patente,
+            })
+        _estado_velocidad[vid] = {'excediendo': False, 'ultima_notif': estado.get('ultima_notif')}
 
 
 # ── Dispositivos: lista y creación ────────────────────────────────────────────
@@ -656,6 +713,7 @@ def _registrar_posicion(dispositivo, lat, lng, vel):
         'conductor_nombre': conductor.nombre if conductor else None,
     })
     _verificar_desviacion_ruta(dispositivo, lat, lng)
+    _verificar_exceso_velocidad(dispositivo, vel)
     return ubicacion
 
 
