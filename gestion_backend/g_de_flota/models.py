@@ -1065,11 +1065,13 @@ class Aviso(models.Model):
     DESTINO_CONDUCTOR = 'conductor'
     DESTINO_ADMINS    = 'admins'
     DESTINO_TODAS     = 'todas'
+    DESTINO_SUPERADMIN = 'superadmin'
     DESTINOS = [
         (DESTINO_FLOTA,     'Toda la flota'),
         (DESTINO_CONDUCTOR, 'Conductor específico'),
         (DESTINO_ADMINS,    'Administradores'),
         (DESTINO_TODAS,     'Todas las empresas'),
+        (DESTINO_SUPERADMIN, 'Superadmin'),
     ]
 
     empresa      = models.ForeignKey(Empresa, on_delete=models.CASCADE, related_name='avisos')

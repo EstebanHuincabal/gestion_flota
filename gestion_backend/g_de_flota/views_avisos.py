@@ -11,6 +11,8 @@ Endpoints:
   POST /api/conductor/avisos/          Conductor envía aviso a admins
   GET  /api/conductor/avisos/          Bandeja del conductor (avisos recibidos)
 """
+import threading
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -80,7 +82,9 @@ def _resolver_empresa(request):
     castear un pk inválido (evita el 500) y bloquear las escrituras.
     """
     if request.user.rol == Rol.SUPERADMIN:
-        eid = request.query_params.get('empresa_id') or request.data.get('empresa_id')
+        # Priorizar el ID del body (POST) sobre el query param para permitir
+        # enviar a una empresa específica estando en la vista "Todas".
+        eid = request.data.get('empresa_id') or request.query_params.get('empresa_id')
         if not eid or eid == EMPRESA_TODAS:
             return None
         try:
@@ -104,10 +108,31 @@ def empresa_avisos(request):
     if request.method == 'GET':
         if not todas and not empresa:
             return Response({'error': 'Sin empresa.'}, status=status.HTTP_400_BAD_REQUEST)
-        avisos = Aviso.objects.select_related('emisor', 'destinatario', 'empresa')
+        avisos_qs = Aviso.objects.select_related('emisor', 'destinatario', 'empresa').order_by('-fecha')
         if not todas:
-            avisos = avisos.filter(empresa=empresa)
-        return Response([_aviso_dict(a) for a in avisos])
+            avisos_qs = avisos_qs.filter(empresa=empresa)
+
+        if todas:
+            # Los avisos con destino='todas' se crean uno por empresa; deduplicar
+            # para mostrar solo uno en la bandeja del SUPERADMIN.
+            # Se sobreescribe empresa_nombre → None para que el frontend sepa que
+            # es un aviso global y lo muestre independientemente del filtro de empresa.
+            seen_globales = set()
+            resultado = []
+            for a in avisos_qs:
+                if a.destino == Aviso.DESTINO_TODAS:
+                    key = (a.emisor_id, a.asunto, a.fecha.date())
+                    if key in seen_globales:
+                        continue
+                    seen_globales.add(key)
+                    d = _aviso_dict(a)
+                    d['empresa_nombre'] = None   # global, sin empresa concreta
+                    resultado.append(d)
+                else:
+                    resultado.append(_aviso_dict(a))
+            return Response(resultado)
+
+        return Response([_aviso_dict(a) for a in avisos_qs])
 
     # ── POST: enviar ──────────────────────────────────────────────────────────
     if not _tiene_permiso(request.user, 'avisos.enviar'):
@@ -117,7 +142,7 @@ def empresa_avisos(request):
     asunto  = sanitizar_texto(request.data.get('asunto', '')).strip()
     mensaje = sanitizar_texto(request.data.get('mensaje', '')).strip()
 
-    DESTINOS_VALIDOS = (Aviso.DESTINO_FLOTA, Aviso.DESTINO_CONDUCTOR, Aviso.DESTINO_TODAS)
+    DESTINOS_VALIDOS = (Aviso.DESTINO_FLOTA, Aviso.DESTINO_CONDUCTOR, Aviso.DESTINO_TODAS, Aviso.DESTINO_ADMINS, Aviso.DESTINO_SUPERADMIN)
     if destino not in DESTINOS_VALIDOS:
         return Response({'error': 'Destino inválido.'}, status=status.HTTP_400_BAD_REQUEST)
     if not asunto:
@@ -129,31 +154,42 @@ def empresa_avisos(request):
     if destino == Aviso.DESTINO_TODAS and request.user.rol != Rol.SUPERADMIN:
         return Response({'error': 'Sin permisos para enviar a todas las empresas.'}, status=status.HTTP_403_FORBIDDEN)
 
+    # Solo el SUPERADMIN puede enviar a 'admins' desde este endpoint
+    if destino == Aviso.DESTINO_ADMINS and request.user.rol != Rol.SUPERADMIN:
+        return Response({'error': 'Sin permisos para enviar a administradores.'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Solo el USUARIO (admin empresa) puede enviar a 'superadmin'
+    if destino == Aviso.DESTINO_SUPERADMIN and request.user.rol != Rol.USUARIO:
+        return Response({'error': 'Sin permisos para enviar a soporte.'}, status=status.HTTP_403_FORBIDDEN)
+
     nombre_emisor = _nombre(request.user)
 
     # ── Envío a todas las empresas (solo SUPERADMIN) ──────────────────────────
     if destino == Aviso.DESTINO_TODAS:
-        empresas = Empresa.objects.filter(estado='activa')
-        enviados = 0
+        empresas = list(Empresa.objects.filter(estado='activa'))
+        datos_email = []   # pre-colectados antes del hilo para no hacer ORM dentro del thread
         for emp in empresas:
-            aviso = Aviso.objects.create(
+            Aviso.objects.create(
                 empresa=emp,
                 emisor=request.user,
                 destino=Aviso.DESTINO_TODAS,
                 asunto=asunto,
                 mensaje=mensaje,
             )
-            receptores = list(Usuario.objects.filter(
-                empresa=emp, is_active=True,
-                rol__in=[Rol.CONDUCTOR, Rol.USUARIO],
-            ))
-            for receptor in receptores:
-                notificar(receptor, tipo='ACTIVIDAD', titulo=f'📢 {asunto}',
+            admins = list(Usuario.objects.filter(empresa=emp, is_active=True, rol=Rol.USUARIO))
+            for admin in admins:
+                notificar(admin, tipo='ACTIVIDAD', titulo=f'📢 {asunto}',
                           mensaje=mensaje, url_accion='/avisos')
-                if receptor.email:
-                    email_aviso(receptor.email, _nombre(receptor), emp.nombre, nombre_emisor, asunto, mensaje)
-            enviados += 1
-        return Response({'enviado': True, 'empresas': enviados}, status=status.HTTP_201_CREATED)
+                if admin.email:
+                    datos_email.append((admin.email, _nombre(admin), emp.nombre))
+
+        if datos_email:
+            def _enviar_emails(datos=datos_email):
+                for email, nombre, emp_nombre in datos:
+                    email_aviso(email, nombre, emp_nombre, nombre_emisor, asunto, mensaje)
+            threading.Thread(target=_enviar_emails, daemon=True).start()
+
+        return Response({'enviado': True, 'empresas': len(empresas)}, status=status.HTTP_201_CREATED)
 
     # ── Envío normal (una empresa) ────────────────────────────────────────────
     # Los envíos dirigidos exigen una empresa concreta (no aplica "Todas").
@@ -181,17 +217,30 @@ def empresa_avisos(request):
         mensaje=mensaje,
     )
 
-    empresa_nombre = empresa.nombre
+    empresa_nombre = 'FlotaSystem' if destino == Aviso.DESTINO_SUPERADMIN else empresa.nombre
     if destino == Aviso.DESTINO_CONDUCTOR:
         receptores = [destinatario]
+    elif destino == Aviso.DESTINO_ADMINS:
+        receptores = list(Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True))
+    elif destino == Aviso.DESTINO_SUPERADMIN:
+        receptores = list(Usuario.objects.filter(rol=Rol.SUPERADMIN, is_active=True))
     else:
         receptores = list(Usuario.objects.filter(empresa=empresa, rol=Rol.CONDUCTOR, is_active=True))
 
+    # Notificaciones push sincrónicamente (BD local, rápido)
     for receptor in receptores:
         notificar(receptor, tipo='ACTIVIDAD', titulo=f'📢 {asunto}',
                   mensaje=mensaje, url_accion='/avisos')
-        if receptor.email:
-            email_aviso(receptor.email, _nombre(receptor), empresa_nombre, nombre_emisor, asunto, mensaje)
+
+    # Envío de correos en hilo separado para no bloquear la respuesta HTTP
+    receptores_email = [(r.email, _nombre(r)) for r in receptores if r.email]
+
+    def _enviar_emails():
+        for email, nombre in receptores_email:
+            email_aviso(email, nombre, empresa_nombre, nombre_emisor, asunto, mensaje)
+
+    if receptores_email:
+        threading.Thread(target=_enviar_emails, daemon=True).start()
 
     return Response(_aviso_dict(aviso), status=status.HTTP_201_CREATED)
 
@@ -260,7 +309,7 @@ def conductor_avisos(request):
     empresa_nombre = empresa.nombre
     url_avisos_admin = '/empresa/avisos'
 
-    admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
+    admins = list(Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True))
     for admin in admins:
         notificar(
             admin,
@@ -269,7 +318,14 @@ def conductor_avisos(request):
             mensaje=f'Aviso de {nombre_emisor}: {mensaje}',
             url_accion=url_avisos_admin,
         )
-        if admin.email:
-            email_aviso(admin.email, _nombre(admin), empresa_nombre, nombre_emisor, asunto, mensaje)
+
+    admins_email = [(a.email, _nombre(a)) for a in admins if a.email]
+
+    def _enviar_emails():
+        for email, nombre in admins_email:
+            email_aviso(email, nombre, empresa_nombre, nombre_emisor, asunto, mensaje)
+
+    if admins_email:
+        threading.Thread(target=_enviar_emails, daemon=True).start()
 
     return Response(_aviso_dict(aviso), status=status.HTTP_201_CREATED)
