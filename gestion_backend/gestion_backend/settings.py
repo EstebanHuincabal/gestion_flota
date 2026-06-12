@@ -229,6 +229,9 @@ TRACCAR_URL      = os.getenv('TRACCAR_URL', '')          # ej: http://traccar:80
 TRACCAR_USER     = os.getenv('TRACCAR_USER', 'admin')
 TRACCAR_PASSWORD = os.getenv('TRACCAR_PASSWORD', '')
 
+# Moderación de contenido — Google Gemini (opcional; sin clave solo usa diccionario)
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+
 # En producción usa Redis (si REDIS_URL está definido); en dev, capa en memoria.
 REDIS_URL = os.getenv('REDIS_URL')
 if REDIS_URL:

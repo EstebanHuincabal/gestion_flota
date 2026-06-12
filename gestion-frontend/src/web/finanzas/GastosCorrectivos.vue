@@ -13,6 +13,8 @@ import { tienePermiso } from '../../utils/permisos.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 import { usePaginacion } from '../../composables/usePaginacion.js'
 import PaginacionTabla from '../../components/PaginacionTabla.vue'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const props = defineProps({
   mes:  { type: Number, required: true },
@@ -20,6 +22,7 @@ const props = defineProps({
 })
 
 const toast = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 // Modo "Todas las empresas" (SUPERADMIN): vista de solo lectura agregada. La
 // escritura exige una empresa concreta, así que se oculta crear/editar/eliminar.
 const esTodas = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
@@ -141,12 +144,17 @@ const form = ref({
   comprobante: null,
 })
 
+watch(() => form.value.descripcion, () => {
+  if (avisoMod.value) limpiarMod()
+})
+
 function abrirCrear() {
   editandoId.value = null
   form.value = {
     vehiculo_id: '', categoria_correctiva: '', prioridad_correctiva: 'media',
     descripcion: '', monto: '', fecha: new Date().toISOString().slice(0, 10), comprobante: null,
   }
+  limpiarMod()
   modalOpen.value = true
 }
 
@@ -158,6 +166,7 @@ function abrirEditar(g) {
     monto: g.monto, fecha: g.fecha, comprobante: null,
   }
   detalle.value = null
+  limpiarMod()
   modalOpen.value = true
 }
 
@@ -176,6 +185,9 @@ async function guardar() {
   if (descLen < 10) return toast.error('La descripción debe tener al menos 10 caracteres.')
   if (descLen > 200) return toast.error('La descripción no puede superar los 200 caracteres.')
   if (!(Number(f.monto) > 0))   return toast.error('El monto debe ser mayor a 0.')
+
+  const okMod = await moderar(f.descripcion)
+  if (!okMod) return
 
   guardando.value = true
   try {
@@ -417,6 +429,7 @@ async function eliminar() {
           <span class="cont" :class="{ over: (form.descripcion || '').length > 200 }">{{ (form.descripcion || '').length }}/200</span>
         </label>
         <textarea v-model="form.descripcion" class="inp" rows="3" maxlength="200" placeholder="Entre 10 y 200 caracteres"/>
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
 
         <div class="grid2">
           <div>

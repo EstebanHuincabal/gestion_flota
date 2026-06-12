@@ -12,8 +12,9 @@
  *   cerrar              — usuario cancela
  *   completada(result)  — completado exitosamente; result = { mantencion, gasto_id }
  */
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useMantencionesStore } from '@/stores/mantenciones.js'
+import { useModeracion } from '@/composables/useModeracion.js'
 
 const props = defineProps({
   mantencion: { type: Object, required: true },
@@ -23,6 +24,7 @@ const emit = defineEmits(['cerrar', 'completada'])
 const store      = useMantencionesStore()
 const guardando  = ref(false)
 const errores    = ref({})
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 // ── Formulario ────────────────────────────────────────────────────────────────
 const hoy = new Date().toISOString().split('T')[0]
@@ -30,6 +32,10 @@ const form = ref({
   costo_final:     '',
   fecha_realizada: hoy,
   notas:           '',
+})
+
+watch(() => form.value.notas, () => {
+  if (avisoMod.value) limpiarMod()
 })
 const fotoFile    = ref(null)
 const fotoPreview = ref(null)
@@ -68,6 +74,11 @@ async function confirmar() {
   if (form.value.fecha_realizada > hoy) {
     errores.value.fecha = 'La fecha realizada no puede ser futura.'
     return
+  }
+
+  if (form.value.notas && form.value.notas.trim().length >= 3) {
+    const ok = await moderar(form.value.notas)
+    if (!ok) return
   }
 
   guardando.value = true
@@ -192,6 +203,15 @@ function fmtPrecio(v) {
               rows="2"
               placeholder="Observaciones sobre el servicio..."
             />
+            <div v-if="avisoMod" class="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mt-1">
+              <svg class="w-4 h-4 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5 19h14a2 2 0 001.732-1l-7-12a2 2 0 00-3.464 0L3.268 18A2 2 0 005 20z"/>
+              </svg>
+              <div>
+                <p class="text-xs text-amber-700 font-semibold" style="margin:0">{{ avisoMod }}</p>
+                <p v-if="sugerenciaMod" class="text-xs text-amber-600" style="margin:0.25rem 0 0">{{ sugerenciaMod }}</p>
+              </div>
+            </div>
           </div>
 
         </div><!-- /form -->

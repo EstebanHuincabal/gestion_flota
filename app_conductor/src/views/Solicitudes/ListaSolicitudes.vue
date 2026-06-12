@@ -6,10 +6,12 @@ import { usePermisos } from '@/composables/usePermisos.js'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import BottomNav from '@/components/BottomNav.vue'
 import { agruparPorFecha } from '@/utils/formato.js'
+import { useModeracion } from '@/composables/useModeracion.js'
 
 const router = useRouter()
 const store  = useSolicitudesStore()
 const { cargando: cargandoPermisos } = usePermisos()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 // ── Notificación tiempo real ──────────────────────────────────────────────────
 // Cuando llega un evento WebSocket, mostramos un toast informativo
@@ -72,6 +74,10 @@ const form = ref({
   subtipo_incidencia: '',
 })
 
+watch([() => form.value.titulo, () => form.value.descripcion], () => {
+  if (avisoMod.value) limpiarMod()
+})
+
 const TIPOS = [
   { value: 'mantencion',  label: 'Mantención',  icono: 'ti-tool',           color: '#534AB7', colorSuave: '#EEEDFE', descripcion: 'Falla mecánica o revisión necesaria' },
   { value: 'combustible', label: 'Combustible', icono: 'ti-gas-station',    color: '#B45309', colorSuave: '#FEF3C7', descripcion: 'Solicitar recarga o reportar consumo' },
@@ -94,6 +100,7 @@ function abrirNuevaSolicitud() {
   confirmarDuplicada.value = false
   form.value               = { titulo: '', descripcion: '', prioridad: 'media', monto: null, litros: null, subtipo_incidencia: '' }
   modalNueva.value         = true
+  limpiarMod()
 }
 
 function cerrarNueva() { modalNueva.value = false }
@@ -189,6 +196,12 @@ async function enviarSolicitud(forzar = false) {
       errorForm.value = 'Para recargas de combustible es obligatorio adjuntar el comprobante (foto).'
       return
     }
+  }
+
+  const textoMod = [f.titulo, f.descripcion].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const ok = await moderar(textoMod)
+    if (!ok) return
   }
 
   let foto = null
@@ -723,6 +736,13 @@ onUnmounted(() => {
               <i class="ti ti-alert-circle"/>
               {{ errorForm }}
             </p>
+            <div v-if="avisoMod" class="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-3">
+              <i class="ti ti-alert-circle text-amber-500 text-base shrink-0 mt-0.5"/>
+              <div>
+                <p class="text-xs font-semibold text-amber-700">{{ avisoMod }}</p>
+                <p v-if="sugerenciaMod" class="text-xs text-amber-600 mt-0.5">{{ sugerenciaMod }}</p>
+              </div>
+            </div>
 
             <!-- Confirmación de solicitud duplicada -->
             <button

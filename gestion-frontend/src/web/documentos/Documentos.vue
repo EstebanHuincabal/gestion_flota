@@ -5,8 +5,12 @@ import { apiFetchEmpresa, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EM
 import { useToast } from '../../utils/useToast.js'
 import { usePaginacion } from '../../composables/usePaginacion.js'
 import PaginacionTabla from '../../components/PaginacionTabla.vue'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const toast = useToast()
+const { moderar: moderarDoc, aviso: avisoDoc, sugerencia: sugerenciaDoc } = useModeracion()
+const { moderar: moderarRen, aviso: avisoRen, sugerencia: sugerenciaRen } = useModeracion()
 
 // ── Empresa selector (SUPERADMIN)
 const esSuperadmin     = JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN'
@@ -253,6 +257,10 @@ function validarForm() {
 
 async function guardarDocumento() {
   if (!validarForm()) return
+  if (form.value.notas?.trim()) {
+    const ok = await moderarDoc(form.value.notas)
+    if (!ok) return
+  }
   guardando.value = true
   try {
     const method = editandoId.value ? 'PUT' : 'POST'
@@ -371,6 +379,10 @@ function onArchivoRenovarChange(e) {
 
 async function guardarRenovacion() {
   if (!formRenovar.value.archivo) { toast.error('El archivo es obligatorio.'); return }
+  if (formRenovar.value.notas?.trim()) {
+    const ok = await moderarRen(formRenovar.value.notas)
+    if (!ok) return
+  }
   if (formRenovar.value.fecha_emision && formRenovar.value.fecha_vencimiento &&
       formRenovar.value.fecha_emision >= formRenovar.value.fecha_vencimiento) {
     toast.error('La fecha de vencimiento debe ser posterior a la de emisión.')
@@ -804,6 +816,7 @@ onMounted(async () => {
                 <span :style="form.notas.length > 50 ? 'color:#EF4444' : 'color:#9CA3AF'" style="font-size:0.75rem;font-weight:500">{{ form.notas.length }}/50</span>
               </label>
               <textarea v-model="form.notas" class="input textarea" :class="errForm.notas && 'input-error'" rows="2" placeholder="Opcional…" maxlength="60"/>
+              <AvisoModeracion :aviso="avisoDoc" :sugerencia="sugerenciaDoc" />
               <p v-if="errForm.notas" class="field-err">{{ errForm.notas }}</p>
             </div>
           </div>
@@ -899,6 +912,7 @@ onMounted(async () => {
                 <span :style="formRenovar.notas.length > 50 ? 'color:#EF4444' : 'color:#9CA3AF'" style="font-size:0.75rem;font-weight:500">{{ formRenovar.notas.length }}/50</span>
               </label>
               <textarea v-model="formRenovar.notas" class="input textarea" rows="2" placeholder="Opcional…" maxlength="60"/>
+              <AvisoModeracion :aviso="avisoRen" :sugerencia="sugerenciaRen" />
             </div>
           </div>
           <div class="modal-foot">

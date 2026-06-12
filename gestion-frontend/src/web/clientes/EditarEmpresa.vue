@@ -4,10 +4,13 @@ import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import { validarTelefono, validarNombre, validarEmail, soloTexto } from '../../utils/validators.js'
 import InputTelefono from '../../components/InputTelefono.vue'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const router = useRouter()
 const route  = useRoute()
 const id     = route.params.id
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 const cargando  = ref(true)
 const guardando = ref(false)
@@ -56,6 +59,10 @@ const form = ref({
   ciudad:   '',
   region:   '',
   pais:     'Chile',
+})
+
+watch([() => form.value.nombre, () => form.value.direccion], () => {
+  if (avisoMod.value) limpiarMod()
 })
 
 const aplicarFormatoRut = (val) => {
@@ -124,6 +131,12 @@ const guardar = async () => {
   if (form.value.telefono) {
     const telR = validarTelefono(form.value.telefono)
     if (!telR.valido) { errores.value = { telefono: [telR.error] }; return }
+  }
+
+  const textoMod = [form.value.nombre, form.value.direccion].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const okMod = await moderar(textoMod)
+    if (!okMod) return
   }
 
   guardando.value = true
@@ -372,6 +385,7 @@ onMounted(async () => {
         </div>
 
         <!-- Acciones -->
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push('/empresas')" :disabled="guardando">
             Cancelar

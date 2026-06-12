@@ -5,8 +5,11 @@ import { apiFetch } from '../../utils/api.js'
 import { validarTelefono, validarNombre, validarRut, validarEmail } from '../../utils/validators.js'
 import InputTelefono from '../../components/InputTelefono.vue'
 import { COMUNAS_POR_REGION } from '../../utils/comunasChile.js'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const router = useRouter()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando = ref(false)
 const error = ref('')
 const errores = ref({})
@@ -43,6 +46,10 @@ const form = ref({
   ciudad:   '',
   region:   '',
   pais:     'Chile',
+})
+
+watch([() => form.value.nombre, () => form.value.direccion], () => {
+  if (avisoMod.value) limpiarMod()
 })
 
 const comunasDisponibles = computed(() => COMUNAS_POR_REGION[form.value.region] || [])
@@ -134,6 +141,12 @@ const guardar = async () => {
   if (form.value.rut) {
     await verificarRut()
     if (errores.value.rut) return
+  }
+
+  const textoMod = [form.value.nombre, form.value.direccion].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const okMod = await moderar(textoMod)
+    if (!okMod) return
   }
 
   guardando.value = true
@@ -288,6 +301,7 @@ const guardar = async () => {
         </div>
 
         <!-- Acciones -->
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push('/empresas')" :disabled="guardando">
             Cancelar

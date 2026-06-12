@@ -13,6 +13,7 @@ Endpoints:
 """
 import threading
 
+from django.db.models import Q
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -272,21 +273,15 @@ def conductor_avisos(request):
     if not empresa:
         return Response({'error': 'Sin empresa.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # ── GET: avisos recibidos por el conductor ────────────────────────────────
+    # ── GET: avisos recibidos por el conductor + los que él mismo envió ────────
     if request.method == 'GET':
-        avisos = Aviso.objects.filter(
-            empresa=empresa,
-            destino__in=[Aviso.DESTINO_FLOTA, Aviso.DESTINO_CONDUCTOR],
-        ).filter(
-            # Flota (todos) O este conductor en particular
-            **{}
-        ).select_related('emisor', 'destinatario')
+        avisos = Aviso.objects.filter(empresa=empresa).filter(
+            Q(destino=Aviso.DESTINO_FLOTA)
+            | Q(destino=Aviso.DESTINO_CONDUCTOR, destinatario=request.user)
+            | Q(destino=Aviso.DESTINO_ADMINS, emisor=request.user)
+        ).select_related('emisor', 'destinatario').order_by('-fecha')
 
-        resultado = []
-        for a in avisos:
-            if a.destino == Aviso.DESTINO_FLOTA or a.destinatario_id == request.user.id:
-                resultado.append(_aviso_dict(a))
-        return Response(resultado)
+        return Response([_aviso_dict(a) for a in avisos])
 
     # ── POST: conductor envía a admins ────────────────────────────────────────
     asunto  = sanitizar_texto(request.data.get('asunto', '')).strip()

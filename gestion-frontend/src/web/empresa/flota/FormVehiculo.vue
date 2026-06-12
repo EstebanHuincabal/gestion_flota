@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
 import { validarPatente, validarAnioVehiculo, soloDescripcion } from '../../../utils/validators.js'
+import { useModeracion } from '../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../components/AvisoModeracion.vue'
 
 const props = defineProps({ modo: { type: String, default: 'nuevo' } })
 const router = useRouter()
@@ -13,6 +15,7 @@ const { ruta } = useEmpresaNav()
 const vehiculoId = route.params.id
 
 const toast     = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const cargando  = ref(props.modo === 'editar')
 const guardando = ref(false)
 const error     = ref('')
@@ -32,6 +35,10 @@ const form = ref({
   anio: '',
   tipo_combustible: 'bencina',
   km_actuales: 0,
+})
+
+watch([() => form.value.marca, () => form.value.modelo], () => {
+  if (avisoMod.value) limpiarMod()
 })
 
 // Foto del vehículo
@@ -87,6 +94,12 @@ const guardar = async () => {
   if (esTodas.value && props.modo !== 'editar' && !empresaIdForm.value) {
     error.value = 'Selecciona una empresa para registrar el vehículo.'
     return
+  }
+
+  const textoMod = [form.value.marca, form.value.modelo].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const ok = await moderar(textoMod)
+    if (!ok) return
   }
 
   guardando.value = true
@@ -230,6 +243,7 @@ onMounted(async () => {
           </div>
         </div>
 
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push(ruta('/flota'))" :disabled="guardando">Cancelar</button>
           <button type="submit" class="btn-primary" :disabled="guardando">

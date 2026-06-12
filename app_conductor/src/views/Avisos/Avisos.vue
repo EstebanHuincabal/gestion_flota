@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/services/api.js'
 import BottomNav from '@/components/BottomNav.vue'
+import { useModeracion } from '@/composables/useModeracion.js'
 
 const router   = useRouter()
 const avisos   = ref([])
@@ -20,6 +21,7 @@ const enviando    = ref(false)
 const form        = ref({ asunto: '', mensaje: '' })
 const errForm     = ref({})
 const exito       = ref(false)
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 async function cargar() {
   cargando.value = true
@@ -40,6 +42,10 @@ async function enviar() {
   exito.value   = false
   if (!form.value.asunto.trim())  { errForm.value.asunto  = 'El asunto es obligatorio.'; return }
   if (!form.value.mensaje.trim()) { errForm.value.mensaje = 'El mensaje es obligatorio.'; return }
+
+  limpiarMod()
+  const ok = await moderar(form.value.asunto + ' ' + form.value.mensaje)
+  if (!ok) return
 
   enviando.value = true
   try {
@@ -107,6 +113,11 @@ function nombreRemitente(a) {
           <textarea v-model="form.mensaje" class="av-input" :class="errForm.mensaje && 'av-input-err'"
             placeholder="Escribe tu mensaje…" rows="4" maxlength="2000" style="resize:none;"/>
           <p v-if="errForm.mensaje" class="av-err">{{ errForm.mensaje }}</p>
+        </div>
+        <div v-if="avisoMod" class="av-mod-aviso">
+          <span class="av-mod-titulo">Lenguaje inapropiado</span>
+          <span class="av-mod-texto">{{ avisoMod }}</span>
+          <span v-if="sugerenciaMod" class="av-mod-sug">{{ sugerenciaMod }}</span>
         </div>
         <div class="av-form-btns">
           <button class="av-btn-cancel" @click="mostrarForm = false">Cancelar</button>
@@ -266,4 +277,13 @@ function nombreRemitente(a) {
 .modal-enter-from, .modal-leave-to { opacity:0; }
 .modal-enter-active .av-modal, .modal-leave-active .av-modal { transition:transform .25s ease; }
 .modal-enter-from .av-modal, .modal-leave-to .av-modal { transform:translateY(100%); }
+
+.av-mod-aviso {
+  display:flex; flex-direction:column; gap:.2rem;
+  background:#FFFBEB; border:1px solid #FDE68A; border-radius:10px;
+  padding:.6rem .85rem; margin-bottom:.75rem;
+}
+.av-mod-titulo { font-size:.7rem; font-weight:700; color:#92400E; text-transform:uppercase; letter-spacing:.04em; }
+.av-mod-texto  { font-size:.8rem; color:#78350F; }
+.av-mod-sug    { font-size:.75rem; color:#A16207; font-style:italic; }
 </style>

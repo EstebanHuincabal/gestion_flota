@@ -3,13 +3,15 @@ import { ref, onMounted } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { useToast } from '../../utils/useToast.js'
 import ConfiguracionEmailTab from './tabs/ConfiguracionEmailTab.vue'
+import Moderacion from './Moderacion.vue'
 
 const toast = useToast()
 const tabActivo = ref('planes')
 
 const TABS = [
-  { key: 'planes', label: 'Planes de suscripción' },
-  { key: 'email',  label: 'Configuración de email' },
+  { key: 'planes',     label: 'Planes de suscripción' },
+  { key: 'email',      label: 'Configuración de email' },
+  { key: 'moderacion', label: 'Moderación de contenido' },
 ]
 
 // ── Tab Planes ────────────────────────────────────────────────────────────────
@@ -101,6 +103,9 @@ onMounted(() => {
 
     <!-- ── Tab: Email ── -->
     <ConfiguracionEmailTab v-else-if="tabActivo === 'email'" />
+
+    <!-- ── Tab: Moderación ── -->
+    <Moderacion v-else-if="tabActivo === 'moderacion'" />
   </div>
 </template>
 

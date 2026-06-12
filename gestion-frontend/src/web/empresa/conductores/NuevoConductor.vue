@@ -1,15 +1,18 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { apiFetch } from '../../../utils/api.js'
 import { useToast } from '../../../utils/useToast.js'
 import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia, soloTexto, soloDescripcion, validarPatente, validarAnioVehiculo } from '../../../utils/validators.js'
 import InputTelefono from '../../../components/InputTelefono.vue'
+import { useModeracion } from '../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../components/AvisoModeracion.vue'
 
 const router    = useRouter()
 const { ruta }  = useEmpresaNav()
 const toast     = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
@@ -40,6 +43,10 @@ const form = ref({
   vehiculo_anio: '',
   vehiculo_tipo_combustible: 'bencina',
   vehiculo_km_actuales: 0,
+})
+
+watch([() => form.value.nombre, () => form.value.apellido_paterno, () => form.value.apellido_materno], () => {
+  if (avisoMod.value) limpiarMod()
 })
 
 const asignarVehiculo = ref(false)
@@ -174,6 +181,10 @@ const guardar = async () => {
     error.value = 'Selecciona una empresa para asignar el conductor.'
     return
   }
+
+  const textoMod = [form.value.nombre, form.value.apellido_paterno, form.value.apellido_materno].join(' ')
+  const okMod = await moderar(textoMod)
+  if (!okMod) return
 
   guardando.value = true
 
@@ -423,6 +434,7 @@ const guardar = async () => {
         </div>
 
         <p v-if="errores.non_field_errors" class="field-error">{{ errores.non_field_errors[0] }}</p>
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
 
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push(ruta('/conductores'))" :disabled="guardando">

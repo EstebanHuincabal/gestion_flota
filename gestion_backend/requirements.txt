@@ -40,6 +40,9 @@ transbank-sdk==6.1.0
 # ── Notificaciones push (Firebase Cloud Messaging) ────────────────────────────
 firebase-admin==7.4.0
 
+# ── Moderación de contenido con IA (Gemini) ───────────────────────────────────
+google-generativeai==0.8.6
+
 # ── HTTP externo (OSRM rutas, Nominatim geocodificación) ──────────────────────
 requests==2.31.0
 django-ratelimit==4.1.0

@@ -522,6 +522,7 @@
                 <label class="block text-xs font-semibold text-gray-600 mb-1">Notas</label>
                 <textarea v-model="form.notas" rows="2" placeholder="Instrucciones, observaciones..."
                   class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"></textarea>
+                <AvisoModeracion :aviso="avisoRuta" :sugerencia="sugerenciaRuta" />
               </div>
 
               <!-- ── Panel de validación pre-vuelo ─────────────────────── -->
@@ -812,8 +813,9 @@
           <p class="text-sm text-gray-500 mb-4">{{ rutaAccion?.nombre }}</p>
           <label class="block text-xs font-semibold text-gray-600 mb-1">Motivo de cancelación</label>
           <textarea v-model="motivoCancelar" rows="3" placeholder="Ingresa el motivo..."
-            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none mb-4"></textarea>
-          <div class="flex justify-end gap-2">
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none mb-2"></textarea>
+          <AvisoModeracion :aviso="avisoCancelar" :sugerencia="sugerenciaCancelar" />
+          <div class="flex justify-end gap-2 mt-2">
             <button @click="modalCancelar = false" class="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg">Volver</button>
             <button @click="confirmarCancelar"
               class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition">
@@ -988,6 +990,11 @@ import MapaRuta from './MapaRuta.vue'
 import { validarRut } from '../../utils/validators.js'
 import { usePaginacion } from '../../composables/usePaginacion.js'
 import PaginacionTabla from '../../components/PaginacionTabla.vue'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
+
+const { moderar: moderarRuta, aviso: avisoRuta, sugerencia: sugerenciaRuta, limpiar: limpiarModRuta } = useModeracion()
+const { moderar: moderarCancelar, aviso: avisoCancelar, sugerencia: sugerenciaCancelar, limpiar: limpiarModCancelar } = useModeracion()
 
 // ── Estado principal ──────────────────────────────────────────────────────
 const rutas       = ref([])
@@ -1374,6 +1381,9 @@ async function guardarRuta() {
     errorModal.value = 'Selecciona una empresa para crear la ruta.'
     return
   }
+  const textoModerar = [form.value.nombre, form.value.notas].filter(Boolean).join(' ')
+  const ok = await moderarRuta(textoModerar)
+  if (!ok) return
   guardando.value  = true
   errorModal.value = ''
   const payload = {
@@ -1551,6 +1561,10 @@ function prepararCancelar(ruta) {
 }
 
 async function confirmarCancelar() {
+  if (motivoCancelar.value.trim()) {
+    const ok = await moderarCancelar(motivoCancelar.value)
+    if (!ok) return
+  }
   const res = await apiFetch(`/api/empresa/rutas/${rutaAccion.value.id}/cancelar/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ motivo: motivoCancelar.value }),
   })

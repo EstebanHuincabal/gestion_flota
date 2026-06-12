@@ -84,6 +84,10 @@ from g_de_flota.views_calendario import calendario_eventos
 from g_de_flota import views_gps
 from g_de_flota.views_publico import PlanesPublicosView, AutoRegistroView, VerificarRutView
 from g_de_flota.views_avisos import empresa_avisos, empresa_avisos_conductores, conductor_avisos
+from g_de_flota.views_moderacion import (
+    moderar_texto, palabras_list,
+    agregar_palabra, agregar_lote, eliminar_palabra,
+)
 
 router = DefaultRouter()
 router.register(r'empresa/planes-mantenimiento', PlanMantenimientoViewSet, basename='planes-mantenimiento')
@@ -266,6 +270,13 @@ urlpatterns = [
     path('api/empresa/rutas/<int:ruta_id>/finalizar/',           RutaFinalizarView.as_view(),     name='rutas-finalizar'),
     path('api/empresa/rutas/<int:ruta_id>/cancelar/',            RutaCancelarView.as_view(),      name='rutas-cancelar'),
     path('api/empresa/rutas/<int:ruta_id>/comentarios/',         RutaComentariosView.as_view(),   name='rutas-comentarios'),
+    # ── Moderación de contenido ─────────────────────────────────────────────────
+    path('api/moderar/',                                moderar_texto,    name='moderar-texto'),
+    path('api/admin/moderacion/palabras/',              palabras_list,    name='moderacion-palabras'),
+    path('api/admin/moderacion/palabras/agregar/',      agregar_palabra,  name='moderacion-agregar'),
+    path('api/admin/moderacion/palabras/lote/',         agregar_lote,     name='moderacion-lote'),
+    path('api/admin/moderacion/palabras/eliminar/',     eliminar_palabra, name='moderacion-eliminar'),
+
     # ── Endpoints públicos (sin autenticación) ──────────────────────────────────
     path('api/planes/',          PlanesPublicosView.as_view(), name='planes-publicos'),
     path('api/auto-registro/',   AutoRegistroView.as_view(),   name='auto-registro'),

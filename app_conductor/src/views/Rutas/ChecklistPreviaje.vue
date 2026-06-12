@@ -1,11 +1,13 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/services/api.js'
 import BottomNav from '@/components/BottomNav.vue'
+import { useModeracion } from '@/composables/useModeracion.js'
 
 const vueRoute = useRoute()
 const router   = useRouter()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 const rutaId = computed(() => Number(vueRoute.params.id))
 
@@ -20,6 +22,10 @@ const errorMsg     = ref('')
 // ── Respuestas del conductor ───────────────────────────────────────────────────
 // { item_id: { resultado: 'ok'|'falla'|null, observacion: '' } }
 const respuestas = ref({})
+
+watch(respuestas, () => {
+  if (avisoMod.value) limpiarMod()
+}, { deep: true })
 
 // Cuál ítem tiene el selector inline abierto (solo uno a la vez)
 const itemAbierto = ref(null)
@@ -191,6 +197,16 @@ function limpiarFirma() {
 // ── Envío ──────────────────────────────────────────────────────────────────────
 async function enviarChecklist() {
   if (!puedeEnviar.value || enviando.value) return
+
+  const obsTexto = Object.values(respuestas.value)
+    .map(r => r.observacion || '')
+    .filter(obs => obs.trim().length >= 3)
+    .join(' ')
+  if (obsTexto) {
+    const ok = await moderar(obsTexto)
+    if (!ok) return
+  }
+
   enviando.value = true
   try {
     const data = await apiFetch(`/api/conductor/checklist/${rutaId.value}/`, {
@@ -419,6 +435,15 @@ async function enviarChecklist() {
       <!-- ── Botón fijo de envío ─────────────────────────────────────────────── -->
       <div class="fixed left-0 right-0 px-4 pb-3 z-[500]"
            style="bottom: calc(var(--nav-total, 64px) + env(safe-area-inset-bottom, 0px))">
+        <div v-if="avisoMod" class="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-2">
+          <svg class="w-4 h-4 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5 19h14a2 2 0 001.732-1l-7-12a2 2 0 00-3.464 0L3.268 18A2 2 0 005 20z"/>
+          </svg>
+          <div>
+            <p class="text-xs font-semibold text-amber-700">{{ avisoMod }}</p>
+            <p v-if="sugerenciaMod" class="text-xs text-amber-600 mt-0.5">{{ sugerenciaMod }}</p>
+          </div>
+        </div>
         <button
           @click="enviarChecklist"
           :disabled="!puedeEnviar || enviando"

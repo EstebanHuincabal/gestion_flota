@@ -6,11 +6,14 @@ import { tienePermiso } from '../../../../utils/permisos.js'
 import { useToast } from '../../../../utils/useToast.js'
 import { apiFetch } from '../../../../utils/api.js'
 import { validarFechaFutura } from '../../../../utils/validators.js'
+import { useModeracion } from '../../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../../components/AvisoModeracion.vue'
 
 const router  = useRouter()
 const route   = useRoute()
 const { ruta } = useEmpresaNav()
 const toast = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 const esNuevo   = computed(() => !route.params.id)
 const tituloForm = computed(() => esNuevo.value ? 'Programar Mantención' : 'Editar Mantención')
@@ -61,6 +64,10 @@ const form = ref({
   presupuesto:      '',
   fecha_programada: '',
   estado:           'pendiente',
+})
+
+watch([tipoOtro, () => form.value.taller_proveedor], () => {
+  if (avisoMod.value) limpiarMod()
 })
 
 const ESTADOS = [
@@ -196,6 +203,12 @@ const guardar = async () => {
   if (form.value.presupuesto !== '' && Number(form.value.presupuesto) <= 0) {
     errores.value.presupuesto = ['El presupuesto debe ser mayor a 0.']
     return
+  }
+
+  const textoMod = [tipoOtro.value, form.value.taller_proveedor].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const ok = await moderar(textoMod)
+    if (!ok) return
   }
 
   const payload = {
@@ -427,6 +440,7 @@ onMounted(async () => {
           </div>
 
           <!-- Acciones -->
+          <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
           <div class="form-actions">
             <button type="button" class="btn-secondary" @click="router.push(ruta('/mantenciones'))">Cancelar</button>
             <button type="submit" class="btn-primary" :disabled="guardando">

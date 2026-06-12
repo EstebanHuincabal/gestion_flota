@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { getEmpresaActiva, setEmpresaActiva, clearEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 // ── Selector de empresa ──────────────────────────────────────────────────────
 const empresas            = ref([])
@@ -69,6 +71,7 @@ const modalDetalle  = ref(null)
 const modalRechazar = ref(null)
 const motivoRechazo = ref('')
 const errorRechazo  = ref('')
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando     = ref(false)
 const errorAccion   = ref('')
 
@@ -241,6 +244,7 @@ function abrirModalRechazar(sol) {
   modalRechazar.value = sol
   motivoRechazo.value = ''
   errorRechazo.value  = ''
+  limpiarMod()
 }
 
 async function confirmarRechazo() {
@@ -248,6 +252,8 @@ async function confirmarRechazo() {
     errorRechazo.value = 'El motivo debe tener al menos 10 caracteres.'
     return
   }
+  const ok = await moderar(motivoRechazo.value)
+  if (!ok) return
   guardando.value    = true
   errorRechazo.value = ''
   try {
@@ -658,6 +664,7 @@ onUnmounted(() => {
               placeholder="Explica el motivo del rechazo (mínimo 10 caracteres)…"
               :class="{ 'input-error': errorRechazo }"
             />
+            <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
             <p v-if="errorRechazo" class="error-field">{{ errorRechazo }}</p>
           </div>
           <div class="modal-footer">

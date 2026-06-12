@@ -1,10 +1,12 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
 import { useToast } from '../../../utils/useToast.js'
 import { validarTelefono, validarNombre, validarLicencia, soloTexto } from '../../../utils/validators.js'
 import InputTelefono from '../../../components/InputTelefono.vue'
+import { useModeracion } from '../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../components/AvisoModeracion.vue'
 
 const router   = useRouter()
 const { ruta } = useEmpresaNav()
@@ -12,12 +14,17 @@ const route  = useRoute()
 const id     = route.params.id
 
 const toast     = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const cargando  = ref(true)
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
 
 const form = ref({ nombre: '', apellido_paterno: '', apellido_materno: '', email: '', telefono: '', licencia: '' })
+
+watch([() => form.value.nombre, () => form.value.apellido_paterno, () => form.value.apellido_materno], () => {
+  if (avisoMod.value) limpiarMod()
+})
 
 const cargar = async () => {
   try {
@@ -62,6 +69,10 @@ const guardar = async () => {
     errores.value = { licencia: [licResult.error] }
     return
   }
+
+  const textoMod = [form.value.nombre, form.value.apellido_paterno, form.value.apellido_materno].join(' ')
+  const okMod = await moderar(textoMod)
+  if (!okMod) return
 
   guardando.value = true
   try {
@@ -157,6 +168,7 @@ onMounted(cargar)
         </div>
 
         <p v-if="errores.non_field_errors" class="field-error">{{ errores.non_field_errors[0] }}</p>
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
 
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push(ruta('/conductores'))" :disabled="guardando">

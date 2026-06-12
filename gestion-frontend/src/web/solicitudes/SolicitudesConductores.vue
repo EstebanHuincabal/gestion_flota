@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const router = useRouter()
 const route  = useRoute()
@@ -25,10 +27,11 @@ const filtroFechaHasta = ref('')
 
 // ── Modales ──────────────────────────────────────────────────────────────────
 const modalDetalle    = ref(null)   // solicitud seleccionada
-const modalRechazar   = ref(null)   // solicitud a rechazar
-const modalProgramar  = ref(null)   // solicitud mantencion a programar
+const modalRechazar   = ref(null)
+const modalProgramar  = ref(null)
 const motivoRechazo   = ref('')
 const errorRechazo    = ref('')
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando       = ref(false)
 const errorAccion     = ref('')
 
@@ -255,6 +258,7 @@ function abrirModalRechazar(sol) {
   modalRechazar.value = sol
   motivoRechazo.value = ''
   errorRechazo.value  = ''
+  limpiarMod()
 }
 
 async function confirmarRechazo() {
@@ -262,6 +266,8 @@ async function confirmarRechazo() {
     errorRechazo.value = 'El motivo debe tener al menos 10 caracteres.'
     return
   }
+  const ok = await moderar(motivoRechazo.value)
+  if (!ok) return
   guardando.value = true
   errorRechazo.value = ''
   try {
@@ -639,6 +645,7 @@ watch(filtroBuscar, () => {
               placeholder="Explica el motivo del rechazo (mínimo 10 caracteres)…"
               :class="{ 'input-error': errorRechazo }"
             />
+            <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
             <p v-if="errorRechazo" class="error-field">{{ errorRechazo }}</p>
           </div>
           <div class="modal-footer">

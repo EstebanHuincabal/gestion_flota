@@ -3,8 +3,11 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../utils/api.js'
 import { getEmpresaActiva, EMPRESA_TODAS } from '../../utils/empresaActiva.js'
 import { useToast } from '../../utils/useToast.js'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const toast = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod } = useModeracion()
 const esTodas = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
 
 // ── Estado ────────────────────────────────────────────────────────────────────
@@ -97,6 +100,10 @@ async function enviar() {
   if (form.value.destino === 'conductor' && !form.value.destinatario_id) {
     errForm.value.destinatario_id = 'Selecciona un conductor.'; return
   }
+
+  const textoCompleto = `${form.value.asunto.trim()} ${form.value.mensaje.trim()}`
+  const aprobado = await moderar(textoCompleto)
+  if (!aprobado) return
 
   enviando.value = true
   try {
@@ -265,6 +272,7 @@ function labelDestino(destino) {
             placeholder="Escribe tu mensaje aquí…" rows="4" maxlength="2000" style="resize:vertical;"/>
           <p v-if="errForm.mensaje" class="field-error">{{ errForm.mensaje }}</p>
           <p class="char-count">{{ form.mensaje.length }} / 2000</p>
+          <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         </div>
 
         <div class="compose-actions">

@@ -1764,6 +1764,7 @@ Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No 
 | `TRANSBANK_API_KEY` | No | Django | API key de Transbank (Webpay Plus + OneClick) |
 | `ONECLICK_COMMERCE_CODE` | No | Django | Código de comercio mall de Webpay OneClick |
 | `ONECLICK_CHILD_CODE` | No | Django | Código de tienda hija (child) de OneClick |
+| `GEMINI_API_KEY` | No | Django | API key de Gemini para la capa de moderación por IA (gratis en [aistudio.google.com](https://aistudio.google.com/apikey)). Vacío = solo filtro de diccionario |
 
 > Detalle completo de la pasarela de pago en [§18](#18-pasarela-de-pago-transbank-y-suscripciones).
 
