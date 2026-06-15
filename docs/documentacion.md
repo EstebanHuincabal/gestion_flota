@@ -622,6 +622,8 @@ Exportación disponible en XLSX para estado de flota, mantenciones y conductores
 
 **Vista:** `ReportesEmpresa.vue`
 
+> **Nota (Junio 2026):** `reporte_rutas` y `reporte_solicitudes` calculan el inicio de la ventana de "últimos 12 meses" como `(hoy.year if hoy.month == 12 else hoy.year - 1, (hoy.month % 12) + 1, 1)`. La condición estaba antes invertida y producía una fecha de inicio futura, dejando vacíos los gráficos de rutas finalizadas/canceladas y solicitudes por mes/tipo.
+
 **Para SUPERADMIN:** Métricas de empresas, distribución de planes (gráfico dona) y resumen de plataforma.
 
 **Vista:** `ReportesSuperAdmin.vue`
@@ -659,6 +661,7 @@ Al crear o calcular una ruta, el sistema:
 
 - **Iniciar:** se registra `km_inicio`, se actualiza `km_actuales` del vehículo y se crea un `EventoRuta` automático.
 - **Finalizar:** solo acepta `km_fin` y `notas`. Se actualiza `vehiculo.km_actuales`. Se crea un `EventoRuta` automático.
+- **Cancelar:** se registra `fecha_fin` (igual que al finalizar), de modo que la ruta cancelada quede incluida en el desglose mensual de `reporte_rutas`.
 - No se generan gastos operativos de combustible ni peajes automáticamente.
 
 #### Historial (`EventoRuta`)
@@ -2411,5 +2414,84 @@ contenedor `scheduler` necesita acceso de solo lectura al socket de Docker
 (`/var/run/docker.sock`) para poder ejecutar esos comandos.
 
 Para ver si los jobs corrieron: `docker compose logs scheduler`.
+
+---
+
+### Pruebas de carga (Locust) — `gestion_backend/load_testing/`
+
+Carpeta con herramientas para simular tráfico de producción en un entorno de
+staging (NO usar contra producción real). No están en `requirements.txt`
+porque son solo para desarrollo/staging.
+
+- **`seed_carga.py`** (management command): genera, dentro de una empresa
+  existente, `N` vehículos + dispositivos GPS (`modelo='emulador'`) +
+  conductores de prueba, y escribe sus credenciales/IMEIs en
+  `carga_credenciales.csv`.
+  ```
+  python manage.py seed_carga --empresa-id <ID> --cantidad 50
+  python manage.py seed_carga --empresa-id <ID> --cantidad 50 --borrar  # limpieza
+  ```
+
+- **`locustfile.py`**: simula los tres tipos de tráfico a la vez con pesos
+  relativos (`weight`) que aproximan una flota real:
+  - `PanelUsuario` (peso 1): login + dashboard, vehículos, conductores,
+    documentos, notificaciones, mantenciones, última posición GPS, y los
+    flujos "pesados" (exportar reportes a Excel con openpyxl, subir un
+    documento PDF).
+  - `ConductorApp` (peso 5): login + rutas, mi plan, avisos, notificaciones.
+  - `GPSDeviceUser` (peso 20, `FastHttpUser`): un dispositivo por usuario de
+    Locust, recorre una ruta aleatoria alrededor de Santiago y hace POST a
+    `/api/empresa/gps/posicion/` (sin login, AllowAny por IMEI) cada
+    `CARGA_GPS_INTERVALO` segundos (default 5s) — es el tráfico de mayor
+    volumen.
+
+  ```
+  pip install locust
+  export CARGA_ADMIN_RUT=...        # usuario panel de la empresa de prueba
+  export CARGA_ADMIN_PASSWORD=...
+  export CARGA_CONDUCTORES_CSV=carga_credenciales.csv
+  locust -f load_testing/locustfile.py --host https://staging.tuapp.cl
+  ```
+
+  Antes de correrlo en staging: poner `RATELIMIT_ENABLE=False` (el login
+  está limitado a 10/min por IP) y confirmar que `serviceAccountKey.json`
+  no apunte al proyecto Firebase de producción (las posiciones GPS pueden
+  generar notificaciones push por exceso de velocidad/desvío de ruta).
+
+- **`ws_monitor.py`**: mide la latencia del mapa en tiempo real
+  (`GPSConsumer`, WebSocket `ws/gps/<empresa_id>/`) mientras corre la prueba
+  de carga. Cada `--intervalo` segundos imprime cuántos `position_update`
+  llegaron y la latencia mín/media/máx entre el timestamp de la posición y su
+  llegada por WebSocket.
+  ```
+  pip install websockets
+  python load_testing/ws_monitor.py --host https://staging.tuapp.cl \
+      --empresa-id <ID> --rut <rut_panel> --password <password>
+  ```
+
+---
+
+### Fix: creación de conductor con vehículo existente fallaba
+
+En `web/empresa/conductores/NuevoConductor.vue`, al asignar un **vehículo
+existente** (`modoAsignacion === 'existente'`) el payload limpiaba
+`vehiculo_patente`, `vehiculo_marca` y `vehiculo_modelo` a `''`, pero no
+`vehiculo_anio`, que conservaba el valor inicial del formulario (`''`).
+
+`ConductorCrearSerializer.vehiculo_anio` es un `IntegerField(allow_null=True)`:
+acepta `None` o ausencia del campo, pero **no** un string vacío, que DRF
+rechaza con `"A valid integer."`. Esto hacía fallar `serializer.is_valid()` y el
+conductor nunca se creaba al usar "Vehículo Existente".
+
+Solución: en esa misma rama del payload se agrega `vehiculo_anio = null`, igual
+que el resto de los campos de vehículo.
+
+La misma omisión existía en la rama `!asignarVehiculo.value` (asignación
+desactivada): tampoco normalizaba `vehiculo_patente`/`marca`/`modelo`/`anio`, por
+lo que el escenario "activar asignación, seleccionar vehículo existente,
+desactivar asignación y guardar" también devolvía 400 (`vehiculo_anio`) y la
+creación del conductor no llegaba a `serializer.save()`. Se agregó la misma
+normalización (`vehiculo_id`, `crear_vehiculo`, `vehiculo_patente/marca/modelo`
+→ `''`, `vehiculo_anio` → `null`) en esa rama.
 
 ---

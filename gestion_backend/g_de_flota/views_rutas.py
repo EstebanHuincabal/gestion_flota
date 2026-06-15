@@ -860,6 +860,7 @@ class RutaCancelarView(APIView):
 
         motivo = request.data.get('motivo', '').strip()
         ruta.estado = 'cancelado'
+        ruta.fecha_fin = timezone.now()
         if motivo:
             ruta.notas = (ruta.notas + '\nCancelación: ' + motivo).strip()
         ruta.save()

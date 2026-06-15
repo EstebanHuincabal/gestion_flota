@@ -206,6 +206,7 @@ watch(datosTco, () => { setTimeout(crearChartTco, 80) }, { deep: true, flush: 'p
 
 function crearChartPpto() {
   if (!chartPptoCanvas.value || !datosPpto.value?.meses?.length) return
+  if (chartPptoCanvas.value.offsetHeight === 0) return
   if (chartPptoInstance) { chartPptoInstance.destroy(); chartPptoInstance = null }
   const meses   = datosPpto.value.meses
   const labels  = meses.map(m => m.mes_label)
@@ -234,7 +235,7 @@ function crearChartPpto() {
     },
   })
 }
-watch(datosPpto, () => { setTimeout(crearChartPpto, 80) }, { deep: true, flush: 'post' })
+watch([datosMantencion, datosPpto], () => { setTimeout(crearChartPpto, 80) }, { deep: true, flush: 'post' })
 
 function crearChartCombustible() {
   if (!datosCombustible.value) return

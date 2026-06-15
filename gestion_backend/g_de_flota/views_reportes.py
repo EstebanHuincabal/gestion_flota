@@ -735,7 +735,7 @@ def reporte_rutas(request):
         return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
 
     hoy    = date_cls.today()
-    inicio = date_cls(hoy.year - 1 if hoy.month == 12 else hoy.year, (hoy.month % 12) + 1, 1)
+    inicio = date_cls(hoy.year if hoy.month == 12 else hoy.year - 1, (hoy.month % 12) + 1, 1)
 
     MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
                 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
@@ -810,7 +810,7 @@ def reporte_solicitudes(request):
         return Response({'error': 'Empresa no encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
 
     hoy    = date_cls.today()
-    inicio = date_cls(hoy.year - 1 if hoy.month == 12 else hoy.year, (hoy.month % 12) + 1, 1)
+    inicio = date_cls(hoy.year if hoy.month == 12 else hoy.year - 1, (hoy.month % 12) + 1, 1)
 
     MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
                 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']

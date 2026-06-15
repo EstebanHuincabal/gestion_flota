@@ -193,6 +193,10 @@ const guardar = async () => {
   if (!asignarVehiculo.value) {
     payload.vehiculo_id = null
     payload.crear_vehiculo = false
+    payload.vehiculo_patente = ''
+    payload.vehiculo_marca = ''
+    payload.vehiculo_modelo = ''
+    payload.vehiculo_anio = null
   } else {
     payload.crear_vehiculo = modoAsignacion.value === 'nuevo'
     if (payload.crear_vehiculo) {
@@ -201,6 +205,7 @@ const guardar = async () => {
       payload.vehiculo_patente = ''
       payload.vehiculo_marca = ''
       payload.vehiculo_modelo = ''
+      payload.vehiculo_anio = null
     }
   }
 
