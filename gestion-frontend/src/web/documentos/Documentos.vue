@@ -179,6 +179,16 @@ async function cargarAuxiliares() {
   if (cRes.ok) conductores.value = await cRes.json()
 }
 
+async function cargarVehiculos(empresaId) {
+  const res = await apiFetch(`/api/empresa/vehiculos/?empresa_id=${empresaId}`)
+  if (res.ok) vehiculos.value = await res.json()
+}
+
+async function cargarConductores(empresaId) {
+  const res = await apiFetch(`/api/empresa/conductores/?empresa_id=${empresaId}`)
+  if (res.ok) conductores.value = await res.json()
+}
+
 // ── Subir / editar documento
 function abrirNuevo() {
   editandoId.value   = null
@@ -229,6 +239,16 @@ function onArchivoChange(e) {
 }
 
 watch(() => form.value.entidad, () => { form.value.tipo = '' })
+
+// Al seleccionar empresa en el modal (modo Todas), recargar vehículos y conductores de esa empresa
+watch(empresaDocForm, (id) => {
+  if (id && id !== '__todas__') {
+    form.value.vehiculo_id  = ''
+    form.value.conductor_id = ''
+    cargarVehiculos(id)
+    cargarConductores(id)
+  }
+})
 
 function validarForm() {
   const err = {}
@@ -756,16 +776,16 @@ onMounted(async () => {
             <!-- Vehículo o Conductor -->
             <div v-if="form.entidad === 'vehiculo'" class="field">
               <label class="label">Vehículo *</label>
-              <select v-model="form.vehiculo_id" class="input" :class="errForm.vehiculo_id && 'input-error'" :disabled="!!editandoId">
-                <option value="">— Seleccionar —</option>
+              <select v-model="form.vehiculo_id" class="input" :class="errForm.vehiculo_id && 'input-error'" :disabled="!!editandoId || (esTodas && !empresaDocForm)">
+                <option value="">{{ esTodas && !empresaDocForm ? 'Selecciona empresa primero' : '— Seleccionar —' }}</option>
                 <option v-for="v in vehiculos" :key="v.id" :value="v.id">{{ v.patente }} — {{ v.marca }} {{ v.modelo }}</option>
               </select>
               <p v-if="errForm.vehiculo_id" class="field-err">{{ errForm.vehiculo_id }}</p>
             </div>
             <div v-else class="field">
               <label class="label">Conductor *</label>
-              <select v-model="form.conductor_id" class="input" :class="errForm.conductor_id && 'input-error'" :disabled="!!editandoId">
-                <option value="">— Seleccionar —</option>
+              <select v-model="form.conductor_id" class="input" :class="errForm.conductor_id && 'input-error'" :disabled="!!editandoId || (esTodas && !empresaDocForm)">
+                <option value="">{{ esTodas && !empresaDocForm ? 'Selecciona empresa primero' : '— Seleccionar —' }}</option>
                 <option v-for="c in conductores" :key="c.id" :value="c.id">{{ c.nombre }}</option>
               </select>
               <p v-if="errForm.conductor_id" class="field-err">{{ errForm.conductor_id }}</p>
