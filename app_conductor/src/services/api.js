@@ -17,6 +17,7 @@ export async function apiFetch(url, options = {}) {
 
   const headers = {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    'X-App-Platform': 'capacitor',
     ...options.headers,
   }
 

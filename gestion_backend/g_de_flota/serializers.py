@@ -923,6 +923,17 @@ class PlanSuscripcionSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
 
+    def validate_nombre(self, value):
+        value = sanitizar_texto(value).strip().title()
+        if not value:
+            raise serializers.ValidationError("El nombre del plan es obligatorio.")
+        return value
+
+    def validate_descripcion(self, value):
+        if not value:
+            return value
+        return sanitizar_texto(value).strip()
+
     def get_precio_display(self, obj):
         if obj.precio_mensual:
             return f"${int(obj.precio_mensual):,}/mes".replace(',', '.')
@@ -985,6 +996,7 @@ def _generar_descripcion(accion, detalle, nombre):
         'usuario_eliminado':      lambda: f'{u} eliminó al usuario {d.get("usuario_email", "")}.',
         'perfil_actualizado':     lambda: f'{u} actualizó su propio perfil.',
         # Empresa
+        'auto_registro':          lambda: f'Empresa "{d.get("empresa", "")}" se registró en la plataforma con el plan "{d.get("plan", "")}".',
         'empresa_creada':         lambda: f'{u} registró la empresa "{d.get("empresa_nombre", "")}".',
         'empresa_suspendida':     lambda: f'{u} suspendió la empresa "{d.get("empresa_nombre", "")}".',
         'empresa_eliminada':      lambda: f'{u} eliminó la empresa "{d.get("empresa_nombre", "")}".',
@@ -1120,7 +1132,12 @@ class LogAuditoriaSerializer(serializers.ModelSerializer):
 
     def get_navegador(self, obj):
         from .audit import _parse_navegador
-        return _parse_navegador(obj.user_agent)
+        d = obj.detalle or {}
+        return _parse_navegador(
+            obj.user_agent,
+            sec_ch_ua=d.get('_sec_ch_ua', ''),
+            plataforma=d.get('_plataforma', ''),
+        )
 
     def get_descripcion(self, obj):
         nombre = obj.usuario.nombre if obj.usuario else None

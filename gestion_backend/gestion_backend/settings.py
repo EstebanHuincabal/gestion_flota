@@ -127,6 +127,18 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_ALL_ORIGINS = DEBUG  # en dev permite todos los orígenes para WS
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "x-app-platform",   # identifica peticiones desde la app Capacitor
+]
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:7183",
     "http://127.0.0.1:7183",
