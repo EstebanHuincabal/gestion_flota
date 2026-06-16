@@ -915,16 +915,21 @@ class PagoIniciarView(APIView):
         if not monto:
             return Response({'error': 'Este plan no tiene precio configurado.'}, status=400)
 
-        # Idempotencia: bloquear si ya hay un pago iniciado en los últimos 3 minutos
-        desde = timezone.now() - timezone.timedelta(minutes=3)
+        # Idempotencia: si ya hay un pago iniciado en los últimos 10 minutos,
+        # devolver el mismo token/url para que el usuario pueda continuar en Webpay
+        # en lugar de bloquear (cubre el caso de refresco de página).
+        desde = timezone.now() - timezone.timedelta(minutes=10)
         pago_reciente = PagoTransbank.objects.filter(
             empresa=empresa, estado='iniciado', created_at__gte=desde,
         ).first()
         if pago_reciente:
-            return Response({
-                'error': 'Ya hay un pago en proceso. Espera unos minutos antes de intentar nuevamente.',
-                'codigo': 'PAGO_EN_PROCESO',
-            }, status=400)
+            url_guardada = (pago_reciente.respuesta_tb or {}).get('_url_webpay')
+            if url_guardada:
+                # Reanudar sesión Webpay existente (token aún válido)
+                return Response({'url': url_guardada, 'token': pago_reciente.token})
+            # Pago antiguo sin URL recuperable → anular y dejar crear uno nuevo
+            pago_reciente.estado = 'anulado'
+            pago_reciente.save(update_fields=['estado'])
 
         orden_compra = f"ORD-{empresa.id}-{uuid.uuid4().hex[:8].upper()}"
 
@@ -1054,6 +1059,7 @@ class PagoIniciarView(APIView):
             monto=monto, ciclo=ciclo,
             plan_nombre=plan.get_nombre_display(),
             iniciado_por=request.user,
+            respuesta_tb={'_url_webpay': url_tb},
         )
 
         registrar_log('ACTIVIDAD', 'pago_iniciado', request, detalle={
@@ -1095,8 +1101,8 @@ class PagoRetornoView(View):
         except PagoTransbank.DoesNotExist:
             return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=token_invalido")
 
-        # Evitar doble commit si el pago ya fue procesado
-        if pago.estado in ('aprobado', 'rechazado'):
+        # Evitar doble commit si el pago ya fue procesado o fue anulado localmente
+        if pago.estado in ('aprobado', 'rechazado', 'anulado'):
             if pago.estado == 'aprobado':
                 return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/exitoso?orden={pago.orden_compra}")
             return redirect(f"{django_settings.FRONTEND_URL}/empresa/pago/fallido?error=rechazado")

@@ -15,8 +15,13 @@ const ETIQUETAS = {
   usuarios:    'Usuarios',
 }
 
+const suscripcionPendiente = computed(() =>
+  datos.value?.suscripcion?.estado === 'pendiente'
+)
+
 const alertas = computed(() => {
   if (!datos.value?.alertas) return []
+  if (suscripcionPendiente.value) return []
   return datos.value.alertas
 })
 

@@ -20,6 +20,7 @@ _RUTAS_LIBRES = [
     '/api/empresa/tarjeta/inscribir/',     # iniciar inscripción OneClick
     '/api/empresa/tarjeta/',              # consultar tarjeta guardada (necesario en página de pago)
     '/api/empresa/suscripcion/',          # consultar estado (necesario para mostrar overlay de bloqueo)
+    '/api/empresa/plan-uso/',             # consultar plan (necesario en página de pago con suscripción pendiente)
     '/admin/',
 ]
 

@@ -5,8 +5,13 @@ import { apiFetch } from '../utils/api.js'
 const datos    = ref(null)
 const cargando = ref(true)
 
+const suscripcionPendiente = computed(() =>
+  datos.value?.suscripcion?.estado === 'pendiente'
+)
+
 const alertas = computed(() => {
   if (!datos.value?.uso) return []
+  if (suscripcionPendiente.value) return []
   const resultado = []
   const etiquetas = {
     vehiculos:   'vehículos',

@@ -91,6 +91,7 @@ const precioFormato = computed(() => precio.value ? formatCLP(precio.value) : nu
 const badgeSuscripcion = computed(() => {
   const e = suscripcion.value?.estado
   const map = {
+    pendiente:  { label: 'Pago pendiente',     cls: 'badge-suspendida' },
     trial:      { label: 'Trial',              cls: 'badge-trial' },
     activa:     { label: 'Activa',             cls: 'badge-activa' },
     gracia:     { label: 'Período de gracia',  cls: 'badge-gracia' },
@@ -247,6 +248,12 @@ async function eliminarTarjeta() {
     </div>
 
     <template v-else>
+
+      <!-- Alerta de pago pendiente (registro incompleto) -->
+      <div v-if="suscripcion?.estado === 'pendiente'" class="alerta-pendiente">
+        <strong>Tu registro está incompleto.</strong>
+        Aún no hemos recibido tu pago. Haz clic en "Pagar con tarjeta" para activar tu cuenta.
+      </div>
 
       <!-- ── Tarjeta del plan ─────────────────────────────────────── -->
       <div class="plan-card">
@@ -460,6 +467,8 @@ async function eliminarTarjeta() {
 .btn-historial:hover { background: #F9FAFB; }
 
 /* Sin plan */
+.alerta-pendiente { background: #FEF3C7; border: 1px solid #F59E0B; color: #92400E; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; font-size: 0.875rem; line-height: 1.5; }
+.alerta-pendiente strong { display: block; margin-bottom: 0.25rem; font-size: 0.9rem; }
 .sin-plan { text-align: center; padding: 3rem 1rem; }
 .sin-plan-icon { font-size: 3rem; margin-bottom: 1rem; }
 .sin-plan h2   { font-size: 1.25rem; font-weight: 700; color: #111827; margin: 0 0 0.5rem; }

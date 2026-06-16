@@ -591,6 +591,8 @@ El método `Documento.estado()` devuelve `vigente`, `por_vencer` (≤ 30 días) 
 
 **Vistas:** `Documentos.vue` · `DocumentosBadge.vue`
 
+> **SUPERADMIN (modo «Todas»):** al abrir el modal de subida, el selector de empresa filtra dinámicamente los vehículos y conductores disponibles — solo se muestran los de la empresa seleccionada. Los selects quedan deshabilitados con el placeholder "Selecciona empresa primero" hasta que se elige empresa.
+
 ### 9.8 Finanzas Operativas
 
 **Para USUARIO (empresa):**
@@ -618,7 +620,7 @@ El método `Documento.estado()` devuelve `vigente`, `por_vencer` (≤ 30 días) 
 | Documentos | Semáforo documental por vehículo + timeline de vencimientos próximos (60 días) |
 | Combustible | KPIs, top-5 vehículos por gasto, evolución mensual (12 meses) |
 
-Exportación disponible en XLSX para estado de flota, mantenciones y conductores.
+Exportación disponible en **XLSX (Excel)** para estado de flota, mantenciones y conductores. No hay soporte para XML, CSV ni PDF; todos los reportes usan `openpyxl` vía la función interna `_xlsx_response()` en `views_reportes.py`.
 
 **Vista:** `ReportesEmpresa.vue`
 
@@ -1200,8 +1202,36 @@ GPS físico ──(protocolo del fabricante)──▶ Traccar ──(forward JSO
 `traccar-init` crea el administrador automáticamente en el primer arranque. Detalles en
 [`DEPLOY.md`](../DEPLOY.md) §9.
 
+> **Errores comunes en producción:**
+> - `TRACCAR_URL=http://localhost:8082` dentro del contenedor `backend` apunta al propio contenedor, no a Traccar. Usar siempre `http://traccar:8082` (nombre del servicio Docker). Si está vacío o con `localhost`, `_habilitado()` es `False` o falla en silencio y **ningún dispositivo se sincroniza**.
+> - `ALLOWED_HOSTS` debe incluir `backend` o el webhook `POST /api/empresa/gps/traccar/` recibe `DisallowedHost` (400). Corrección: `ALLOWED_HOSTS=<ip>,localhost,backend` y `docker compose up -d --force-recreate backend`.
+> - Cambios en `.env.production` requieren `docker compose up -d --force-recreate backend` (un simple `restart` no relee el `env_file`).
+
 **Backend:** `views_gps.py` · `traccar_client.py` · `gps_providers/` (adaptadores) ·
 **Frontend:** `GestionGPS.vue` · `MapaFlota.vue`
+
+---
+
+### 9.18 Moderación de contenido (Gemini + diccionario)
+
+Capa de moderación aplicada a textos ingresados por usuarios (nombres en comentarios, solicitudes, avisos, etc.) para filtrar contenido inapropiado antes de guardarlo.
+
+**Funcionamiento:**
+1. **Filtro de diccionario** (siempre activo): lista de palabras bloqueadas configurable desde el panel SUPERADMIN.
+2. **Filtro IA con Gemini** (activo si `GEMINI_API_KEY` está definido): el texto se evalúa vía Google Gemini API. Si Gemini no responde o la clave está vacía, el sistema solo usa el diccionario.
+
+**Endpoints:**
+```
+POST   /api/moderacion/moderar/          Evalúa un texto y devuelve { permitido, motivo }
+GET    /api/moderacion/palabras/         Lista palabras bloqueadas (SUPERADMIN)
+POST   /api/moderacion/palabras/crear/   Agrega una palabra
+POST   /api/moderacion/palabras/lote/    Agrega varias a la vez
+DELETE /api/moderacion/palabras/<id>/    Elimina una palabra
+```
+
+**Frontend:** `web/admin/Moderacion.vue` (panel SUPERADMIN) · composable `useModeracion.js` (usado en formularios del panel y app conductor)
+
+**Variable de entorno:** `GEMINI_API_KEY` (opcional — ver §16).
 
 ---
 
@@ -1768,6 +1798,16 @@ Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No 
 | `ONECLICK_COMMERCE_CODE` | No | Django | Código de comercio mall de Webpay OneClick |
 | `ONECLICK_CHILD_CODE` | No | Django | Código de tienda hija (child) de OneClick |
 | `GEMINI_API_KEY` | No | Django | API key de Gemini para la capa de moderación por IA (gratis en [aistudio.google.com](https://aistudio.google.com/apikey)). Vacío = solo filtro de diccionario |
+| `TRACCAR_URL` | No | Django | URL base de la API de Traccar (ej: `http://traccar:8082`). **Vacío = sincronización desactivada** (`_habilitado()` retorna `False`). En Docker usar el nombre del servicio, NO `localhost`. |
+| `TRACCAR_USER` / `TRACCAR_PASSWORD` | No | Django | Credenciales del admin de Traccar para crear/actualizar/eliminar dispositivos vía API REST. |
+| `GPS_WEBHOOK_KEY` | No | Django | Clave opcional para proteger el webhook Traccar→backend (`X-Webhook-Key` header). Vacío = webhook abierto (seguro dentro de la red interna de Docker). |
+| `RATELIMIT_ENABLE` | No | Django | `True` (por defecto) / `False` para desactivar el rate limiting globalmente. Útil en staging con pruebas de carga. |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Sí (prod) | Django | Credenciales de la base de datos PostgreSQL. |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | No | Django | Host (`db` en Docker) y puerto (`5432`) de PostgreSQL. |
+| `REDIS_URL` | No | Django | URL de Redis para Django Channels (`redis://redis:6379/0` en Docker). |
+| `CORS_ALLOWED_ORIGINS_EXTRA` / `CSRF_TRUSTED_ORIGINS_EXTRA` | No | Django | Orígenes adicionales permitidos (IP pública, dominio). |
+
+> **Nota Docker:** `ALLOWED_HOSTS` debe incluir `backend` además de la IP/dominio público, porque Traccar reenvía posiciones con `Host: backend:8000`. Sin esto el webhook falla con `DisallowedHost` (400). Ejemplo: `ALLOWED_HOSTS=157.180.85.17,localhost,backend`. `DEBUG` debe ser `False` en producción.
 
 > Detalle completo de la pasarela de pago en [§18](#18-pasarela-de-pago-transbank-y-suscripciones).
 
@@ -2396,6 +2436,12 @@ backend:
     ofelia.job-exec.evaluar-mantenciones.command: "python manage.py evaluar_mantenciones_predictivas"
     ofelia.job-exec.verificar-suscripciones.schedule: "0 0 9 * * *"
     ofelia.job-exec.verificar-suscripciones.command: "python manage.py verificar_suscripciones"
+    ofelia.job-exec.verificar-documentos.schedule: "0 0 10 * * *"
+    ofelia.job-exec.verificar-documentos.command: "python manage.py verificar_documentos"
+    ofelia.job-exec.cerrar-rutas.schedule: "0 0 2 * * *"
+    ofelia.job-exec.cerrar-rutas.command: "python manage.py cerrar_rutas_abandonadas"
+    ofelia.job-exec.purgar-ubicaciones.schedule: "0 0 3 * * 0"
+    ofelia.job-exec.purgar-ubicaciones.command: "python manage.py purgar_ubicaciones"
 
 scheduler:
   image: mcuadros/ofelia:latest
@@ -2414,6 +2460,21 @@ contenedor `scheduler` necesita acceso de solo lectura al socket de Docker
 (`/var/run/docker.sock`) para poder ejecutar esos comandos.
 
 Para ver si los jobs corrieron: `docker compose logs scheduler`.
+
+**Referencia de todos los comandos de gestión disponibles:**
+
+| Comando | Cuándo corre | Descripción |
+|---|---|---|
+| `evaluar_mantenciones_predictivas` | Diario 08:00 | Genera `AlertaMantencion` para planes próximos a vencer |
+| `verificar_suscripciones` | Diario 09:00 | Cobra OneClick, aplica período de gracia, suspende por mora |
+| `verificar_documentos` | Diario 10:00 | Notifica documentos por vencer (umbrales 30, 15, 7, 1 días) |
+| `cerrar_rutas_abandonadas` | Diario 02:00 | Marca como `cancelada` rutas activas >24h sin actividad |
+| `purgar_ubicaciones` | Semanal (dom 03:00) | Elimina registros `Ubicacion` con más de 30 días |
+| `crear_superusuario` | Manual | Crea el administrador del sistema con RUT |
+| `seed_planes` | Manual (deploy) | Carga los planes de suscripción de ejemplo |
+| `seed_peajes` | Manual (deploy) | Carga la lista de peajes chilenos |
+| `seed_carga` | Manual (staging) | Genera vehículos/conductores/dispositivos para pruebas de carga con Locust |
+| `run_gps_emulator` | Manual (dev/test) | Emulador GPS que recorre rutas reales de Santiago |
 
 ---
 
