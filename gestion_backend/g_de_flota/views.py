@@ -980,7 +980,7 @@ def empresas_detalle(request, pk):
         cantidad_mantenciones = Mantencion.objects.filter(vehiculo__empresa=empresa).count()
         cantidad_documentos = Documento.objects.filter(entidad='vehiculo', vehiculo__empresa=empresa).count()
 
-        usuarios = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO).order_by('email')
+        usuarios = Usuario.objects.filter(empresa=empresa, rol__in=[Rol.USUARIO, Rol.CONDUCTOR]).order_by('rol', 'email')
         usuarios_data = UsuarioListSerializer(usuarios, many=True).data
 
         actividad = usuarios.exclude(last_login__isnull=True).order_by('-last_login')[:5]

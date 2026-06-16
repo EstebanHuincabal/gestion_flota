@@ -11,7 +11,7 @@ const tabActiva = ref('informacion')
 const tabs = [
   { id: 'informacion', label: 'Información' },
   { id: 'estadisticas', label: 'Estadísticas' },
-  { id: 'usuarios', label: 'Usuarios' },
+  { id: 'usuarios', label: 'Usuarios y Conductores' },
   { id: 'actividad', label: 'Actividad' }
 ]
 
@@ -136,7 +136,7 @@ onMounted(cargarDetalle)
             </div>
             <div v-if="data.informacion.region">
               <dt class="text-sm font-medium text-gray-500">Región</dt>
-              <dd class="mt-1 text-sm text-gray-900">{{ data.informacion.region }}</dd>
+              <dd class="mt-1 text-sm text-gray-900">{{ data.informacion.region_display || data.informacion.region }}</dd>
             </div>
             <div v-if="data.informacion.pais">
               <dt class="text-sm font-medium text-gray-500">País</dt>

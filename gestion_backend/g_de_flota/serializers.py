@@ -86,12 +86,13 @@ class EmpresaSerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        ret['rut']      = instance.rut
-        ret['email']    = instance.email
-        ret['telefono'] = instance.telefono
-        ret['direccion'] = instance.direccion
-        ret['comuna']   = instance.comuna
-        ret['ciudad']   = instance.ciudad
+        ret['rut']            = instance.rut
+        ret['email']          = instance.email
+        ret['telefono']       = instance.telefono
+        ret['direccion']      = instance.direccion
+        ret['comuna']         = instance.comuna
+        ret['ciudad']         = instance.ciudad
+        ret['region_display'] = instance.get_region_display() if instance.region else ''
         return ret
 
     def validate_nombre(self, value):
