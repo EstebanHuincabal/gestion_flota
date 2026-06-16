@@ -1,6 +1,6 @@
 {
   "appId": "com.appconductor.app",
-  "appName": "Flota Conductor",
+  "appName": "SDFC",
   "webDir": "dist",
   "server": {
     "androidScheme": "http",

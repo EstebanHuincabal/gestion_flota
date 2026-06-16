@@ -16,10 +16,15 @@
 7. [Roles y sistema de permisos](#7-roles-y-sistema-de-permisos)
 8. [Planes de suscripción](#8-planes-de-suscripción)
 9. [Módulos del sistema](#9-módulos-del-sistema)
+    - 9.10 [Notificaciones](#910-notificaciones)
+    - 9.11 [Auditoría (Logs)](#911-auditoría-logs)
+    - 9.12 [Configuración de Cuenta](#912-configuración-de-cuenta)
     - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
     - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
     - 9.15 [Solicitudes de Conductores (USUARIO + SUPERADMIN)](#915-solicitudes-de-conductores-panel-web)
     - 9.16 [Geolocalización GPS (Traccar)](#916-geolocalización-gps-traccar)
+    - 9.17 [Selector de empresa del SUPERADMIN](#917-selector-de-empresa-del-superadmin-y-opción-todas-las-empresas)
+    - 9.18 [Moderación de contenido (Gemini + diccionario)](#918-moderación-de-contenido-gemini--diccionario)
 10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
 11. [Modelo de datos](#11-modelo-de-datos)
 12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
@@ -313,7 +318,6 @@ Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`) que 
 ```ini
 SECRET_KEY=<clave-django-aleatoria>
 ENCRYPTION_KEY=<clave-cifrado-fernet>
-FERNET_KEY=<clave-fernet-base64>
 DEBUG=True
 VITE_API_URL=
 ```
@@ -629,6 +633,68 @@ Exportación disponible en **XLSX (Excel)** para estado de flota, mantenciones y
 **Para SUPERADMIN:** Métricas de empresas, distribución de planes (gráfico dona) y resumen de plataforma.
 
 **Vista:** `ReportesSuperAdmin.vue`
+
+### 9.10 Notificaciones
+
+Sistema de notificaciones in-app con soporte de WebSocket (Django Channels). Tipos: `mantencion_por_vencer`, `mantencion_vencida`, `documento_por_vencer`, `documento_vencido`, `seguridad`, `actividad`, `limite_plan`.
+
+Cada usuario configura sus preferencias de canal (in-app, email) por categoría desde su perfil.
+
+**Vistas:** `Notificaciones.vue` · `PreferenciasNotificaciones.vue`  
+**Componente:** `NotificacionesBell.vue` (campana en la barra de navegación)
+
+### 9.11 Auditoría (Logs)
+
+Registro de eventos de seguridad y actividad del sistema. Accesible únicamente por SUPERADMIN.
+
+**Vista:** `Logs.vue`
+
+**Campos almacenados por evento:**
+
+| Campo | Descripción |
+|---|---|
+| `tipo` | `SEGURIDAD` o `ACTIVIDAD` |
+| `accion` | Código del evento (`login_exitoso`, `documento_subido`, etc.) |
+| `usuario` | FK al usuario que generó la acción |
+| `ip` | IP del cliente (soporta proxy `X-Forwarded-For`) |
+| `user_agent` | User-Agent completo del navegador |
+| `so` | Sistema operativo detectado (Windows 10/11, macOS, Android, iOS, Linux) |
+| `metodo` | Método HTTP de la request (GET, POST, PUT, DELETE) |
+| `endpoint` | URL path que generó el evento (ej: `/api/empresa/documentos/`) |
+| `detalle` | JSON con contexto específico — incluye `cambios` en ediciones |
+| `fecha` | Timestamp con auto_now_add |
+
+**Campos calculados en el serializer** (no almacenados en BD):
+- `navegador` — nombre del browser extraído del `user_agent` y cabeceras adicionales (Chrome, Edge, Firefox, Opera, Safari, Brave, Arc, Vivaldi, Samsung Internet, App Móvil, Internet Explorer, Otro)
+- `descripcion` — oración legible en español que resume el evento (ej: "Juan subió Permiso de circulación para ABC-123")
+
+> **Etiquetas de acción:** el badge de cada fila usa el mapa `ACCION_LABELS` del frontend (`Logs.vue`); la descripción del modal usa `_generar_descripcion` del backend (`serializers.py`). Ambos deben cubrir toda acción registrada con `registrar_log`, o el log mostrará el código crudo (ej. `pago_iniciado`). Incluyen pagos/suscripción (`pago_iniciado`, `pago_aprobado`, `pago_oneclick`, `pago_manual_registrado`, `suscripcion_reactivada`, `gracia_extendida`, `tarjeta_eliminada`, `terminos_actualizados`), correo (`email_config_guardada`, `email_test_enviado`) y errores (`pago_error`, `oneclick_error`, `excepcion_no_manejada`).
+
+**Diff antes/después en ediciones** — los eventos de edición de vehículo, conductor, flota, mantención y documento incluyen en `detalle.cambios` una lista de campos modificados con valor anterior y nuevo:
+```json
+{ "cambios": [{"campo": "marca", "antes": "Toyota", "despues": "Ford"}] }
+```
+
+**Detalles enriquecidos de documentos** — todos los eventos de documentos registran: ID, tipo, entidad, nombre del archivo, patente del vehículo o nombre del conductor, fechas de emisión/vencimiento y notas.
+
+**Helpers en `audit.py`:** `registrar_log()`, `_parse_navegador(ua, sec_ch_ua='', plataforma='')`, `_parse_so(ua)`, `_diff_campos(antes, despues)`, `_snap(obj, campos)`.
+
+**Filtros disponibles en la UI:** tipo, acción, usuario/IP, rango de fechas. Paginación de 50 registros.
+
+### 9.12 Configuración de Cuenta
+
+Panel de configuración personal con cuatro secciones:
+
+| Tab | Contenido |
+|---|---|
+| Perfil | Edición de nombre, email y contraseña |
+| Notificaciones | Preferencias de canal por categoría |
+| Mi Plan | Uso actual del plan y solicitud de cambio |
+| Apariencia | Preferencias visuales de la interfaz |
+
+**Vista:** `ConfiguracionPage.vue` + tabs: `PerfilTab.vue` · `NotificacionesTab.vue` · `MiPlanTab.vue` · `AparienciaTab.vue`
+
+---
 
 ### 9.13 Rutas y Trabajos
 
@@ -1085,78 +1151,15 @@ Si el WebSocket cae, reconecta automáticamente cada 5 s.
 
 #### Permiso de plan
 
-| Código | Categoría | Planes |
-|---|---|---|
-| `solicitudes.ver` | solicitudes | básico · pro · enterprise |
+| Código | Categoría |
+|---|---|
+| `solicitudes.ver` | solicitudes |
 
 Migración: `0040_solicitudes_permisos.py`
 
 **Backend:** `views_solicitudes.py` · `consumers.SolicitudesConsumer`  
 **Modelo:** `SolicitudConductor`  
 **Rutas WS:** `ws/solicitudes/<empresa_id>/`
-
-
-### 9.10 Notificaciones
-
-Sistema de notificaciones in-app con soporte de WebSocket (Django Channels). Tipos: `mantencion_por_vencer`, `mantencion_vencida`, `documento_por_vencer`, `documento_vencido`, `seguridad`, `actividad`, `limite_plan`.
-
-Cada usuario configura sus preferencias de canal (in-app, email) por categoría desde su perfil.
-
-**Vistas:** `Notificaciones.vue` · `PreferenciasNotificaciones.vue`  
-**Componente:** `NotificacionesBell.vue` (campana en la barra de navegación)
-
-### 9.11 Auditoría (Logs)
-
-Registro de eventos de seguridad y actividad del sistema. Accesible únicamente por SUPERADMIN.
-
-**Vista:** `Logs.vue`
-
-**Campos almacenados por evento:**
-
-| Campo | Descripción |
-|---|---|
-| `tipo` | `SEGURIDAD` o `ACTIVIDAD` |
-| `accion` | Código del evento (`login_exitoso`, `documento_subido`, etc.) |
-| `usuario` | FK al usuario que generó la acción |
-| `ip` | IP del cliente (soporta proxy `X-Forwarded-For`) |
-| `user_agent` | User-Agent completo del navegador |
-| `so` | Sistema operativo detectado (Windows 10/11, macOS, Android, iOS, Linux) |
-| `metodo` | Método HTTP de la request (GET, POST, PUT, DELETE) |
-| `endpoint` | URL path que generó el evento (ej: `/api/empresa/documentos/`) |
-| `detalle` | JSON con contexto específico — incluye `cambios` en ediciones |
-| `fecha` | Timestamp con auto_now_add |
-
-**Campos calculados en el serializer** (no almacenados en BD):
-- `navegador` — nombre del browser extraído del `user_agent` (Chrome, Edge, Firefox, Opera, Safari, Internet Explorer, Otro)
-- `descripcion` — oración legible en español que resume el evento (ej: "Juan subió Permiso de circulación para ABC-123")
-
-> **Etiquetas de acción:** el badge de cada fila usa el mapa `ACCION_LABELS` del frontend (`Logs.vue`); la descripción del modal usa `_generar_descripcion` del backend (`serializers.py`). Ambos deben cubrir toda acción registrada con `registrar_log`, o el log mostrará el código crudo (ej. `pago_iniciado`). Incluyen pagos/suscripción (`pago_iniciado`, `pago_aprobado`, `pago_oneclick`, `pago_manual_registrado`, `suscripcion_reactivada`, `gracia_extendida`, `tarjeta_eliminada`, `terminos_actualizados`), correo (`email_config_guardada`, `email_test_enviado`) y errores (`pago_error`, `oneclick_error`, `excepcion_no_manejada`).
-
-**Diff antes/después en ediciones** — los eventos de edición de vehículo, conductor, flota, mantención y documento incluyen en `detalle.cambios` una lista de campos modificados con valor anterior y nuevo:
-```json
-{ "cambios": [{"campo": "marca", "antes": "Toyota", "despues": "Ford"}] }
-```
-
-**Detalles enriquecidos de documentos** — todos los eventos de documentos registran: ID, tipo, entidad, nombre del archivo, patente del vehículo o nombre del conductor, fechas de emisión/vencimiento y notas.
-
-**Helpers en `audit.py`:** `registrar_log()`, `_parse_navegador(ua)`, `_parse_so(ua)`, `_diff_campos(antes, despues)`, `_snap(obj, campos)`.
-
-**Filtros disponibles en la UI:** tipo, acción, usuario/IP, rango de fechas. Paginación de 50 registros.
-
-### 9.12 Configuración de Cuenta
-
-Panel de configuración personal con cuatro secciones:
-
-| Tab | Contenido |
-|---|---|
-| Perfil | Edición de nombre, email y contraseña |
-| Notificaciones | Preferencias de canal por categoría |
-| Mi Plan | Uso actual del plan y solicitud de cambio |
-| Apariencia | Preferencias visuales de la interfaz |
-
-**Vista:** `ConfiguracionPage.vue` + tabs: `PerfilTab.vue` · `NotificacionesTab.vue` · `MiPlanTab.vue` · `AparienciaTab.vue`
-
----
 
 ### 9.16 Geolocalización GPS (Traccar)
 
@@ -1209,29 +1212,6 @@ GPS físico ──(protocolo del fabricante)──▶ Traccar ──(forward JSO
 
 **Backend:** `views_gps.py` · `traccar_client.py` · `gps_providers/` (adaptadores) ·
 **Frontend:** `GestionGPS.vue` · `MapaFlota.vue`
-
----
-
-### 9.18 Moderación de contenido (Gemini + diccionario)
-
-Capa de moderación aplicada a textos ingresados por usuarios (nombres en comentarios, solicitudes, avisos, etc.) para filtrar contenido inapropiado antes de guardarlo.
-
-**Funcionamiento:**
-1. **Filtro de diccionario** (siempre activo): lista de palabras bloqueadas configurable desde el panel SUPERADMIN.
-2. **Filtro IA con Gemini** (activo si `GEMINI_API_KEY` está definido): el texto se evalúa vía Google Gemini API. Si Gemini no responde o la clave está vacía, el sistema solo usa el diccionario.
-
-**Endpoints:**
-```
-POST   /api/moderacion/moderar/          Evalúa un texto y devuelve { permitido, motivo }
-GET    /api/moderacion/palabras/         Lista palabras bloqueadas (SUPERADMIN)
-POST   /api/moderacion/palabras/crear/   Agrega una palabra
-POST   /api/moderacion/palabras/lote/    Agrega varias a la vez
-DELETE /api/moderacion/palabras/<id>/    Elimina una palabra
-```
-
-**Frontend:** `web/admin/Moderacion.vue` (panel SUPERADMIN) · composable `useModeracion.js` (usado en formularios del panel y app conductor)
-
-**Variable de entorno:** `GEMINI_API_KEY` (opcional — ver §16).
 
 ---
 
@@ -1297,6 +1277,29 @@ formularios de creación muestran un `<select>` de empresa cuando `esTodas`.
 > un módulo arma la URL con `empresa_id` propio para cargar conductores/vehículos de una
 > empresa específica). Antes esto se duplicaba (`?empresa_id=2&empresa_id=__todas__`) y
 > Django tomaba el último valor (`__todas__`), devolviendo datos de todas las empresas.
+
+---
+
+### 9.18 Moderación de contenido (Gemini + diccionario)
+
+Capa de moderación aplicada a textos ingresados por usuarios (nombres en comentarios, solicitudes, avisos, etc.) para filtrar contenido inapropiado antes de guardarlo.
+
+**Funcionamiento:**
+1. **Filtro de diccionario** (siempre activo): lista de palabras bloqueadas configurable desde el panel SUPERADMIN.
+2. **Filtro IA con Gemini** (activo si `GEMINI_API_KEY` está definido): el texto se evalúa vía Google Gemini API. Si Gemini no responde o la clave está vacía, el sistema solo usa el diccionario.
+
+**Endpoints:**
+```
+POST   /api/moderacion/moderar/          Evalúa un texto y devuelve { permitido, motivo }
+GET    /api/moderacion/palabras/         Lista palabras bloqueadas (SUPERADMIN)
+POST   /api/moderacion/palabras/crear/   Agrega una palabra
+POST   /api/moderacion/palabras/lote/    Agrega varias a la vez
+DELETE /api/moderacion/palabras/<id>/    Elimina una palabra
+```
+
+**Frontend:** `web/admin/Moderacion.vue` (panel SUPERADMIN) · composable `useModeracion.js` (usado en formularios del panel y app conductor)
+
+**Variable de entorno:** `GEMINI_API_KEY` (opcional — ver §16).
 
 ---
 
@@ -1785,8 +1788,7 @@ Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No 
 | Variable | Requerida | Leída por | Descripción |
 |---|---|---|---|
 | `SECRET_KEY` | Sí | Django | Clave secreta de Django |
-| `ENCRYPTION_KEY` | Sí | Django | Clave base para derivar la clave Fernet |
-| `FERNET_KEY` | Sí | Django | Clave Fernet en formato base64-url |
+| `ENCRYPTION_KEY` | Sí | Django | Clave Fernet (base64-url) para el cifrado simétrico de datos sensibles |
 | `DEBUG` | No | Django | `True` para desarrollo, `False` para producción |
 | `ALLOWED_HOSTS` | No | Django | Hosts permitidos (separados por coma) |
 | `VITE_API_URL` | No | Vite | URL base de la API; vacío = peticiones relativas (proxy Vite) |
@@ -1826,11 +1828,11 @@ A raíz de una auditoría externa se aplicaron tres medidas (todas en `settings.
 vistas):
 
 1. **Headers de seguridad HTTP** — `SECURE_CONTENT_TYPE_NOSNIFF` y
-   `X_FRAME_OPTIONS='DENY'` siempre; y solo con `DEBUG=False`:
-   `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS` (1 año) + subdominios + preload,
-   `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, y
-   `SECURE_PROXY_SSL_HEADER` (Django reconoce HTTPS detrás de Nginx). En dev no
-   aplican para no romper el trabajo local sin HTTPS.
+   `X_FRAME_OPTIONS='DENY'` siempre activos; con `DEBUG=False` se agrega
+   `SECURE_PROXY_SSL_HEADER` (Django reconoce HTTPS detrás de Nginx). Los
+   headers `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SESSION_COOKIE_SECURE`
+   y `CSRF_COOKIE_SECURE` están presentes en `settings.py` pero **comentados**:
+   se activan una vez que el servidor tenga HTTPS configurado (Certbot).
 2. **Limpieza de `FERNET_KEY`** — se eliminó `FERNET_KEYS = [os.environ['FERNET_KEY']]`,
    una variable **muerta** (el cifrado usa solo `ENCRYPTION_KEY`) que además
    obligaba a definir una env var inexistente y **rompía el arranque** si faltaba.
