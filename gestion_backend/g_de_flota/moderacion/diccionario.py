@@ -4,5 +4,4 @@ Gestionado desde el panel del SUPERADMIN.
 """
 
 PALABRAS = {
-    "ejale": [],
 }

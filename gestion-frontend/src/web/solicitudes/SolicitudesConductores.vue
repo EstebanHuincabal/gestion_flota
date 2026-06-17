@@ -16,7 +16,7 @@ const error         = ref('')
 const total         = ref(0)
 const page          = ref(1)
 const pages         = ref(1)
-const pageSize      = 20
+const pageSize      = 15
 
 // ── Filtros ─────────────────────────────────────────────────────────────────
 const filtroEstado     = ref('')

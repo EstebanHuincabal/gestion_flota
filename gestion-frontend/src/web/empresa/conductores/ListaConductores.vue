@@ -53,7 +53,7 @@ const cargando    = ref(true)
 const sinEmpresa  = ref(false)
 
 const conductoresFiltrados = computed(() => conductores.value)
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(conductoresFiltrados, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(conductoresFiltrados, 15)
 
 const confirmState = ref({ visible: false, accion: null, conductor: null })
 const toast = useToast()
@@ -370,7 +370,7 @@ onMounted(async () => {
         :pagina="pagina"
         :total-paginas="totalPaginas"
         :total="total"
-        :por-pagina="20"
+        :por-pagina="15"
         @update:pagina="irA"
       />
     </div>

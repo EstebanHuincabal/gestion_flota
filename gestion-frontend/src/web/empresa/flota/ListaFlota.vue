@@ -32,7 +32,7 @@ const confirm      = ref({ visible: false, item: null, tipo: '' })
 const COMBUSTIBLE_LABEL = { bencina: 'Bencina', diesel: 'Diésel', electrico: 'Eléctrico', hibrido: 'Híbrido' }
 
 const vehiculosFiltrados = computed(() => vehiculos.value)
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(vehiculosFiltrados, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(vehiculosFiltrados, 15)
 
 // ── Selector de empresa (SUPERADMIN — actúa como filtro) ─
 const empresas         = ref([])
@@ -447,7 +447,7 @@ onMounted(async () => {
         :pagina="pagina"
         :total-paginas="totalPaginas"
         :total="total"
-        :por-pagina="20"
+        :por-pagina="15"
         @update:pagina="irA"
       />
     </div>

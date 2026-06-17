@@ -104,6 +104,9 @@ def _crear_entidad_automatica(solicitud, request_user, extra=None):
     extra = extra or {}
 
     if solicitud.tipo == 'mantencion' and solicitud.vehiculo:
+        # Checklist pre-viaje: solo acuse de recibo, sin entidad derivada.
+        if (solicitud.extra or {}).get('es_checklist'):
+            return None
         # CORRECTIVO: la falla ya ocurrió → se registra el GASTO directo, no se
         # planifica una mantención. PROGRAMADA: se crea la Mantencion a ejecutar.
         if extra.get('es_correctivo', True):
@@ -252,7 +255,7 @@ class SolicitudesListView(APIView):
 
         # Paginación
         page      = max(1, int(request.query_params.get('page', 1)))
-        page_size = min(100, int(request.query_params.get('page_size', 20)))
+        page_size = min(100, int(request.query_params.get('page_size', 15)))
         offset    = (page - 1) * page_size
         pages     = max(1, (total + page_size - 1) // page_size)
 
@@ -364,29 +367,31 @@ class SolicitudAprobarView(APIView):
         # Parámetros según clasificación (se validan ANTES de marcar aprobada).
         extra = {}
         if sol.tipo == 'mantencion':
-            # Default True: las solicitudes de conductor son fallas no presupuestadas.
-            es_corr = bool(request.data.get('es_correctivo', True))
-            extra['es_correctivo'] = es_corr
-            if es_corr:
-                # Correctivo → registra el gasto directo: necesita monto.
-                raw_monto = request.data.get('monto')
-                try:
-                    extra['monto'] = int(float(raw_monto)) if raw_monto not in (None, '') else 0
-                except (ValueError, TypeError):
-                    extra['monto'] = 0
-                if extra['monto'] <= 0:
-                    return Response({'monto': 'Para un gasto correctivo el monto debe ser mayor a 0.'}, status=400)
-                extra['categoria_correctiva'] = str(request.data.get('categoria_correctiva', '')).strip()
+            # Checklist pre-viaje: solo acuse de recibo, no crea entidades.
+            if (sol.extra or {}).get('es_checklist'):
+                pass
             else:
-                # Programada → crea la mantención a ejecutar.
-                extra['fecha_programada']  = request.data.get('fecha_programada') or None
-                extra['taller']            = str(request.data.get('taller', '')).strip()
-                raw_pres = request.data.get('presupuesto')
-                try:
-                    extra['presupuesto'] = float(raw_pres) if raw_pres not in (None, '') else None
-                except (ValueError, TypeError):
-                    extra['presupuesto'] = None
-                extra['suspender_vehiculo'] = bool(request.data.get('suspender_vehiculo', False))
+                # Default True: las solicitudes manuales de mantención son fallas no presupuestadas.
+                es_corr = bool(request.data.get('es_correctivo', True))
+                extra['es_correctivo'] = es_corr
+                if es_corr:
+                    raw_monto = request.data.get('monto')
+                    try:
+                        extra['monto'] = int(float(raw_monto)) if raw_monto not in (None, '') else 0
+                    except (ValueError, TypeError):
+                        extra['monto'] = 0
+                    if extra['monto'] <= 0:
+                        return Response({'monto': 'Para un gasto correctivo el monto debe ser mayor a 0.'}, status=400)
+                    extra['categoria_correctiva'] = str(request.data.get('categoria_correctiva', '')).strip()
+                else:
+                    extra['fecha_programada']  = request.data.get('fecha_programada') or None
+                    extra['taller']            = str(request.data.get('taller', '')).strip()
+                    raw_pres = request.data.get('presupuesto')
+                    try:
+                        extra['presupuesto'] = float(raw_pres) if raw_pres not in (None, '') else None
+                    except (ValueError, TypeError):
+                        extra['presupuesto'] = None
+                    extra['suspender_vehiculo'] = bool(request.data.get('suspender_vehiculo', False))
 
         sol.estado         = 'aprobado'
         sol.respuesta      = request.data.get('respuesta', '')

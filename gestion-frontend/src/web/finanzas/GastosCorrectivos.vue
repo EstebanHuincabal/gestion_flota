@@ -94,7 +94,7 @@ const maxVehiculo = computed(() => {
   return Math.max(1, ...pv.flatMap(v => [v.total_correctivo, v.total_normal]))
 })
 
-const { pagina: paginaGastos, totalPaginas: totalPaginasGastos, total: totalGastos, paginado: gastosPaginados, irA: irAPaginaGastos } = usePaginacion(gastos, 20)
+const { pagina: paginaGastos, totalPaginas: totalPaginasGastos, total: totalGastos, paginado: gastosPaginados, irA: irAPaginaGastos } = usePaginacion(gastos, 15)
 
 // ── Carga ───────────────────────────────────────────────────────────────────────
 async function cargar() {

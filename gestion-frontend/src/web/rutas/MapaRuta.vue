@@ -23,6 +23,8 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 
 const props = defineProps({
   paradas:      { type: Array,   default: () => [] },
@@ -36,6 +38,7 @@ const emit = defineEmits(['map-click'])
 let mapa           = null
 let polylineLayer  = null
 let marcadores     = []
+let resizeObserver = null
 
 // ── Buscador de ciudad ─────────────────────────────────────────────────────
 const q               = ref('')
@@ -82,23 +85,8 @@ const COLORES = {
   destino: '#E24B4A',
 }
 
-async function cargarLeaflet() {
-  if (window.L) return
-  await new Promise((resolve) => {
-    const css    = document.createElement('link')
-    css.rel      = 'stylesheet'
-    css.href     = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
-    document.head.appendChild(css)
-
-    const script  = document.createElement('script')
-    script.src    = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-    script.onload = resolve
-    document.head.appendChild(script)
-  })
-}
-
 function crearIcono(color) {
-  return window.L.divIcon({
+  return L.divIcon({
     className: '',
     html: `<svg width="28" height="36" viewBox="0 0 28 36" xmlns="http://www.w3.org/2000/svg">
       <path d="M14 0C6.268 0 0 6.268 0 14c0 9.625 14 22 14 22S28 23.625 28 14C28 6.268 21.732 0 14 0z" fill="${color}"/>
@@ -111,7 +99,7 @@ function crearIcono(color) {
 }
 
 function renderMapa() {
-  if (!window.L || !mapa) return
+  if (!mapa) return
 
   marcadores.forEach(m => mapa.removeLayer(m))
   marcadores = []
@@ -120,14 +108,14 @@ function renderMapa() {
   const puntos = []
 
   if (props.polyline && props.polyline.length > 0) {
-    polylineLayer = window.L.polyline(props.polyline, { color: '#378ADD', weight: 4, opacity: 0.85 }).addTo(mapa)
+    polylineLayer = L.polyline(props.polyline, { color: '#378ADD', weight: 4, opacity: 0.85 }).addTo(mapa)
     props.polyline.forEach(p => puntos.push(p))
   }
 
   props.paradas.forEach(p => {
     if (!p.latitud || !p.longitud) return
     const color = COLORES[p.tipo] || COLORES.parada
-    const m = window.L.marker([p.latitud, p.longitud], { icon: crearIcono(color) })
+    const m = L.marker([p.latitud, p.longitud], { icon: crearIcono(color) })
       .bindPopup(`<strong>${p.nombre || p.tipo}</strong>${p.direccion ? '<br><small>' + p.direccion + '</small>' : ''}`)
       .addTo(mapa)
     marcadores.push(m)
@@ -143,15 +131,19 @@ function renderMapa() {
   }
 }
 
-onMounted(async () => {
-  await cargarLeaflet()
+onMounted(() => {
   const el = document.getElementById(props.mapId)
   if (!el) return
-  mapa = window.L.map(el, { zoomControl: true }).setView([-33.4489, -70.6693], 7)
-  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  mapa = L.map(el, { zoomControl: true }).setView([-33.4489, -70.6693], 7)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(mapa)
+
+  resizeObserver = new ResizeObserver(() => {
+    try { mapa?.invalidateSize() } catch { /* noop */ }
+  })
+  resizeObserver.observe(el)
 
   if (props.seleccionable) {
     mapa.on('click', (e) => emit('map-click', { lat: e.latlng.lat, lng: e.latlng.lng }))
@@ -164,6 +156,8 @@ watch(() => [props.paradas, props.polyline], renderMapa, { deep: true })
 
 onUnmounted(() => {
   clearTimeout(buscadorTimer)
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (mapa) { mapa.remove(); mapa = null }
 })
 

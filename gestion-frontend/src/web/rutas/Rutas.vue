@@ -196,8 +196,13 @@
                       </svg>
                     </button>
                     <button @click="abrirModalEditar(ruta)" title="Editar"
-                      class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      :disabled="cargandoEditar === ruta.id"
+                      class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition disabled:opacity-50 disabled:cursor-wait">
+                      <svg v-if="cargandoEditar === ruta.id" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                      </svg>
+                      <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                       </svg>
                     </button>
@@ -208,7 +213,7 @@
                       </svg>
                     </button>
                   </template>
-                  <template v-else-if="!esTodas && ruta.estado === 'activo'">
+                  <template v-else-if="ruta.estado === 'activo'">
                     <button @click="prepararFinalizar(ruta)" title="Finalizar"
                       class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -238,7 +243,7 @@
           :pagina="pagina"
           :total-paginas="totalPaginas"
           :total="total"
-          :por-pagina="20"
+          :por-pagina="15"
           @update:pagina="irA"
         />
       </div>
@@ -1085,11 +1090,12 @@ async function cambiarTabPanel(tab) {
 }
 
 // ── Modal crear/editar ────────────────────────────────────────────────────
-const modalCrear    = ref(false)
-const modoEdicion   = ref(false)
-const editandoId    = ref(null)
-const paso          = ref(1)
-const guardando     = ref(false)
+const modalCrear      = ref(false)
+const modoEdicion     = ref(false)
+const editandoId      = ref(null)
+const cargandoEditar  = ref(null)   // id de la ruta cuyo detalle se está cargando
+const paso            = ref(1)
+const guardando       = ref(false)
 const calculando    = ref(false)
 const calculoResult = ref(null)
 const mapaParadasRef = ref(null)   // ref al MapaRuta del paso 2
@@ -1143,7 +1149,7 @@ const rutasFiltradas = computed(() =>
   tabActivo.value === 'todas' ? rutas.value : rutas.value.filter(r => r.estado === tabActivo.value)
 )
 
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(rutasFiltradas, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(rutasFiltradas, 15)
 
 // ── Autocompletado conductor ↔ vehículo ───────────────────────────────────
 const autoFillConductor = ref(false)
@@ -1242,39 +1248,48 @@ function abrirModalCrear() {
   modalCrear.value     = true
 }
 
-function abrirModalEditar(ruta) {
-  modoEdicion.value = true
-  editandoId.value  = ruta.id
-  form.value = {
-    tipo:             ruta.tipo,
-    nombre:           ruta.nombre,
-    conductor_id:     ruta.conductor_id,
-    vehiculo_id:      ruta.vehiculo_id,
-    fecha_programada: ruta.fecha_programada || '',
-    hora_programada:  ruta.hora_programada  || '',
-    notas:            ruta.notas || '',
-    paradas: (ruta.paradas || []).map(p => ({
-      tipo:      p.tipo,
-      orden:     p.orden,
-      nombre:    p.nombre,
-      direccion: p.direccion,
-      latitud:   p.latitud,
-      longitud:  p.longitud,
-      notas:     p.notas || '',
-    })),
+async function abrirModalEditar(ruta) {
+  cargandoEditar.value = ruta.id
+  try {
+    const res = await apiFetch(`/api/empresa/rutas/${ruta.id}/`)
+    if (!res.ok) return
+    const r = await res.json()
+
+    modoEdicion.value = true
+    editandoId.value  = r.id
+    form.value = {
+      tipo:             r.tipo,
+      nombre:           r.nombre,
+      conductor_id:     r.conductor_id,
+      vehiculo_id:      r.vehiculo_id,
+      fecha_programada: r.fecha_programada || '',
+      hora_programada:  r.hora_programada  || '',
+      notas:            r.notas || '',
+      paradas: (r.paradas || []).map(p => ({
+        tipo:      p.tipo,
+        orden:     p.orden,
+        nombre:    p.nombre    || '',
+        direccion: p.direccion || '',
+        latitud:   p.latitud,
+        longitud:  p.longitud,
+        notas:     p.notas || '',
+      })),
+    }
+    if (!form.value.paradas.some(p => p.tipo === 'origen')) {
+      form.value.paradas.unshift({ tipo: 'origen', orden: 0, nombre: '', direccion: '', latitud: null, longitud: null, notas: '' })
+    }
+    if (!form.value.paradas.some(p => p.tipo === 'destino')) {
+      form.value.paradas.push({ tipo: 'destino', orden: 99, nombre: '', direccion: '', latitud: null, longitud: null, notas: '' })
+    }
+    calculoResult.value  = null
+    paso.value           = 1
+    paradaActiva.value   = 0
+    coordsAbiertas.value = {}
+    coordsError.value    = {}
+    modalCrear.value     = true
+  } finally {
+    cargandoEditar.value = null
   }
-  if (!form.value.paradas.some(p => p.tipo === 'origen')) {
-    form.value.paradas.unshift({ tipo: 'origen', orden: 0, nombre: '', direccion: '', latitud: null, longitud: null, notas: '' })
-  }
-  if (!form.value.paradas.some(p => p.tipo === 'destino')) {
-    form.value.paradas.push({ tipo: 'destino', orden: 99, nombre: '', direccion: '', latitud: null, longitud: null, notas: '' })
-  }
-  calculoResult.value = null
-  paso.value          = 1
-  paradaActiva.value  = 0
-  coordsAbiertas.value = {}
-  coordsError.value    = {}
-  modalCrear.value    = true
 }
 
 function cerrarModal() {
@@ -1428,9 +1443,10 @@ async function guardarRuta() {
 
 // ── Geocoding Nominatim ───────────────────────────────────────────────────
 function buscarDireccion(texto, idx) {
-  form.value.paradas[idx].nombre   = texto
-  form.value.paradas[idx].latitud  = null
-  form.value.paradas[idx].longitud = null
+  form.value.paradas[idx].nombre    = texto
+  form.value.paradas[idx].direccion = texto
+  form.value.paradas[idx].latitud   = null
+  form.value.paradas[idx].longitud  = null
   if (geoTimers[idx]) clearTimeout(geoTimers[idx])
   if (!texto || texto.length < 3) { geoSugerencias.value[idx] = []; return }
   geoTimers[idx] = setTimeout(async () => {

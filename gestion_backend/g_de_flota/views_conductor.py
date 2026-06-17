@@ -806,9 +806,9 @@ def conductor_historial_mantenciones(request):
 
     try:
         page      = max(1, int(request.query_params.get('page', 1)))
-        page_size = min(100, max(1, int(request.query_params.get('page_size', 20))))
+        page_size = min(100, max(1, int(request.query_params.get('page_size', 15))))
     except (ValueError, TypeError):
-        page, page_size = 1, 20
+        page, page_size = 1, 15
 
     qs = Mantencion.objects.filter(
         vehiculo=vehiculo,
@@ -1326,17 +1326,7 @@ def conductor_checklist(request, ruta_id):
                     item['fecha_vencimiento'] = None
                     item['pre_resultado']     = None
 
-        # Buscar borrador (checklist previo guardado en estado pendiente)
         respuestas_guardadas = {}
-        borrador = SolicitudConductor.objects.filter(
-            conductor=request.user,
-            tipo='mantencion',
-            estado='pendiente',
-            extra__ruta_id=ruta.id,
-            extra__es_checklist=True,
-        ).first()
-        if borrador:
-            respuestas_guardadas = borrador.extra.get('respuestas', {})
 
         return Response({
             'items':               items,
@@ -1378,40 +1368,13 @@ def conductor_checklist(request, ruta_id):
 
     tiene_fallas = bool(fallas)
 
-    # 4. Crear / actualizar SolicitudConductor
-    empresa  = request.user.empresa
-    vehiculo = ruta.vehiculo
-
-    defaults = {
-        'empresa':     empresa,
-        'vehiculo':    vehiculo,
-        'titulo':      f'Checklist pre-viaje — {ruta.nombre}',
-        'descripcion': ('Vehículo en orden.' if not tiene_fallas
-                        else 'Fallas:\n' + resumen_fallas),
-        'estado':      'aprobado' if not tiene_fallas else 'pendiente',
-        'prioridad':   'baja'     if not tiene_fallas else 'alta',
-        'extra': {
-            'ruta_id':      ruta.id,
-            'es_checklist': True,
-            'respuestas':   respuestas,
-            'firma_b64':    firma_b64,
-            'tiene_fallas': tiene_fallas,
-            'fallas_detalle': fallas,
-        },
-    }
-
-    sol, _ = SolicitudConductor.objects.update_or_create(
-        conductor=request.user,
-        tipo='mantencion',
-        extra__ruta_id=ruta.id,
-        extra__es_checklist=True,
-        defaults=defaults,
-    )
-
-    # 5. Notificar admins
+    # 4. Datos de contexto
+    empresa          = request.user.empresa
+    vehiculo         = ruta.vehiculo
     nombre_conductor = request.user.nombre or request.user.email
     patente          = vehiculo.patente if vehiculo else '—'
 
+    # 5. Notificación in-app a los admins
     if empresa:
         if not tiene_fallas:
             notificar_admins_empresa(
@@ -1419,20 +1382,21 @@ def conductor_checklist(request, ruta_id):
                 tipo='actividad',
                 titulo=f'✓ Vehículo en orden — {patente}',
                 mensaje=f'{nombre_conductor} completó el checklist. Vehículo listo para partir en {ruta.nombre}.',
-                url_accion=f'/empresa/solicitudes?sol={sol.id}',
+                url_accion='/empresa/mantenciones/',
             )
         else:
             notificar_admins_empresa(
                 empresa,
-                tipo='solicitud_conductor',
+                tipo='mantencion',
                 titulo=f'⚠ Checklist con fallas — {patente}',
                 mensaje=f'{nombre_conductor} detectó fallas antes de partir: {resumen_fallas}',
-                url_accion=f'/empresa/solicitudes?sol={sol.id}',
+                url_accion='/empresa/mantenciones/',
             )
 
     # 6. Actualizar ruta.extra
     extra_ruta = ruta.extra or {}
-    extra_ruta.update({'checklist_completo': True, 'checklist_id': sol.id})
+    extra_ruta['checklist_completo'] = True
+    extra_ruta['checklist_fallas']   = fallas
     ruta.extra = extra_ruta
     ruta.save(update_fields=['extra'])
 
@@ -1447,16 +1411,17 @@ def conductor_checklist(request, ruta_id):
     except Exception:
         registrar_log('ERROR', 'checklist_push_fallido', request, detalle={'ruta_id': ruta.id})
 
-    # 7b. Email a los admins SIEMPRE (con fallas o en orden) ───────────────────
+    # 8. Email a los admins
     if empresa:
         try:
             from .email_service import email_checklist_fallas, email_checklist_ok
             from django.conf import settings as _settings
-            admins = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
-            url_sol = f"{_settings.FRONTEND_URL}/empresa/solicitudes?sol={sol.id}"
+            admins   = Usuario.objects.filter(empresa=empresa, rol=Rol.USUARIO, is_active=True)
+            url_mant = f"{_settings.FRONTEND_URL}/empresa/mantenciones/"
             if tiene_fallas:
                 lista_fallas = [
-                    f"{ITEMS_MAP.get(iid, iid)}: {resumen_fallas}"
+                    f"{ITEMS_MAP.get(iid, iid)}: "
+                    f"{respuestas.get(iid, {}).get('observacion', '').strip() or 'sin observación'}"
                     for iid in fallas
                 ]
                 for admin in admins:
@@ -1466,8 +1431,8 @@ def conductor_checklist(request, ruta_id):
                         empresa_nombre=empresa.nombre,
                         conductor_nombre=nombre_conductor,
                         patente=patente,
-                        fallas=lista_fallas or [resumen_fallas],
-                        url_solicitudes=url_sol,
+                        fallas=lista_fallas,
+                        url_solicitudes=url_mant,
                     )
             else:
                 for admin in admins:
@@ -1478,23 +1443,22 @@ def conductor_checklist(request, ruta_id):
                         conductor_nombre=nombre_conductor,
                         patente=patente,
                         ruta_nombre=ruta.nombre,
-                        url_solicitudes=url_sol,
+                        url_solicitudes=url_mant,
                     )
         except Exception:
             pass
 
-    # 8. Registrar log
+    # 9. Registrar log
     registrar_log('ACTIVIDAD', 'checklist_completado', request, detalle={
         'ruta_id':      ruta.id,
         'tiene_fallas': tiene_fallas,
         'fallas':       fallas,
     })
 
-    # 9. Retornar
+    # 10. Retornar
     return Response({
         'ok':           True,
         'tiene_fallas': tiene_fallas,
-        'solicitud_id': sol.id,
         'mensaje': (
             'Todo en orden. Puedes iniciar la ruta.'
             if not tiene_fallas

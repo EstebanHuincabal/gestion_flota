@@ -64,7 +64,7 @@ const historialFiltrado = computed(() =>
     })
 )
 
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(historialFiltrado, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(historialFiltrado, 15)
 
 const costoFiltrado = computed(() =>
   historialFiltrado.value.reduce((acc, m) => acc + Number(m.costo), 0)
@@ -245,7 +245,7 @@ onMounted(async () => { await Promise.all([cargarEmpresas(), cargar()]) })
           :pagina="pagina"
           :total-paginas="totalPaginas"
           :total="total"
-          :por-pagina="20"
+          :por-pagina="15"
           @update:pagina="irA"
         />
 

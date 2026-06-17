@@ -272,7 +272,7 @@ const asignarEmpresaNombre = ref('')
 const vehiculoSel      = ref('')
 
 const dispositivosFiltrados = computed(() => dispositivos.value)
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(dispositivosFiltrados, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(dispositivosFiltrados, 15)
 
 const vehiculosLibres = computed(() => {
   // Vehículos sin dispositivo_gps asignado. La lista de vehículos no trae ese
@@ -457,7 +457,7 @@ async function desasignar() {
           :pagina="pagina"
           :total-paginas="totalPaginas"
           :total="total"
-          :por-pagina="20"
+          :por-pagina="15"
           @update:pagina="irA"
         />
       </div>

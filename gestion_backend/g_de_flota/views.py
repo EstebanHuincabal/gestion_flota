@@ -1725,7 +1725,7 @@ def logs_lista(request):
         qs = qs.filter(fecha__date__lte=fecha_hasta)
 
     page_num  = max(1, int(request.query_params.get('page', 1)))
-    paginator = Paginator(qs, 50)
+    paginator = Paginator(qs, 15)
     page      = paginator.get_page(page_num)
 
     return Response({
@@ -2644,7 +2644,7 @@ def notificaciones_lista(request):
         qs = qs.filter(tipo=tipo)
 
     page_num  = max(1, int(request.query_params.get('page', 1)))
-    paginator = _Paginator(qs, 20)
+    paginator = _Paginator(qs, 15)
     page      = paginator.get_page(page_num)
 
     return Response({

@@ -113,8 +113,8 @@ const gastosPorVehiculo = computed(() => {
   return gastos.value.filter(g => g.vehiculo_id === vid)
 })
 
-const { pagina: paginaGastos, totalPaginas: totalPaginasGastos, total: totalGastos, paginado: gastosFiltradosPaginados, irA: irAPaginaGastos } = usePaginacion(gastosFiltrados, 20)
-const { pagina: paginaGastosVeh, totalPaginas: totalPaginasGastosVeh, total: totalGastosVeh, paginado: gastosPorVehiculoPaginados, irA: irAPaginaGastosVeh } = usePaginacion(gastosPorVehiculo, 20)
+const { pagina: paginaGastos, totalPaginas: totalPaginasGastos, total: totalGastos, paginado: gastosFiltradosPaginados, irA: irAPaginaGastos } = usePaginacion(gastosFiltrados, 15)
+const { pagina: paginaGastosVeh, totalPaginas: totalPaginasGastosVeh, total: totalGastosVeh, paginado: gastosPorVehiculoPaginados, irA: irAPaginaGastosVeh } = usePaginacion(gastosPorVehiculo, 15)
 
 const breakdownVehiculo = computed(() => {
   const cats = {}

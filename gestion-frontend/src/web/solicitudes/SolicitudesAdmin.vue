@@ -57,7 +57,7 @@ const error       = ref('')
 const total       = ref(0)
 const page        = ref(1)
 const pages       = ref(1)
-const pageSize    = 20
+const pageSize    = 15
 
 // ── Filtros ───────────────────────────────────────────────────────────────────
 const filtroEstado     = ref('')
@@ -74,6 +74,7 @@ const errorRechazo  = ref('')
 const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando     = ref(false)
 const errorAccion   = ref('')
+
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 const toasts = ref([])
@@ -539,7 +540,10 @@ onUnmounted(() => {
               <td>
                 <span class="tipo-badge">{{ tipoIcon[sol.tipo] }} {{ sol.tipo_display }}</span>
               </td>
-              <td class="td-titulo">{{ sol.titulo }}</td>
+              <td class="td-titulo">
+                {{ sol.titulo }}
+                <span v-if="sol.extra?.es_checklist" class="badge-checklist" title="Falla de checklist pre-viaje">CK</span>
+              </td>
               <td>
                 <span class="badge" :style="{ background: prioridadColor[sol.prioridad]?.bg, color: prioridadColor[sol.prioridad]?.text }">
                   {{ sol.prioridad_display }}
@@ -855,6 +859,7 @@ onUnmounted(() => {
 }
 .tipo-badge { background: #EEF2FF; color: #4338CA; }
 .td-titulo   { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge-checklist { display: inline-flex; align-items: center; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.65rem; font-weight: 700; background: #FEF3C7; color: #92400E; margin-left: 0.35rem; vertical-align: middle; }
 .td-vehiculo { font-family: monospace; font-size: 0.8125rem; }
 .td-fecha    { white-space: nowrap; font-size: 0.8125rem; color: #6B7280; }
 

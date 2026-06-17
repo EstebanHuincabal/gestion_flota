@@ -1,5 +1,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import { apiFetch, safeJsonParse } from '../../../utils/api.js'
 import { getEmpresaActiva, useEmpresaNav, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import SelectorEmpresa from '../../../components/SelectorEmpresa.vue'
@@ -25,6 +27,7 @@ let pollTimer = null
 const POLL_TODAS_MS = 20000
 
 let mapa       = null
+let resizeObserver = null
 const marcadores = {}                  // vehiculo_id → L.marker
 const rutasLayers = {}                 // vehiculo_id → L.polyline (trazado de la ruta activa)
 const mostrarRutas = ref(true)         // toggle de visibilidad de las rutas
@@ -82,7 +85,7 @@ function enfocarVehiculo(v) {
 // ── Rutas activas en el mapa ──────────────────────────────────────────────────
 // Pin SVG para los puntos de inicio (verde) y fin (rojo) de cada ruta.
 function crearIconoPunto(color) {
-  return window.L.divIcon({
+  return L.divIcon({
     className: '',
     html: `<svg width="24" height="31" viewBox="0 0 28 36" xmlns="http://www.w3.org/2000/svg">
       <path d="M14 0C6.268 0 0 6.268 0 14c0 9.625 14 22 14 22S28 23.625 28 14C28 6.268 21.732 0 14 0z" fill="${color}"/>
@@ -106,7 +109,7 @@ function limpiarRutas() {
 }
 
 function dibujarRutas() {
-  if (!mapa || !window.L) return
+  if (!mapa) return
   limpiarRutas()
   if (!mostrarRutas.value) return
 
@@ -114,7 +117,7 @@ function dibujarRutas() {
     if (!v.ruta_polyline || v.ruta_polyline.length < 2) continue
 
     // Trazado sólido azul
-    const linea = window.L.polyline(v.ruta_polyline, {
+    const linea = L.polyline(v.ruta_polyline, {
       color: '#2563EB', weight: 4, opacity: 0.85,
     }).addTo(mapa)
 
@@ -122,10 +125,10 @@ function dibujarRutas() {
     const pIni = v.ruta_polyline[0]
     const pFin = v.ruta_polyline[v.ruta_polyline.length - 1]
     const etiqueta = v.ruta_activa || 'Ruta'
-    const inicio = window.L.marker(pIni, { icon: crearIconoPunto('#16A34A') })
+    const inicio = L.marker(pIni, { icon: crearIconoPunto('#16A34A') })
       .bindPopup(`<strong>Inicio</strong><br><small>${etiqueta}</small>`)
       .addTo(mapa)
-    const fin = window.L.marker(pFin, { icon: crearIconoPunto('#DC2626') })
+    const fin = L.marker(pFin, { icon: crearIconoPunto('#DC2626') })
       .bindPopup(`<strong>Destino</strong><br><small>${etiqueta}</small>`)
       .addTo(mapa)
 
@@ -160,21 +163,6 @@ const resumen = computed(() => {
 })
 
 // ── Leaflet ───────────────────────────────────────────────────────────────────
-async function cargarLeaflet() {
-  if (window.L) return
-  await new Promise((resolve) => {
-    const css  = document.createElement('link')
-    css.rel    = 'stylesheet'
-    css.href   = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
-    document.head.appendChild(css)
-
-    const script  = document.createElement('script')
-    script.src    = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-    script.onload = resolve
-    document.head.appendChild(script)
-  })
-}
-
 function iconoVehiculo(estado, desviando = false, excesoVelocidad = false) {
   const color = excesoVelocidad ? '#DC2626' : desviando ? '#F59E0B' : colorEstado(estado)
   const ring  = excesoVelocidad
@@ -182,7 +170,7 @@ function iconoVehiculo(estado, desviando = false, excesoVelocidad = false) {
     : desviando
       ? `<circle cx="15" cy="15" r="14" fill="none" stroke="#F59E0B" stroke-width="2" opacity="0.5"/>`
       : ''
-  return window.L.divIcon({
+  return L.divIcon({
     className: '',
     html: `<svg width="44" height="44" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
       ${ring}
@@ -221,7 +209,7 @@ function popupHtml(v) {
 }
 
 function pintarMarcador(v) {
-  if (!mapa || !window.L) return
+  if (!mapa) return
   if (v.latitud == null || v.longitud == null) return
 
   const existente = marcadores[v.vehiculo_id]
@@ -230,7 +218,7 @@ function pintarMarcador(v) {
     existente.setIcon(iconoVehiculo(v.estado, v.desviando, v.exceso_velocidad))
     existente.getPopup()?.setContent(popupHtml(v))
   } else {
-    const m = window.L.marker([v.latitud, v.longitud], { icon: iconoVehiculo(v.estado, v.desviando, v.exceso_velocidad) })
+    const m = L.marker([v.latitud, v.longitud], { icon: iconoVehiculo(v.estado, v.desviando, v.exceso_velocidad) })
       .bindPopup(popupHtml(v))
       .addTo(mapa)
     marcadores[v.vehiculo_id] = m
@@ -423,18 +411,22 @@ function limpiarMarcadores() {
 // sin empresa no existe al montar, sino al elegir empresa.
 async function inicializarMapa() {
   if (mapa) return
-  await cargarLeaflet()
   await nextTick()
   const el = document.getElementById('mapa-flota')
   if (!el) return
-  mapa = window.L.map(el, { zoomControl: true }).setView([-33.45, -70.65], 12)
-  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  mapa = L.map(el, { zoomControl: true }).setView([-33.45, -70.65], 12)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(mapa)
-  // El contenedor vive en un layout flex; aseguramos que Leaflet remida tras el render.
-  await nextTick()
-  setTimeout(() => { try { mapa?.invalidateSize() } catch { /* noop */ } }, 100)
+
+  // ResizeObserver garantiza que invalidateSize() se llame cuando el contenedor
+  // realmente tiene dimensiones (cubre animaciones CSS, navegación con transición
+  // y cambios de layout posteriores al mount).
+  resizeObserver = new ResizeObserver(() => {
+    try { mapa?.invalidateSize() } catch { /* noop */ }
+  })
+  resizeObserver.observe(el)
 }
 
 function iniciarTimerEstado() {
@@ -483,6 +475,8 @@ onUnmounted(() => {
   clearInterval(estadoTimer)
   clearInterval(pollTimer)
   if (ws) { try { ws.close() } catch { /* noop */ } ; ws = null }
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (mapa) { mapa.remove(); mapa = null }
 })
 </script>

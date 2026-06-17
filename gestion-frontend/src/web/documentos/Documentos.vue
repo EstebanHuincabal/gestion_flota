@@ -147,7 +147,7 @@ const docsFiltrados = computed(() => {
   return list
 })
 
-const { pagina: paginaDocs, totalPaginas: totalPaginasDocs, total: totalDocs, paginado: docsPaginados, irA: irAPaginaDocs } = usePaginacion(docsFiltrados, 20)
+const { pagina: paginaDocs, totalPaginas: totalPaginasDocs, total: totalDocs, paginado: docsPaginados, irA: irAPaginaDocs } = usePaginacion(docsFiltrados, 15)
 
 // ── Carga
 async function cargar() {

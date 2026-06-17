@@ -22,7 +22,7 @@ const historialModal = ref({ visible: false, items: [], usuario: null })
 const yo = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
 
 const usuariosFiltrados = computed(() => usuarios.value)
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(usuariosFiltrados, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(usuariosFiltrados, 15)
 
 const ROL_LABEL = { SUPERADMIN: 'Super Admin', ADMIN: 'Administrador', CONDUCTOR: 'Conductor' }
 const ROL_CLASS = { SUPERADMIN: 'badge-superadmin', ADMIN: 'badge-admin', CONDUCTOR: 'badge-conductor' }
@@ -359,7 +359,7 @@ onUnmounted(() => {
         :pagina="pagina"
         :total-paginas="totalPaginas"
         :total="total"
-        :por-pagina="20"
+        :por-pagina="15"
         @update:pagina="irA"
       />
     </div>

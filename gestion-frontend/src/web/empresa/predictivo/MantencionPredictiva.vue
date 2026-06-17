@@ -71,7 +71,7 @@ const alertasFiltroEstado = ref('pendiente')
 const cargandoAlertas     = ref(false)
 const generando           = ref(false)
 
-const { pagina: paginaAlertas, totalPaginas: totalPaginasAlertas, total: totalAlertas, paginado: paginadoAlertas, irA: irAAlertas } = usePaginacion(alertas, 20)
+const { pagina: paginaAlertas, totalPaginas: totalPaginasAlertas, total: totalAlertas, paginado: paginadoAlertas, irA: irAAlertas } = usePaginacion(alertas, 15)
 
 const fetchAlertas = async () => {
   cargandoAlertas.value = true
@@ -229,7 +229,7 @@ const cargandoAsig    = ref(false)
 const vehiculos       = ref([])
 const guardandoAsig   = ref(false)
 
-const { pagina: paginaAsig, totalPaginas: totalPaginasAsig, total: totalAsig, paginado: paginadoAsig, irA: irAAsig } = usePaginacion(asignaciones, 20)
+const { pagina: paginaAsig, totalPaginas: totalPaginasAsig, total: totalAsig, paginado: paginadoAsig, irA: irAAsig } = usePaginacion(asignaciones, 15)
 
 // Nuevo flujo: seleccionar plan → checkboxes de vehículos
 const asigPlanId      = ref('')
@@ -533,7 +533,7 @@ onUnmounted(() => {
             :pagina="paginaAlertas"
             :total-paginas="totalPaginasAlertas"
             :total="totalAlertas"
-            :por-pagina="20"
+            :por-pagina="15"
             @update:pagina="irAAlertas"
           />
         </div>
@@ -818,7 +818,7 @@ onUnmounted(() => {
                 :pagina="paginaAsig"
                 :total-paginas="totalPaginasAsig"
                 :total="totalAsig"
-                :por-pagina="20"
+                :por-pagina="15"
                 @update:pagina="irAAsig"
               />
             </div>

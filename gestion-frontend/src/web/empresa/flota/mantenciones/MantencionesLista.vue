@@ -77,7 +77,7 @@ const mantencionesFiltradas = computed(() =>
     .filter(m => !filtroVehiculo.value || String(m.vehiculo_id) === filtroVehiculo.value)
 )
 
-const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(mantencionesFiltradas, 20)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(mantencionesFiltradas, 15)
 
 const cargar = async () => {
   if (sinEmpresa.value) { cargando.value = false; return }
@@ -445,7 +445,7 @@ onMounted(async () => {
           :pagina="pagina"
           :total-paginas="totalPaginas"
           :total="total"
-          :por-pagina="20"
+          :por-pagina="15"
           @update:pagina="irA"
         />
       </div>
