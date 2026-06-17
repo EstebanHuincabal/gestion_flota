@@ -1,0 +1,36 @@
+{
+  "appId": "com.appconductor.app",
+  "appName": "SDFC",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#534AB7",
+      "showSpinner": false,
+      "launchAutoHide": true,
+      "androidScaleType": "CENTER_CROP",
+      "splashImmersive": true
+    },
+    "StatusBar": {
+      "style": "LIGHT",
+      "backgroundColor": "#534AB7",
+      "overlaysWebView": false
+    },
+    "Keyboard": {
+      "resize": "body",
+      "resizeOnFullScreen": true
+    }
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "scrollEnabled": false
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true
+  }
+}

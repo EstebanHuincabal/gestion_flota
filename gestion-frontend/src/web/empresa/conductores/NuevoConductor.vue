@@ -1,16 +1,33 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
+import { apiFetch } from '../../../utils/api.js'
+import { useToast } from '../../../utils/useToast.js'
+import { validarPassword, validarTelefono, validarNombre, validarRut, validarLicencia, soloTexto, soloDescripcion, validarPatente, validarAnioVehiculo } from '../../../utils/validators.js'
+import InputTelefono from '../../../components/InputTelefono.vue'
+import { useModeracion } from '../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../components/AvisoModeracion.vue'
 
 const router    = useRouter()
 const { ruta }  = useEmpresaNav()
+const toast     = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
 
+const esSuperadmin = computed(() => {
+  try { return JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN' } catch { return false }
+})
+const esTodas  = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
+const empresas = ref([])
+const empresaIdForm = ref('')
+
 const form = ref({
-  nombre_completo: '',
+  nombre:           '',
+  apellido_paterno: '',
+  apellido_materno: '',
   rut:      '',
   email:    '',
   password: '',
@@ -23,76 +40,179 @@ const form = ref({
   vehiculo_patente: '',
   vehiculo_marca: '',
   vehiculo_modelo: '',
-  vehiculo_flota_id: null,
-  vehiculo_flota_nuevo: ''
+  vehiculo_anio: '',
+  vehiculo_tipo_combustible: 'bencina',
+  vehiculo_km_actuales: 0,
+})
+
+watch([() => form.value.nombre, () => form.value.apellido_paterno, () => form.value.apellido_materno], () => {
+  if (avisoMod.value) limpiarMod()
 })
 
 const asignarVehiculo = ref(false)
 const modoAsignacion = ref('existente') // 'existente' o 'nuevo'
-const flotas = ref([])
 const vehiculosLibres = ref([])
-const crearNuevaFlota = ref(false)
 
 onMounted(async () => {
   try {
-    const [resFlotas, resVehiculos] = await Promise.all([
-      apiFetchEmpresa('/api/empresa/flotas/'),
-      apiFetchEmpresa('/api/empresa/vehiculos/')
+    const [resVehiculos, resEmpresas] = await Promise.all([
+      apiFetchEmpresa('/api/empresa/vehiculos/'),
+      esSuperadmin.value ? apiFetch('/api/empresas/') : Promise.resolve(null),
     ])
-    if (resFlotas.ok) {
-        flotas.value = await resFlotas.json()
-        if (flotas.value.length === 0) {
-            crearNuevaFlota.value = true
-            form.value.vehiculo_flota_nuevo = "Flota Principal"
-        }
-    }
     if (resVehiculos.ok) {
       const todos = await resVehiculos.json()
-      vehiculosLibres.value = todos.filter(v => v.activo) 
+      vehiculosLibres.value = todos.filter(v => v.activo && !v.conductor_asignado)
+    }
+    if (resEmpresas?.ok) {
+      empresas.value = await resEmpresas.json()
     }
   } catch (err) {
     console.error("Error cargando datos auxiliares", err)
   }
 })
 
+const generarPassword  = ref(true)   // true = dejar vacío y mandar por correo
+
+const nivelPassword = computed(() => {
+  if (generarPassword.value || !form.value.password) return null
+  const r = validarPassword(form.value.password)
+  return r.nivel || null
+})
+
+const formatPatente = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')
+
 const formatRut = (value) => {
-  let cleaned = value.replace(/[^0-9kK]/g, '')
+  let cleaned = value.replace(/[^0-9kK]/g, '').slice(0, 9)
   if (cleaned.length < 2) return cleaned
   const body = cleaned.slice(0, -1)
   const dv   = cleaned.slice(-1).toUpperCase()
   return `${body.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`
 }
-const onRutInput = (e) => { form.value.rut = formatRut(e.target.value) }
+// Verificación de RUT duplicado contra la BD (ambas tablas)
+const rutVerificando = ref(false)
+let _debounceRut = null
+
+async function verificarRut() {
+  const r = validarRut(form.value.rut)
+  if (!r.valido) return
+  rutVerificando.value = true
+  try {
+    const res = await apiFetch(`/api/verificar-rut/?rut=${encodeURIComponent(form.value.rut)}&tipo=usuario`)
+    if (res.ok) {
+      const data = await res.json()
+      if (!data.disponible) {
+        errores.value = { ...errores.value, rut: [data.mensaje || 'Este RUT ya está registrado.'] }
+      }
+    }
+  } catch {} finally {
+    rutVerificando.value = false
+  }
+}
+
+const onRutInput = (e) => {
+  const v = formatRut(e.target.value)
+  form.value.rut = v
+  e.target.value = v
+  if (errores.value.rut) errores.value = { ...errores.value, rut: undefined }
+  clearTimeout(_debounceRut)
+  _debounceRut = setTimeout(verificarRut, 600)
+}
 
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  // Validar nombre y apellidos (los tres obligatorios)
+  const nomR = validarNombre(form.value.nombre, 2, 30)
+  if (!nomR.valido) { errores.value = { nombre: [nomR.error] }; return }
+  const apPatR = validarNombre(form.value.apellido_paterno, 2, 30)
+  if (!apPatR.valido) { errores.value = { apellido_paterno: [apPatR.error] }; return }
+  const apMatR = validarNombre(form.value.apellido_materno, 2, 30)
+  if (!apMatR.valido) { errores.value = { apellido_materno: [apMatR.error] }; return }
+
+  // Validar contraseña solo si el admin la ingresó manualmente
+  if (!generarPassword.value) {
+    const pwdResult = validarPassword(form.value.password)
+    if (!pwdResult.valido) {
+      errores.value = { password: [pwdResult.error] }
+      return
+    }
+  } else {
+    form.value.password = ''   // vacío → backend genera y envía por correo
+  }
+
+  // Validar teléfono (obligatorio)
+  const telResult = validarTelefono(form.value.telefono)
+  if (!telResult.valido) {
+    errores.value = { telefono: [telResult.error] }
+    return
+  }
+
+  // Validar licencia (opcional, pero si se ingresa debe tener el formato correcto)
+  const licResult = validarLicencia(form.value.licencia)
+  if (!licResult.valido) {
+    errores.value = { licencia: [licResult.error] }
+    return
+  }
+
+  // Verificación final del RUT contra la BD antes de crear
+  clearTimeout(_debounceRut)
+  if (form.value.rut) {
+    await verificarRut()
+    if (errores.value.rut) return
+  }
+
+  if (asignarVehiculo.value && modoAsignacion.value === 'nuevo') {
+    const patenteR = validarPatente(form.value.vehiculo_patente)
+    if (!patenteR.valido) {
+      errores.value = { vehiculo_patente: [patenteR.error] }
+      return
+    }
+    if (form.value.vehiculo_anio !== '' && form.value.vehiculo_anio !== null) {
+      const anioR = validarAnioVehiculo(form.value.vehiculo_anio)
+      if (!anioR.valido) {
+        errores.value = { vehiculo_anio: [anioR.error] }
+        return
+      }
+    }
+  }
+
+  if (esTodas.value && !empresaIdForm.value) {
+    error.value = 'Selecciona una empresa para asignar el conductor.'
+    return
+  }
+
+  const textoMod = [form.value.nombre, form.value.apellido_paterno, form.value.apellido_materno].join(' ')
+  const okMod = await moderar(textoMod)
+  if (!okMod) return
+
   guardando.value = true
 
   const payload = { ...form.value }
+  if (esTodas.value) payload.empresa_id = empresaIdForm.value
   if (!asignarVehiculo.value) {
     payload.vehiculo_id = null
     payload.crear_vehiculo = false
+    payload.vehiculo_patente = ''
+    payload.vehiculo_marca = ''
+    payload.vehiculo_modelo = ''
+    payload.vehiculo_anio = null
   } else {
     payload.crear_vehiculo = modoAsignacion.value === 'nuevo'
     if (payload.crear_vehiculo) {
         payload.vehiculo_id = null
-        if (!crearNuevaFlota.value) {
-            payload.vehiculo_flota_nuevo = ''
-        }
     } else {
       payload.vehiculo_patente = ''
       payload.vehiculo_marca = ''
       payload.vehiculo_modelo = ''
-      payload.vehiculo_flota_id = null
-      payload.vehiculo_flota_nuevo = ''
+      payload.vehiculo_anio = null
     }
   }
 
   try {
-    const res  = await apiFetchEmpresa('/api/empresa/conductores/', { 
-      method: 'POST', 
-      body: payload 
+    const res  = await apiFetchEmpresa('/api/empresa/conductores/', {
+      method: 'POST',
+      body: payload
     })
     const data = await res.json()
     if (!res.ok) {
@@ -101,6 +221,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al crear el conductor'
       return
     }
+    toast.success('Conductor creado exitosamente')
     router.push(ruta('/conductores'))
   } catch {
     error.value = 'Error de conexión con el servidor'
@@ -128,22 +249,53 @@ const guardar = async () => {
       <div v-if="error" class="alert-error">{{ error }}</div>
 
       <form @submit.prevent="guardar" class="form">
+        <!-- Selector de empresa (solo SUPERADMIN en modo "Todas") -->
+        <div v-if="esTodas" class="form-section">
+          <h3 class="section-title">Empresa</h3>
+          <div class="form-group">
+            <label class="label">Empresa a la que pertenecerá el conductor</label>
+            <select v-model="empresaIdForm" class="input select" required>
+              <option value="" disabled>Seleccionar empresa…</option>
+              <option v-for="e in empresas" :key="e.id" :value="e.id">{{ e.nombre }}</option>
+            </select>
+          </div>
+        </div>
+
         <div class="form-section">
           <h3 class="section-title">Datos Personales</h3>
           <div class="form-row">
             <div class="form-group">
-              <label class="label">Nombre completo</label>
-              <input v-model="form.nombre_completo" type="text" class="input"
-                :class="{ 'input-error': errores.nombre_completo }"
-                placeholder="Ej: Juan Pérez González" required autocomplete="off"/>
-              <p v-if="errores.nombre_completo" class="field-error">{{ errores.nombre_completo[0] }}</p>
+              <label class="label">Nombre</label>
+              <input v-model="form.nombre" @input="form.nombre = soloTexto(form.nombre)" type="text" class="input"
+                :class="{ 'input-error': errores.nombre }"
+                placeholder="Ej: Juan" required autocomplete="off" maxlength="30"/>
+              <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
             </div>
             <div class="form-group">
               <label class="label">RUT</label>
-              <input :value="form.rut" @input="onRutInput" type="text" class="input"
-                :class="{ 'input-error': errores.rut }"
-                placeholder="12.345.678-9" maxlength="12" required autocomplete="off"/>
+              <div style="position:relative">
+                <input :value="form.rut" @input="onRutInput" type="text" class="input"
+                  :class="{ 'input-error': errores.rut }"
+                  placeholder="12.345.678-9" maxlength="12" required autocomplete="off"/>
+                <span v-if="rutVerificando" class="rut-spinner"/>
+              </div>
               <p v-if="errores.rut" class="field-error">{{ errores.rut[0] }}</p>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="label">Apellido paterno</label>
+              <input v-model="form.apellido_paterno" @input="form.apellido_paterno = soloTexto(form.apellido_paterno)" type="text" class="input"
+                :class="{ 'input-error': errores.apellido_paterno }"
+                placeholder="Ej: Pérez" required autocomplete="off" maxlength="30"/>
+              <p v-if="errores.apellido_paterno" class="field-error">{{ errores.apellido_paterno[0] }}</p>
+            </div>
+            <div class="form-group">
+              <label class="label">Apellido materno</label>
+              <input v-model="form.apellido_materno" @input="form.apellido_materno = soloTexto(form.apellido_materno)" type="text" class="input"
+                :class="{ 'input-error': errores.apellido_materno }"
+                placeholder="Ej: González" required autocomplete="off" maxlength="30"/>
+              <p v-if="errores.apellido_materno" class="field-error">{{ errores.apellido_materno[0] }}</p>
             </div>
           </div>
 
@@ -152,28 +304,53 @@ const guardar = async () => {
               <label class="label">Email</label>
               <input v-model="form.email" type="email" class="input"
                 :class="{ 'input-error': errores.email }"
-                placeholder="conductor@ejemplo.com" required autocomplete="off"/>
+                placeholder="conductor@ejemplo.com" required autocomplete="off" maxlength="50"/>
               <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
             </div>
             <div class="form-group">
               <label class="label">Contraseña</label>
-              <input v-model="form.password" type="password" class="input"
-                :class="{ 'input-error': errores.password }"
-                placeholder="Mínimo 8 caracteres" required autocomplete="new-password"/>
-              <p v-if="errores.password" class="field-error">{{ errores.password[0] }}</p>
+
+              <!-- Toggle: generar automáticamente vs ingresar manualmente -->
+              <label class="flex items-center gap-2 mb-2 cursor-pointer select-none">
+                <input type="checkbox" v-model="generarPassword" class="rounded"/>
+                <span class="text-sm text-gray-600">
+                  Generar y enviar por correo al conductor
+                </span>
+              </label>
+
+              <div v-if="!generarPassword">
+                <input v-model="form.password" type="password" class="input"
+                  :class="{ 'input-error': errores.password }"
+                  placeholder="Mín. 8 chars, 1 mayúscula, 1 número" autocomplete="new-password"/>
+                <p v-if="errores.password" class="field-error">{{ errores.password[0] }}</p>
+              </div>
+              <p v-else class="text-xs text-indigo-600 bg-indigo-50 rounded-lg px-3 py-2">
+                Se generará una contraseña segura y se enviará al email del conductor al crear la cuenta.
+              </p>
+
+              <div v-if="!generarPassword && form.password && nivelPassword" class="pwd-strength">
+                <div class="pwd-strength-bar">
+                  <div class="pwd-strength-fill" :class="`pwd-strength-${nivelPassword}`"/>
+                </div>
+                <span class="pwd-strength-label" :class="`pwd-level-${nivelPassword}`">
+                  {{ nivelPassword === 'debil' ? 'Débil' : nivelPassword === 'media' ? 'Media' : 'Fuerte' }}
+                </span>
+              </div>
             </div>
           </div>
 
           <div class="form-row">
             <div class="form-group">
-              <label class="label">Teléfono <span class="opcional">(opcional)</span></label>
-              <input v-model="form.telefono" type="text" class="input"
-                placeholder="+56 9 1234 5678" autocomplete="off"/>
+              <label class="label">Teléfono</label>
+              <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+              <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
             </div>
             <div class="form-group">
               <label class="label">N° Licencia <span class="opcional">(opcional)</span></label>
               <input v-model="form.licencia" type="text" class="input"
-                placeholder="Ej: 123456789" autocomplete="off"/>
+                :class="{ 'input-error': errores.licencia }"
+                placeholder="Ej: ABC1234567890" autocomplete="off" maxlength="13"/>
+              <p v-if="errores.licencia" class="field-error">{{ errores.licencia[0] }}</p>
             </div>
           </div>
         </div>
@@ -216,34 +393,45 @@ const guardar = async () => {
               <div class="form-row">
                 <div class="form-group">
                   <label class="label">Patente</label>
-                  <input v-model="form.vehiculo_patente" type="text" class="input" maxlength="10" placeholder="ABCD12" :class="{ 'input-error': errores.vehiculo_patente }"/>
+                  <input :value="form.vehiculo_patente" @input="form.vehiculo_patente = formatPatente($event.target.value)"
+                    type="text" class="input" maxlength="8" placeholder="ABCD12"
+                    :class="{ 'input-error': errores.vehiculo_patente }"
+                    autocomplete="off"/>
                   <p v-if="errores.vehiculo_patente" class="field-error">{{ errores.vehiculo_patente[0] }}</p>
                 </div>
                 <div class="form-group">
-                  <label class="label">Flota</label>
-                  <div class="flex-col gap-1">
-                    <select v-if="!crearNuevaFlota" v-model="form.vehiculo_flota_id" class="input select" :class="{ 'input-error': errores.vehiculo_flota_id }">
-                        <option :value="null">-- Selecciona Flota --</option>
-                        <option v-for="f in flotas" :key="f.id" :value="f.id">{{ f.nombre }}</option>
-                    </select>
-                    <input v-else v-model="form.vehiculo_flota_nuevo" type="text" class="input" placeholder="Nombre de la nueva flota" :class="{ 'input-error': errores.vehiculo_flota_nuevo }"/>
-                    
-                    <button type="button" class="btn-link" @click="crearNuevaFlota = !crearNuevaFlota">
-                        {{ crearNuevaFlota ? (flotas.length > 0 ? 'Seleccionar flota existente' : '') : '+ Crear nueva flota' }}
-                    </button>
-                  </div>
-                  <p v-if="errores.vehiculo_flota_id" class="field-error">{{ errores.vehiculo_flota_id[0] }}</p>
-                  <p v-if="errores.vehiculo_flota_nuevo" class="field-error">{{ errores.vehiculo_flota_nuevo[0] }}</p>
+                  <label class="label">Tipo de combustible</label>
+                  <select v-model="form.vehiculo_tipo_combustible" class="input select">
+                    <option value="bencina">Bencina</option>
+                    <option value="diesel">Diésel</option>
+                    <option value="electrico">Eléctrico</option>
+                    <option value="hibrido">Híbrido</option>
+                  </select>
                 </div>
               </div>
               <div class="form-row mt-2">
                 <div class="form-group">
                   <label class="label">Marca</label>
-                  <input v-model="form.vehiculo_marca" type="text" class="input" placeholder="Ej: Toyota"/>
+                  <input v-model="form.vehiculo_marca" @input="form.vehiculo_marca = soloDescripcion(form.vehiculo_marca)"
+                    type="text" class="input" placeholder="Ej: Toyota" maxlength="60"/>
                 </div>
                 <div class="form-group">
                   <label class="label">Modelo</label>
-                  <input v-model="form.vehiculo_modelo" type="text" class="input" placeholder="Ej: Hilux"/>
+                  <input v-model="form.vehiculo_modelo" @input="form.vehiculo_modelo = soloDescripcion(form.vehiculo_modelo)"
+                    type="text" class="input" placeholder="Ej: Hilux 560" maxlength="60"/>
+                </div>
+              </div>
+              <div class="form-row mt-2">
+                <div class="form-group">
+                  <label class="label">Año <span class="opcional">(opcional)</span></label>
+                  <input v-model="form.vehiculo_anio" type="number" class="input" placeholder="2020"
+                    :class="{ 'input-error': errores.vehiculo_anio }"
+                    min="1950" :max="new Date().getFullYear() + 1"/>
+                  <p v-if="errores.vehiculo_anio" class="field-error">{{ errores.vehiculo_anio[0] }}</p>
+                </div>
+                <div class="form-group">
+                  <label class="label">KM actuales</label>
+                  <input v-model="form.vehiculo_km_actuales" type="number" class="input" min="0"/>
                 </div>
               </div>
             </div>
@@ -251,6 +439,7 @@ const guardar = async () => {
         </div>
 
         <p v-if="errores.non_field_errors" class="field-error">{{ errores.non_field_errors[0] }}</p>
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
 
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push(ruta('/conductores'))" :disabled="guardando">
@@ -289,6 +478,12 @@ const guardar = async () => {
 .input.input-error { border-color: #EF4444; }
 .select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; background-size: 1rem; padding-right: 2.5rem; cursor: pointer; }
 .field-error { font-size: 0.8125rem; color: #EF4444; margin: 0; }
+.rut-spinner {
+  position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px;
+  border: 2px solid #D1D5DB; border-top-color: #7C3AED;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
 .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; }
 .btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; font-family: inherit; transition: border-color 0.15s; }
 .btn-secondary:hover { border-color: #9CA3AF; }
@@ -327,5 +522,54 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.pwd-strength { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; }
+.pwd-strength-bar { flex: 1; height: 4px; background: #E5E7EB; border-radius: 99px; overflow: hidden; }
+.pwd-strength-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+.pwd-strength-debil  { width: 33%; background: #EF4444; }
+.pwd-strength-media  { width: 66%; background: #F59E0B; }
+.pwd-strength-fuerte { width: 100%; background: #10B981; }
+.pwd-strength-label { font-size: 0.75rem; font-weight: 500; white-space: nowrap; }
+.pwd-level-debil  { color: #EF4444; }
+.pwd-level-media  { color: #F59E0B; }
+.pwd-level-fuerte { color: #10B981; }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-title { font-size: 1.25rem; }
+  .form-row { grid-template-columns: 1fr !important; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>
 

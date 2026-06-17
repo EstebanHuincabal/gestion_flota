@@ -1,29 +1,42 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { useToast } from '../../../utils/useToast.js'
+import { validarTelefono, validarNombre, validarLicencia, soloTexto } from '../../../utils/validators.js'
+import InputTelefono from '../../../components/InputTelefono.vue'
+import { useModeracion } from '../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../components/AvisoModeracion.vue'
 
 const router   = useRouter()
 const { ruta } = useEmpresaNav()
 const route  = useRoute()
 const id     = route.params.id
 
+const toast     = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const cargando  = ref(true)
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
 
-const form = ref({ nombre_completo: '', email: '', telefono: '', licencia: '' })
+const form = ref({ nombre: '', apellido_paterno: '', apellido_materno: '', email: '', telefono: '', licencia: '' })
+
+watch([() => form.value.nombre, () => form.value.apellido_paterno, () => form.value.apellido_materno], () => {
+  if (avisoMod.value) limpiarMod()
+})
 
 const cargar = async () => {
   try {
     const res = await apiFetchEmpresa(`/api/empresa/conductores/${id}/`)
     if (!res.ok) throw new Error('Conductor no encontrado')
     const c = await res.json()
-    form.value.nombre_completo = c.nombre
-    form.value.email           = c.email
-    form.value.telefono        = c.telefono || ''
-    form.value.licencia        = c.licencia  || ''
+    form.value.nombre           = c.primer_nombre || ''
+    form.value.apellido_paterno = c.apellido_paterno || ''
+    form.value.apellido_materno = c.apellido_materno || ''
+    form.value.email            = c.email
+    form.value.telefono         = c.telefono || ''
+    form.value.licencia         = c.licencia  || ''
   } catch (e) {
     error.value = e.message
   } finally {
@@ -34,6 +47,33 @@ const cargar = async () => {
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  // Validar nombre y apellidos (los tres obligatorios)
+  const nomR = validarNombre(form.value.nombre, 2, 30)
+  if (!nomR.valido) { errores.value = { nombre: [nomR.error] }; return }
+  const apPatR = validarNombre(form.value.apellido_paterno, 2, 30)
+  if (!apPatR.valido) { errores.value = { apellido_paterno: [apPatR.error] }; return }
+  const apMatR = validarNombre(form.value.apellido_materno, 2, 30)
+  if (!apMatR.valido) { errores.value = { apellido_materno: [apMatR.error] }; return }
+
+  // Validar teléfono (obligatorio)
+  const telResult = validarTelefono(form.value.telefono)
+  if (!telResult.valido) {
+    errores.value = { telefono: [telResult.error] }
+    return
+  }
+
+  // Validar licencia (opcional, formato si se ingresa)
+  const licResult = validarLicencia(form.value.licencia)
+  if (!licResult.valido) {
+    errores.value = { licencia: [licResult.error] }
+    return
+  }
+
+  const textoMod = [form.value.nombre, form.value.apellido_paterno, form.value.apellido_materno].join(' ')
+  const okMod = await moderar(textoMod)
+  if (!okMod) return
+
   guardando.value = true
   try {
     const res  = await apiFetchEmpresa(`/api/empresa/conductores/${id}/`, { method: 'PUT', body: { ...form.value } })
@@ -44,6 +84,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al actualizar el conductor'
       return
     }
+    toast.success('Conductor actualizado exitosamente')
     router.push(ruta('/conductores'))
   } catch {
     error.value = 'Error de conexión con el servidor'
@@ -79,33 +120,55 @@ onMounted(cargar)
       <form @submit.prevent="guardar" class="form">
         <div class="form-row">
           <div class="form-group">
-            <label class="label">Nombre completo</label>
-            <input v-model="form.nombre_completo" type="text" class="input"
-              :class="{ 'input-error': errores.nombre_completo }"
-              placeholder="Nombre completo" required autocomplete="off"/>
-            <p v-if="errores.nombre_completo" class="field-error">{{ errores.nombre_completo[0] }}</p>
+            <label class="label">Nombre</label>
+            <input v-model="form.nombre" @input="form.nombre = soloTexto(form.nombre)" type="text" class="input"
+              :class="{ 'input-error': errores.nombre }"
+              placeholder="Ej: Juan" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
           <div class="form-group">
             <label class="label">Email</label>
             <input v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="conductor@ejemplo.com" required autocomplete="off"/>
+              placeholder="conductor@ejemplo.com" required autocomplete="off" maxlength="50"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
-            <label class="label">Teléfono <span class="opcional">(opcional)</span></label>
-            <input v-model="form.telefono" type="text" class="input" placeholder="+56 9 1234 5678" autocomplete="off"/>
+            <label class="label">Apellido paterno</label>
+            <input v-model="form.apellido_paterno" @input="form.apellido_paterno = soloTexto(form.apellido_paterno)" type="text" class="input"
+              :class="{ 'input-error': errores.apellido_paterno }"
+              placeholder="Ej: Pérez" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.apellido_paterno" class="field-error">{{ errores.apellido_paterno[0] }}</p>
+          </div>
+          <div class="form-group">
+            <label class="label">Apellido materno</label>
+            <input v-model="form.apellido_materno" @input="form.apellido_materno = soloTexto(form.apellido_materno)" type="text" class="input"
+              :class="{ 'input-error': errores.apellido_materno }"
+              placeholder="Ej: González" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.apellido_materno" class="field-error">{{ errores.apellido_materno[0] }}</p>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Teléfono</label>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
           </div>
           <div class="form-group">
             <label class="label">N° Licencia <span class="opcional">(opcional)</span></label>
-            <input v-model="form.licencia" type="text" class="input" placeholder="Ej: 123456789" autocomplete="off"/>
+            <input v-model="form.licencia" type="text" class="input"
+              :class="{ 'input-error': errores.licencia }"
+              placeholder="Ej: ABC1234567890" autocomplete="off" maxlength="13"/>
+            <p v-if="errores.licencia" class="field-error">{{ errores.licencia[0] }}</p>
           </div>
         </div>
 
         <p v-if="errores.non_field_errors" class="field-error">{{ errores.non_field_errors[0] }}</p>
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
 
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push(ruta('/conductores'))" :disabled="guardando">
@@ -152,4 +215,42 @@ onMounted(cargar)
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .spinner-inline { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-title { font-size: 1.25rem; }
+  .form-row { grid-template-columns: 1fr !important; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>

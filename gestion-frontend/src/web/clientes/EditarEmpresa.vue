@@ -1,17 +1,32 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { validarTelefono, validarNombre, validarEmail, soloTexto } from '../../utils/validators.js'
+import InputTelefono from '../../components/InputTelefono.vue'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const router = useRouter()
 const route  = useRoute()
 const id     = route.params.id
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 
 const cargando  = ref(true)
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
-const fechaRegistro = ref('')
+const fechaRegistro  = ref('')
+const planes         = ref([])
+const planOriginalId = ref(null)
+const usageData      = ref({ vehiculos: 0, conductores: 0, usuarios: 0 })
+
+function clp(val) {
+  if (val == null) return '—'
+  const abs = Math.abs(Math.round(val))
+  const fmt = '$' + abs.toLocaleString('es-CL')
+  return val > 0 ? '+' + fmt : val < 0 ? '-' + fmt : fmt
+}
 
 const REGIONES = [
   { value: 'arica_y_parinacota', label: 'Arica y Parinacota' },
@@ -36,6 +51,7 @@ const form = ref({
   nombre:   '',
   rut:      '',
   estado:   'activa',
+  plan_id:  null,
   email:    '',
   telefono: '',
   direccion: '',
@@ -45,9 +61,13 @@ const form = ref({
   pais:     'Chile',
 })
 
+watch([() => form.value.nombre, () => form.value.direccion], () => {
+  if (avisoMod.value) limpiarMod()
+})
+
 const aplicarFormatoRut = (val) => {
   if (!val) return ''
-  val = val.replace(/[^0-9kK]/g, '').toUpperCase()
+  val = val.replace(/[^0-9kK]/g, '').toUpperCase().slice(0, 9)
   if (val.length <= 1) return val
   const dv   = val.slice(-1)
   let cuerpo = val.slice(0, -1)
@@ -56,14 +76,17 @@ const aplicarFormatoRut = (val) => {
 }
 
 const formatRut = (e) => {
-  form.value.rut = aplicarFormatoRut(e.target.value)
+  const v = aplicarFormatoRut(e.target.value)
+  form.value.rut = v
+  e.target.value = v
 }
 
 const cargarEmpresa = async () => {
   try {
     const res = await apiFetch(`/api/empresas/${id}/`)
     if (!res.ok) throw new Error('Empresa no encontrada')
-    const data = await res.json()
+    const raw  = await res.json()
+    const data = raw.informacion || raw
     form.value.nombre    = data.nombre    || ''
     form.value.rut       = aplicarFormatoRut(data.rut || '')
     form.value.estado    = data.estado    || 'activa'
@@ -74,6 +97,13 @@ const cargarEmpresa = async () => {
     form.value.ciudad    = data.ciudad    || ''
     form.value.region    = data.region    || ''
     form.value.pais      = data.pais      || 'Chile'
+    form.value.plan_id   = data.plan_id   || null
+    planOriginalId.value = data.plan_id   || null
+    usageData.value = {
+      vehiculos:   data.cantidad_vehiculos   || 0,
+      conductores: data.cantidad_conductores || 0,
+      usuarios:    data.cantidad_usuarios    || (data.usuarios?.length ?? 0),
+    }
     if (data.created_at) {
       fechaRegistro.value = new Date(data.created_at).toLocaleDateString('es-CL', {
         year: 'numeric', month: 'long', day: 'numeric'
@@ -89,6 +119,26 @@ const cargarEmpresa = async () => {
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  const nombreR = validarNombre(form.value.nombre, 2, 30)
+  if (!nombreR.valido) { errores.value = { nombre: [nombreR.error] }; return }
+
+  if (form.value.email) {
+    const emailR = validarEmail(form.value.email)
+    if (!emailR.valido) { errores.value = { email: [emailR.error] }; return }
+  }
+
+  if (form.value.telefono) {
+    const telR = validarTelefono(form.value.telefono)
+    if (!telR.valido) { errores.value = { telefono: [telR.error] }; return }
+  }
+
+  const textoMod = [form.value.nombre, form.value.direccion].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const okMod = await moderar(textoMod)
+    if (!okMod) return
+  }
+
   guardando.value = true
 
   try {
@@ -110,7 +160,43 @@ const guardar = async () => {
   }
 }
 
-onMounted(cargarEmpresa)
+// ── Comparación en tiempo real al cambiar el plan ───────────────────────────
+const planOriginalObj = computed(() => planes.value.find(p => p.id === planOriginalId.value) || null)
+const planNuevoObj    = computed(() => planes.value.find(p => p.id === form.value.plan_id)  || null)
+
+const comparacionPlan = computed(() => {
+  if (!planes.value.length) return null
+  if (form.value.plan_id === planOriginalId.value) return null   // sin cambio
+
+  if (!form.value.plan_id) {
+    return { tipo: 'quitar', advertencias: [], planAntes: planOriginalObj.value, planDespues: null }
+  }
+  if (!planOriginalId.value) {
+    return { tipo: 'nuevo', advertencias: [], planAntes: null, planDespues: planNuevoObj.value }
+  }
+  if (!planOriginalObj.value || !planNuevoObj.value) return null
+
+  const pAnt = planOriginalObj.value.precio_mensual || 0
+  const pNvo = planNuevoObj.value.precio_mensual    || 0
+  const tipo = pNvo > pAnt ? 'upgrade' : pNvo < pAnt ? 'downgrade' : 'lateral'
+
+  const advertencias = []
+  const uso = usageData.value
+  const np  = planNuevoObj.value
+  if (uso.vehiculos   > np.max_vehiculos)    advertencias.push(`Vehículos: tienes ${uso.vehiculos} (nuevo límite: ${np.max_vehiculos})`)
+  if (uso.conductores > np.max_conductores)  advertencias.push(`Conductores: tienes ${uso.conductores} (nuevo límite: ${np.max_conductores})`)
+  if (uso.usuarios    > np.max_usuarios)     advertencias.push(`Usuarios: tienes ${uso.usuarios} (nuevo límite: ${np.max_usuarios})`)
+
+  return { tipo, advertencias, planAntes: planOriginalObj.value, planDespues: planNuevoObj.value }
+})
+
+onMounted(async () => {
+  const [, planesRes] = await Promise.all([
+    cargarEmpresa(),
+    apiFetch('/api/configuracion/planes/'),
+  ])
+  if (planesRes.ok) planes.value = await planesRes.json()
+})
 </script>
 
 <template>
@@ -153,7 +239,7 @@ onMounted(cargarEmpresa)
             <label class="label" for="nombre">Nombre de la empresa <span class="required">*</span></label>
             <input id="nombre" v-model="form.nombre" type="text" class="input"
               :class="{ 'input-error': errores.nombre }"
-              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off"/>
+              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off" maxlength="30"/>
             <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
 
@@ -178,6 +264,68 @@ onMounted(cargarEmpresa)
           </select>
         </div>
 
+        <!-- ── Suscripción ── -->
+        <h2 class="section-title">Suscripción</h2>
+
+        <div class="form-group form-group--small">
+          <label class="label" for="plan_id">Plan</label>
+          <select id="plan_id" v-model="form.plan_id" class="input select">
+            <option :value="null">Sin plan</option>
+            <option v-for="p in planes" :key="p.id" :value="p.id">
+              {{ p.nombre_display }} — {{ p.precio_display || 'A convenir' }}
+            </option>
+          </select>
+        </div>
+
+        <!-- ── Card comparación de plan ── -->
+        <div v-if="comparacionPlan" class="plan-cambio" :class="'plan-cambio--' + comparacionPlan.tipo">
+          <div class="pc-header">
+            <span class="pc-icono">
+              {{ comparacionPlan.tipo === 'upgrade'   ? '⬆️' :
+                 comparacionPlan.tipo === 'downgrade' ? '⬇️' :
+                 comparacionPlan.tipo === 'quitar'    ? '⚠️' : '✅' }}
+            </span>
+            <strong class="pc-titulo">
+              {{ comparacionPlan.tipo === 'upgrade'   ? 'Cambio a plan superior'   :
+                 comparacionPlan.tipo === 'downgrade' ? 'Cambio a plan inferior'   :
+                 comparacionPlan.tipo === 'lateral'   ? 'Cambio de plan'           :
+                 comparacionPlan.tipo === 'nuevo'     ? 'Asignando primer plan'    :
+                                                       'Quitando plan asignado'    }}
+            </strong>
+          </div>
+
+          <div class="pc-planes">
+            <span class="pc-chip pc-chip--antes">{{ comparacionPlan.planAntes?.nombre_display || 'Sin plan' }}</span>
+            <span class="pc-arrow">→</span>
+            <span class="pc-chip pc-chip--despues">{{ comparacionPlan.planDespues?.nombre_display || 'Sin plan' }}</span>
+            <span v-if="comparacionPlan.planAntes?.precio_mensual && comparacionPlan.planDespues?.precio_mensual"
+                  class="pc-diff"
+                  :class="comparacionPlan.tipo === 'upgrade' ? 'pc-diff--sube' : 'pc-diff--baja'">
+              {{ clp(comparacionPlan.planDespues.precio_mensual - comparacionPlan.planAntes.precio_mensual) }}/mes
+            </span>
+          </div>
+
+          <p class="pc-info">
+            {{ comparacionPlan.tipo === 'upgrade'
+                ? 'Nuevos límites y módulos disponibles de inmediato. El próximo cobro será al precio del nuevo plan.'
+                : comparacionPlan.tipo === 'downgrade'
+                ? 'Los límites se reducen de inmediato. El próximo cobro será al precio menor.'
+                : comparacionPlan.tipo === 'nuevo'
+                ? 'La empresa deberá pagar para activar el acceso al sistema.'
+                : comparacionPlan.tipo === 'quitar'
+                ? 'La empresa quedará sin plan y no podrá acceder al sistema.'
+                : 'El plan se actualizará de inmediato.' }}
+          </p>
+
+          <div v-if="comparacionPlan.advertencias.length" class="pc-advertencias">
+            <p class="pc-adv-titulo">⚠️ Uso actual supera el límite del nuevo plan:</p>
+            <ul class="pc-adv-lista">
+              <li v-for="adv in comparacionPlan.advertencias" :key="adv">{{ adv }}</li>
+            </ul>
+            <p class="pc-adv-nota">Los recursos existentes no se eliminarán, pero la empresa no podrá crear nuevos hasta reducir su uso.</p>
+          </div>
+        </div>
+
         <!-- ── Contacto ── -->
         <h2 class="section-title">Contacto</h2>
 
@@ -186,14 +334,14 @@ onMounted(cargarEmpresa)
             <label class="label" for="email">Email de contacto</label>
             <input id="email" v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="contacto@empresa.cl" autocomplete="off"/>
+              placeholder="contacto@empresa.cl" autocomplete="off" maxlength="50"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
 
           <div class="form-group">
             <label class="label" for="telefono">Teléfono</label>
-            <input id="telefono" v-model="form.telefono" type="text" class="input"
-              placeholder="+56 9 1234 5678" autocomplete="off"/>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
           </div>
         </div>
 
@@ -203,7 +351,7 @@ onMounted(cargarEmpresa)
         <div class="form-group">
           <label class="label" for="direccion">Dirección</label>
           <input id="direccion" v-model="form.direccion" type="text" class="input"
-            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off"/>
+            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off" maxlength="40"/>
         </div>
 
         <div class="form-row">
@@ -215,7 +363,7 @@ onMounted(cargarEmpresa)
 
           <div class="form-group">
             <label class="label" for="ciudad">Ciudad</label>
-            <input id="ciudad" v-model="form.ciudad" type="text" class="input"
+            <input id="ciudad" v-model="form.ciudad" @input="form.ciudad = soloTexto(form.ciudad)" type="text" class="input"
               placeholder="Santiago" autocomplete="off"/>
           </div>
         </div>
@@ -232,11 +380,12 @@ onMounted(cargarEmpresa)
           <div class="form-group">
             <label class="label" for="pais">País</label>
             <input id="pais" v-model="form.pais" type="text" class="input"
-              placeholder="Chile" autocomplete="off"/>
+              placeholder="Chile" autocomplete="off" maxlength="100"/>
           </div>
         </div>
 
         <!-- Acciones -->
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push('/empresas')" :disabled="guardando">
             Cancelar
@@ -375,4 +524,84 @@ onMounted(cargarEmpresa)
   animation: spin 0.7s linear infinite; flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Card comparación de plan ── */
+.plan-cambio {
+  border-radius: 10px; padding: 0.875rem 1rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  border: 1.5px solid;
+}
+.plan-cambio--upgrade  { background: #F0FDF4; border-color: #86EFAC; }
+.plan-cambio--downgrade { background: #FFFBEB; border-color: #FDE68A; }
+.plan-cambio--lateral  { background: #EFF6FF; border-color: #BFDBFE; }
+.plan-cambio--nuevo    { background: #EFF6FF; border-color: #BFDBFE; }
+.plan-cambio--quitar   { background: #FEF2F2; border-color: #FECACA; }
+
+.pc-header { display: flex; align-items: center; gap: 0.5rem; }
+.pc-icono  { font-size: 1.05rem; line-height: 1; }
+.pc-titulo { font-size: 0.8125rem; font-weight: 700; color: #111827; }
+
+.pc-planes {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+}
+.pc-chip {
+  padding: 0.2rem 0.6rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 600;
+}
+.pc-chip--antes   { background: #E5E7EB; color: #374151; }
+.pc-chip--despues { background: #4F46E5; color: #fff; }
+.pc-arrow { color: #6B7280; font-size: 0.875rem; }
+.pc-diff  { font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 999px; }
+.pc-diff--sube { background: #D1FAE5; color: #065F46; }
+.pc-diff--baja { background: #FEF3C7; color: #92400E; }
+
+.pc-info { font-size: 0.8rem; color: #374151; margin: 0; line-height: 1.45; }
+
+.pc-advertencias {
+  background: rgba(0,0,0,0.04); border-radius: 8px;
+  padding: 0.625rem 0.75rem; display: flex; flex-direction: column; gap: 0.35rem;
+}
+.pc-adv-titulo { font-size: 0.775rem; font-weight: 700; color: #92400E; margin: 0; }
+.pc-adv-lista  { margin: 0; padding-left: 1.25rem; }
+.pc-adv-lista li { font-size: 0.775rem; color: #374151; line-height: 1.5; }
+.pc-adv-nota   { font-size: 0.725rem; color: #6B7280; margin: 0; font-style: italic; }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-header { flex-direction: column; gap: 0.625rem; }
+  .page-title { font-size: 1.25rem; }
+  .form-row { grid-template-columns: 1fr !important; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>

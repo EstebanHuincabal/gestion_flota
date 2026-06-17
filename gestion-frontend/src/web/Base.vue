@@ -1,12 +1,17 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { clearEmpresaActiva } from '../utils/empresaActiva.js'
+import NotificacionesBell from '../components/NotificacionesBell.vue'
+import InstallPwaPrompt from '../components/InstallPwaPrompt.vue'
+import SessionWarningModal from '../components/SessionWarningModal.vue'
+import { useSessionTimer } from '../utils/useSessionTimer.js'
 
 const router = useRouter()
 const route  = useRoute()
 const usuario = computed(() => JSON.parse(localStorage.getItem('usuario') || '{}'))
 const navCollapsed = ref(false)
+const mobileOpen   = ref(false)
 
 const ROL_LABELS  = { SUPERADMIN: 'Super Administrador', USUARIO: 'Usuario', CONDUCTOR: 'Conductor' }
 const rolLabel    = computed(() => ROL_LABELS[usuario.value.rol] || usuario.value.rol || '')
@@ -58,6 +63,11 @@ const navAdmin = [
 
 const navOperaciones = [
   {
+    label: 'Rutas',
+    path: '/rutas',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>`
+  },
+  {
     label: 'Flota',
     path: '/flota',
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
@@ -66,16 +76,48 @@ const navOperaciones = [
       d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>`
   },
   {
+    label: 'Mapa en vivo',
+    path: '/mapa',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>`
+  },
+  {
+    label: 'GPS',
+    path: '/gps',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>`
+  },
+  {
     label: 'Conductores',
     path: '/conductores',
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>`
   },
   {
-    label: 'Mantenciones',
-    path: '/mantenciones',
+    label: 'Mantenimientos',
+    group: true,
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-      d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>`
+      d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>`,
+    children: [
+      {
+        label: 'Mantenciones',
+        path: '/mantenciones',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>`,
+      },
+      {
+        label: 'Predictivo',
+        path: '/predictivo',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M13 10V3L4 14h7v7l9-11h-7z"/>`,
+      },
+      {
+        label: 'Correctivos',
+        path: '/finanzas/correctivos',
+        icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+          d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>`,
+      },
+    ],
   },
   {
     label: 'Documentos',
@@ -90,10 +132,35 @@ const navOperaciones = [
       d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>`
   },
   {
+    label: 'Pagos',
+    path: '/pagos',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>`
+  },
+  {
     label: 'Reportes',
     path: '/reportes',
     icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
       d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>`
+  },
+  {
+    label: 'Solicitudes',
+    path: '/solicitudes',
+    badge: true,
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>`
+  },
+  {
+    label: 'Avisos',
+    path: '/avisos',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/>`
+  },
+  {
+    label: 'Calendario',
+    path: '/calendario',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5m-9-6h.008v.008H12v-.008zM12 15h.008v.008H12V15zm0 2.25h.008v.008H12v-.008zM9.75 15h.008v.008H9.75V15zm0 2.25h.008v.008H9.75v-.008zM7.5 15h.008v.008H7.5V15zm0 2.25h.008v.008H7.5v-.008zm6.75-4.5h.008v.008h-.008v-.008zm0 2.25h.008v.008h-.008V15zm0 2.25h.008v.008h-.008v-.008zm2.25-4.5h.008v.008H16.5v-.008zm0 2.25h.008v.008H16.5V15z"/>`
   },
 ]
 
@@ -106,26 +173,99 @@ const navConductor = [
   },
 ]
 
-const navSoporte = [
-  {label: 'Sistema de soporte',
-   path: '#',
-  }
+const navCuenta = [
+  {
+    label: 'Configuración',
+    path: '/configuracion',
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>`,
+  },
 ]
 
-const isActive = (path) => route.path.startsWith(path)
+// Grupo colapsable
+const groupsOpen = ref({})
+function toggleGroup(label) { groupsOpen.value[label] = !groupsOpen.value[label] }
+function isGroupActive(item) { return item.children?.some(c => c.path && route.path.startsWith(c.path)) }
+
+watch(route, () => {
+  navOperaciones.forEach(item => {
+    if (item.group && isGroupActive(item)) groupsOpen.value[item.label] = true
+  })
+}, { immediate: true })
+
+// Activo si la ruta coincide exactamente o es una subruta de un ítem que NO
+// tiene hijos en el menú. Para evitar que un padre (/finanzas) se marque activo
+// estando en una subruta que es su propio ítem (/finanzas/correctivos), se exige
+// que ningún otro ítem del menú sea un prefijo más específico de la ruta actual.
+const isActive = (path) => {
+  const actual = route.path
+  if (actual === path) return true
+  if (!actual.startsWith(path + '/')) return false
+  // Aplanar grupos para no llamar .startsWith sobre undefined
+  const todosItems = navOperaciones.flatMap(it => it.group ? it.children : [it])
+  const masEspecifico = todosItems.some(it =>
+    it.path !== path && it.path.startsWith(path + '/') &&
+    (actual === it.path || actual.startsWith(it.path + '/'))
+  )
+  return !masEspecifico
+}
+
+// ── Badge de solicitudes para SUPERADMIN ──────────────────────────────────────
+const solicitudesPendientes = ref(0)
+let pollingSolAdmin = null
+
+async function refrescarConteoSolicitudesAdmin() {
+  if (!esSuperadmin.value) return
+  try {
+    const empresa = JSON.parse(sessionStorage.getItem('empresaActiva') || 'null')
+    if (!empresa?.id) return
+    const res  = await apiFetch(`/api/empresa/solicitudes/conteo/?empresa_id=${empresa.id}`)
+    if (!res.ok) return
+    const data = await res.json()
+    solicitudesPendientes.value = data.pendientes ?? 0
+  } catch {}
+}
+
+function onSolicitudesAdminBadge(e) {
+  solicitudesPendientes.value = e.detail ?? 0
+}
+
+const { mostrarModal, segundosRestantes, extenderSesion, logoutDesdeModal } = useSessionTimer()
 
 const cerrarSesion = () => {
-  clearEmpresaActiva()
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
   localStorage.removeItem('usuario')
+  sessionStorage.removeItem('plan_modulos')
+  sessionStorage.removeItem('plan_nombre')
+  sessionStorage.removeItem('plan_permisos')
+  clearEmpresaActiva()
   router.push('/login')
 }
+
+onMounted(() => {
+  if (esSuperadmin.value) {
+    refrescarConteoSolicitudesAdmin()
+    pollingSolAdmin = setInterval(refrescarConteoSolicitudesAdmin, 60_000)
+    window.addEventListener('solicitudes-admin-badge', onSolicitudesAdminBadge)
+  }
+})
+
+onUnmounted(() => {
+  clearInterval(pollingSolAdmin)
+  window.removeEventListener('solicitudes-admin-badge', onSolicitudesAdminBadge)
+})
 </script>
 
 <template>
   <div class="layout">
 
     <!-- ── Sidebar ── -->
-    <aside :class="['sidebar', { collapsed: navCollapsed }]">
+    <!-- Overlay drawer mobile -->
+    <div v-if="mobileOpen" class="sidebar-overlay" @click="mobileOpen = false"/>
+
+    <aside :class="['sidebar', { collapsed: navCollapsed, 'mobile-open': mobileOpen }]">
 
       <!-- Logo / Branding -->
       <div class="sidebar-brand">
@@ -189,19 +329,71 @@ const cerrarSesion = () => {
         <template v-if="!esConductor">
           <div class="nav-separator"/>
           <p v-if="!navCollapsed" class="nav-section-label">Operaciones</p>
-          <router-link
-            v-for="item in navOperaciones"
-            :key="item.path"
-            :to="item.path"
-            :class="['nav-item', { active: isActive(item.path) }]"
-            :title="navCollapsed ? item.label : ''"
-          >
-            <span class="nav-icon">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
-            </span>
-            <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
-            <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
-          </router-link>
+          <template v-for="item in navOperaciones" :key="item.group ? item.label : item.path">
+
+            <!-- Grupo colapsable -->
+            <template v-if="item.group">
+              <button
+                v-if="!navCollapsed"
+                class="nav-group-btn"
+                :class="{ 'group-active': isGroupActive(item) }"
+                @click="toggleGroup(item.label)"
+              >
+                <span class="nav-icon">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+                </span>
+                <span class="nav-label">{{ item.label }}</span>
+                <svg class="group-chevron" :class="{ open: groupsOpen[item.label] }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </button>
+              <template v-if="!navCollapsed && groupsOpen[item.label]">
+                <router-link
+                  v-for="child in item.children"
+                  :key="child.path"
+                  :to="child.path"
+                  :class="['nav-item', 'nav-child', { active: isActive(child.path) }]"
+                >
+                  <span class="nav-icon">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="child.icon"/>
+                  </span>
+                  <span class="nav-label">{{ child.label }}</span>
+                  <span v-if="isActive(child.path)" class="active-bar"/>
+                </router-link>
+              </template>
+              <router-link
+                v-if="navCollapsed"
+                v-for="child in item.children"
+                :key="child.path + '_c'"
+                :to="child.path"
+                :class="['nav-item', { active: isActive(child.path) }]"
+                :title="child.label"
+              >
+                <span class="nav-icon">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="child.icon"/>
+                </span>
+              </router-link>
+            </template>
+
+            <!-- Ítem normal -->
+            <router-link
+              v-else
+              :to="item.path"
+              :class="['nav-item', { active: isActive(item.path) }]"
+              :title="navCollapsed ? item.label : ''"
+            >
+              <span class="nav-icon" style="position:relative">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+                <span v-if="navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-dot"/>
+              </span>
+              <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
+              <span v-if="!navCollapsed && item.badge && solicitudesPendientes > 0" class="base-badge-count">
+                {{ solicitudesPendientes > 99 ? '99+' : solicitudesPendientes }}
+              </span>
+              <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
+            </router-link>
+
+          </template>
         </template>
 
         <!-- Mi Panel — solo CONDUCTOR -->
@@ -223,35 +415,70 @@ const cerrarSesion = () => {
           </router-link>
         </template>
 
-      </nav>
+        <!-- Cuenta -->
+        <div class="nav-separator"/>
+        <p v-if="!navCollapsed" class="nav-section-label">Cuenta</p>
+        <router-link
+          v-for="item in navCuenta"
+          :key="item.path"
+          :to="item.path"
+          :class="['nav-item', { active: isActive(item.path) }]"
+          :title="navCollapsed ? item.label : ''"
+        >
+          <span class="nav-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" v-html="item.icon"/>
+          </span>
+          <span v-if="!navCollapsed" class="nav-label">{{ item.label }}</span>
+          <span v-if="!navCollapsed && isActive(item.path)" class="active-bar"/>
+        </router-link>
 
-      <!-- Footer: usuario + logout -->
-      <div class="sidebar-footer">
-        <div class="user-block" v-if="!navCollapsed">
-          <div class="user-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
-          <div class="user-info">
-            <p class="user-name">{{ usuario.nombre }}</p>
-            <p class="user-role">{{ rolLabel }}</p>
-          </div>
-        </div>
-        <div v-else class="user-avatar solo">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
-        <button class="logout-btn" @click="cerrarSesion" :title="navCollapsed ? 'Cerrar sesión' : ''">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
-              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-          </svg>
-          <span v-if="!navCollapsed">Salir</span>
-        </button>
-      </div>
+      </nav>
 
     </aside>
 
     <!-- ── Contenido principal ── -->
     <main class="main-content">
-      <RouterView />
+      <header class="top-bar">
+        <!-- Hamburguesa — visible solo en mobile -->
+        <button class="hamburger" @click="mobileOpen = !mobileOpen" aria-label="Menú">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              :d="mobileOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'"/>
+          </svg>
+        </button>
+        <div class="top-bar-spacer"/>
+        <div class="top-bar-right">
+          <InstallPwaPrompt />
+          <NotificacionesBell />
+          <div class="session-info">
+            <div class="session-avatar">{{ (usuario.nombre || 'U')[0].toUpperCase() }}</div>
+            <div class="session-details">
+              <span class="session-name">{{ usuario.nombre }}</span>
+              <span class="session-role">{{ rolLabel }}</span>
+            </div>
+          </div>
+          <button class="logout-btn-top" @click="cerrarSesion" title="Cerrar sesión">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75"
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+            </svg>
+            <span>Salir</span>
+          </button>
+        </div>
+      </header>
+      <div class="page-content">
+        <RouterView />
+      </div>
     </main>
 
   </div>
+
+  <SessionWarningModal
+    v-if="mostrarModal"
+    :segundos-restantes="segundosRestantes"
+    @extender="extenderSesion"
+    @cerrar="logoutDesdeModal"
+  />
 </template>
 
 <style scoped>
@@ -270,10 +497,10 @@ const cerrarSesion = () => {
   top: 0; left: 0;
   height: 100vh;
   width: 240px;
-  background: linear-gradient(160deg, #4F46E5 0%, #7C3AED 100%);
+  background: linear-gradient(160deg, var(--sidebar-from, #4F46E5) 0%, var(--sidebar-to, #7C3AED) 100%);
   display: flex;
   flex-direction: column;
-  transition: width 0.25s ease;
+  transition: width 0.25s ease, transform 0.25s ease;
   z-index: 100;
   overflow: hidden;
 }
@@ -307,7 +534,7 @@ const cerrarSesion = () => {
   position: absolute;
   top: 18px; right: -13px;
   width: 26px; height: 26px;
-  background: #7C3AED;
+  background: var(--sidebar-to, #7C3AED);
   border: 1px solid rgba(255,255,255,0.25);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -316,7 +543,7 @@ const cerrarSesion = () => {
   transition: background 0.2s;
   z-index: 10;
 }
-.collapse-btn:hover { background: #4F46E5; }
+.collapse-btn:hover { background: var(--sidebar-from, #4F46E5); }
 .collapse-btn svg { width: 14px; height: 14px; }
 
 /* Nav */
@@ -379,67 +606,6 @@ const cerrarSesion = () => {
 .nav-label { flex: 1; }
 .active-bar { width: 3px; height: 16px; background: #fff; border-radius: 2px; }
 
-/* ── Footer ── */
-.sidebar-footer {
-  padding: 0.75rem 0.625rem;
-  border-top: 1px solid rgba(255,255,255,0.12);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.user-block {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.5rem;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.1);
-}
-.user-avatar {
-  flex-shrink: 0;
-  width: 32px; height: 32px;
-  background: rgba(255,255,255,0.25);
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  color: #fff;
-}
-.user-avatar.solo { margin: 0 auto; }
-.user-info { overflow: hidden; }
-.user-name {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #fff;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.user-role { font-size: 0.7rem; color: rgba(255,255,255,0.55); margin: 0; }
-
-.logout-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.55rem 0.75rem;
-  border: 1.5px solid rgba(255,255,255,0.2);
-  border-radius: 10px;
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.75);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: border-color 0.2s, color 0.2s, background 0.2s;
-  font-family: inherit;
-}
-.logout-btn:hover { border-color: rgba(255,255,255,0.5); color: #fff; background: rgba(255,255,255,0.15); }
-.logout-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
-
 /* Contenido */
 .main-content {
   margin-left: 240px;
@@ -454,11 +620,10 @@ const cerrarSesion = () => {
 /* ── Top Bar ── */
 .top-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 0.75rem 2rem;
-  background: linear-gradient(160deg, #4F46E5 0%, #7C3AED 100%);
-  border-bottom: 1px solid rgba(255,255,255,0.12);
+  padding: 0 1.5rem;
+  background: #fff;
+  border-bottom: 1px solid #E5E7EB;
   height: 64px;
   flex-shrink: 0;
 }
@@ -466,37 +631,131 @@ const cerrarSesion = () => {
 .top-bar-right {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 .session-info {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.35rem 0.5rem;
+  gap: 0.625rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.4rem;
+  background: #F3F4F6;
   border-radius: 50px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 .session-avatar {
-  width: 32px; height: 32px;
-  background: rgba(255, 255, 255, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
   color: #fff;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 0.85rem;
+  font-weight: 700; font-size: 0.8125rem; flex-shrink: 0;
 }
 .session-details {
   display: flex;
   flex-direction: column;
-  padding-right: 0.5rem;
 }
 .session-name {
-  font-size: 0.8125rem; font-weight: 600; color: #fff; line-height: 1.2;
+  font-size: 0.8125rem; font-weight: 600; color: #111827; line-height: 1.2;
 }
 .session-role {
-  font-size: 0.7rem; color: rgba(255, 255, 255, 0.7); font-weight: 500;
+  font-size: 0.6875rem; color: #6B7280;
 }
+.logout-btn-top {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 0.875rem; border-radius: 8px;
+  border: 1px solid #E5E7EB; background: #fff;
+  color: #6B7280; font-size: 0.8125rem; font-weight: 500;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; font-family: inherit;
+}
+.logout-btn-top:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
+.logout-btn-top svg { width: 16px; height: 16px; }
+.page-content { flex: 1; overflow-y: auto; overflow-x: hidden; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Hamburguesa (oculta en desktop) ── */
+.hamburger {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 38px; height: 38px;
+  border: 1px solid #E5E7EB; border-radius: 8px;
+  background: #fff; cursor: pointer; color: #374151;
+  flex-shrink: 0; transition: background 0.15s;
+}
+.hamburger:hover { background: #F3F4F6; }
+.hamburger svg  { width: 20px; height: 20px; }
+
+/* ── Overlay del drawer ── */
+.sidebar-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 99;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── Tablet y mobile (≤ 1024 px): sidebar pasa a drawer ── */
+@media (max-width: 1024px) {
+  .hamburger { display: flex; }
+  .collapse-btn { display: none; }
+
+  .sidebar {
+    width: 240px !important;
+    transform: translateX(-100%);
+    z-index: 200;
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .main-content { margin-left: 0 !important; }
+  /* Evitar que tablas que desbordan hagan scrollear toda la página */
+  .page-content { overflow-x: hidden; }
+
+  .top-bar { padding: 0 1rem; }
+}
+
+/* ── Pantallas pequeñas (≤ 480 px): compactar top bar ── */
+@media (max-width: 480px) {
+  .session-details { display: none; }
+  .logout-btn-top span { display: none; }
+  .logout-btn-top { padding: 0.45rem 0.625rem; }
+  .session-info { padding: 0.3rem 0.5rem; }
+}
+
+/* ── Badge de solicitudes en sidebar ── */
+.base-badge-dot {
+  position: absolute;
+  top: -3px; right: -3px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #EF4444;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1.5px rgba(239,68,68,0.4);
+}
+.base-badge-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  background: #EF4444;
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Grupo colapsable */
+.nav-group-btn {
+  width: 100%; display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.6rem 0.75rem; border-radius: 10px;
+  background: none; border: none; cursor: pointer;
+  color: rgba(255,255,255,0.7); font-size: 0.875rem; font-weight: 500;
+  font-family: inherit; text-align: left; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-group-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.nav-group-btn.group-active { color: #fff; font-weight: 600; }
+.group-chevron { width: 14px; height: 14px; margin-left: auto; flex-shrink: 0; transition: transform 0.2s; }
+.group-chevron.open { transform: rotate(180deg); }
+.nav-child { padding-left: 2.25rem; }
 </style>

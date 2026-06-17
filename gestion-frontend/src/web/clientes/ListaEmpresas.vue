@@ -1,17 +1,26 @@
-<script setup>
+﻿<script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
 import ConfirmModal from '../../components/ConfirmModal.vue'
-import AppToast from '../../components/AppToast.vue'
+import { useToast } from '../../utils/useToast.js'
 
 const router = useRouter()
 const empresas = ref([])
 const cargando = ref(true)
 const error = ref('')
 
-const toast = ref(null)
+const toast = useToast()
 const confirm = ref({ visible: false, empresa: null, accion: 'desactivar' })
+
+const PLAN_ESTILOS = {
+  'Básico':     { background: '#F3F4F6', color: '#374151' },
+  'Pro':        { background: '#EEF2FF', color: '#4338CA' },
+  'Enterprise': { background: '#F5F3FF', color: '#6D28D9' },
+}
+function planEstilo(nombre) {
+  return PLAN_ESTILOS[nombre] ?? { background: '#FFF7ED', color: '#C2410C' }
+}
 
 const cargarEmpresas = async () => {
   cargando.value = true
@@ -42,18 +51,18 @@ const confirmarAccion = async () => {
     if (accion === 'desactivar') {
       const res = await apiFetch(`/api/empresas/${empresa.id}/`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Error al desactivar la empresa')
-      toast.value?.agregar(`"${empresa.nombre}" fue desactivada.`, 'success')
+      toast.agregar(`"${empresa.nombre}" fue desactivada.`, 'success')
     } else {
       const res = await apiFetch(`/api/empresas/${empresa.id}/`, {
         method: 'PUT',
         body: { estado: 'activa' },
       })
       if (!res.ok) throw new Error('Error al activar la empresa')
-      toast.value?.agregar(`"${empresa.nombre}" fue activada.`, 'success')
+      toast.agregar(`"${empresa.nombre}" fue activada.`, 'success')
     }
     await cargarEmpresas()
   } catch (e) {
-    toast.value?.agregar(e.message, 'error')
+    toast.agregar(e.message, 'error')
   }
 }
 
@@ -61,7 +70,6 @@ onMounted(cargarEmpresas)
 </script>
 
 <template>
-  <AppToast ref="toast" />
 
   <ConfirmModal
     v-if="confirm.visible"
@@ -101,12 +109,14 @@ onMounted(cargarEmpresas)
 
     <!-- Tabla -->
     <div v-else class="card">
+      <div class="tabla-wrap">
       <table class="tabla">
         <thead>
           <tr>
             <th>Nombre</th>
             <th>RUT</th>
-            <th>Flotas / Vehículos</th>
+            <th>Plan</th>
+            <th>Vehículos</th>
             <th>Conductores</th>
             <th>Última Actividad</th>
             <th>Estado</th>
@@ -115,13 +125,17 @@ onMounted(cargarEmpresas)
         </thead>
         <tbody>
           <tr v-if="empresas.length === 0">
-            <td colspan="7" class="empty-row">No hay empresas registradas.</td>
+            <td colspan="8" class="empty-row">No hay empresas registradas.</td>
           </tr>
           <tr v-for="e in empresas" :key="e.id" :class="{ inactiva: e.estado !== 'activa' }">
             <td class="td-nombre">{{ e.nombre }}</td>
             <td class="td-mono">{{ e.rut }}</td>
+            <td>
+              <span class="badge-plan" :style="planEstilo(e.plan_nombre)">
+                {{ e.plan_nombre || 'Sin plan' }}
+              </span>
+            </td>
             <td class="td-metrics">
-              <span class="metric" title="Flotas">{{ e.cantidad_flotas || 0 }}</span> / 
               <span class="metric" title="Vehículos">{{ e.cantidad_vehiculos || 0 }}</span>
             </td>
             <td class="td-metrics">
@@ -176,6 +190,7 @@ onMounted(cargarEmpresas)
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </template>
@@ -263,6 +278,19 @@ onMounted(cargarEmpresas)
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
 }
 
+/* Contenedor con scroll horizontal solo cuando la tabla no cabe. Nunca vertical.
+   Scrollbar fino y discreto, mismo patrón que el sidebar de Base.vue. */
+.tabla-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124,58,237,0.25) transparent;
+}
+.tabla-wrap::-webkit-scrollbar { height: 6px; }
+.tabla-wrap::-webkit-scrollbar-track { background: transparent; }
+.tabla-wrap::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.25); border-radius: 999px; }
+.tabla-wrap::-webkit-scrollbar-thumb:hover { background: rgba(124,58,237,0.45); }
+
 .tabla {
   width: 100%;
   border-collapse: collapse;
@@ -312,6 +340,16 @@ onMounted(cargarEmpresas)
 .badge-activa { background: #ECFDF5; color: #059669; }
 .badge-inactiva { background: #F3F4F6; color: #9CA3AF; }
 
+.badge-plan {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .td-acciones { display: flex; gap: 0.5rem; align-items: center; }
 
 .btn-accion {
@@ -336,4 +374,17 @@ onMounted(cargarEmpresas)
 
 .btn-activar { color: #059669; }
 .btn-activar:hover { border-color: #059669; background: #ECFDF5; }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-header { flex-direction: column; align-items: stretch; gap: 0.625rem; }
+  .page-title { font-size: 1.25rem; }
+  .header-actions { flex-direction: column; align-items: stretch; }
+  .btn-primary { justify-content: center; }
+
+  /* La tabla no cabe en pantallas angostas: fuerza el ancho mínimo para activar
+     el scroll horizontal del .tabla-wrap (el estilo del scrollbar es global). */
+  .tabla-wrap { -webkit-overflow-scrolling: touch; }
+  .tabla { min-width: 640px; }
+}
 </style>

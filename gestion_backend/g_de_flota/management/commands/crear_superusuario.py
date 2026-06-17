@@ -3,7 +3,7 @@ import hashlib
 from django.core.management.base import BaseCommand
 from django.core.exceptions import ValidationError
 from django.contrib.auth.password_validation import validate_password
-from g_de_flota.models import Usuario, PerfilUsuario, normalizar_rut
+from g_de_flota.models import Usuario, PerfilUsuario, Rol, normalizar_rut
 
 
 class Command(BaseCommand):
@@ -17,7 +17,7 @@ class Command(BaseCommand):
         email           = self._pedir("Email")
         password        = self._pedir_password()
 
-        if Usuario.objects.filter(email=email).exists():
+        if Usuario.objects.filter(email_hash=Usuario.hash_email(email)).exists():
             self.stderr.write(f"Error: el email '{email}' ya existe.")
             return
 
@@ -27,11 +27,14 @@ class Command(BaseCommand):
             return
 
         try:
+            # Este comando crea el SUPER ADMINISTRADOR del SaaS: además del acceso
+            # a /admin/ (is_superuser), le concede explícitamente el rol de negocio.
             user = Usuario.objects.create_superuser(
                 email=email,
                 password=password,
                 rut=rut,
                 nombre_completo=nombre_completo,
+                rol=Rol.SUPERADMIN,
             )
             PerfilUsuario.objects.create(user=user)
             self.stdout.write(self.style.SUCCESS(

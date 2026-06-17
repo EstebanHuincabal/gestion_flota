@@ -11,7 +11,7 @@ const tabActiva = ref('informacion')
 const tabs = [
   { id: 'informacion', label: 'Información' },
   { id: 'estadisticas', label: 'Estadísticas' },
-  { id: 'usuarios', label: 'Usuarios' },
+  { id: 'usuarios', label: 'Usuarios y Conductores' },
   { id: 'actividad', label: 'Actividad' }
 ]
 
@@ -136,7 +136,7 @@ onMounted(cargarDetalle)
             </div>
             <div v-if="data.informacion.region">
               <dt class="text-sm font-medium text-gray-500">Región</dt>
-              <dd class="mt-1 text-sm text-gray-900">{{ data.informacion.region }}</dd>
+              <dd class="mt-1 text-sm text-gray-900">{{ data.informacion.region_display || data.informacion.region }}</dd>
             </div>
             <div v-if="data.informacion.pais">
               <dt class="text-sm font-medium text-gray-500">País</dt>
@@ -148,18 +148,6 @@ onMounted(cargarDetalle)
 
       <!-- Tab Content: Estadísticas -->
       <div v-if="tabActiva === 'estadisticas'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <div class="flex items-center gap-4">
-            <div class="p-3 bg-blue-50 text-blue-600 rounded-lg">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
-            </div>
-            <div>
-              <p class="text-sm font-medium text-gray-500">Flotas Totales</p>
-              <p class="text-2xl font-bold text-gray-900">{{ data.estadisticas.flotas }}</p>
-            </div>
-          </div>
-        </div>
 
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div class="flex items-center gap-4">

@@ -1,13 +1,32 @@
 # Variables de entorno — NUNCA subir al repositorio
 .env
 *.env
+.env.production
+!.env.production.example
 
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-db.sqlite3
+
+# Base de datos
+*.sqlite3
+*.db
+
+# Claves Firebase (no subir credenciales)
+serviceAccountKey.json
+
+# Traccar — generado en tiempo de ejecución (puede contener credenciales)
+traccar.xml
+
+# Archivos generados en producción
+staticfiles/
+media/
+
+# Backups de base de datos
+*.bak_*
+*.sql
 
 # Entornos virtuales
 venv/
@@ -18,3 +37,11 @@ env/
 node_modules/
 dist/
 dist-ssr/
+
+# Archivos locales de desarrollo
+Mejoras.md
+contexto.md
+build_apk.bat
+build_apk.ps1
+iniciar.bat
+iniciar.ps1

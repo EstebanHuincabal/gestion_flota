@@ -1,0 +1,110 @@
+services:
+  db:
+    image: postgres:16
+    env_file: .env.production
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Crea la base 'traccar' en el primer arranque (junto a la de Django).
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  # Gateway GPS: recibe los dispositivos físicos en ~200 protocolos y reenvía
+  # cada posición al backend. Los datos quedan dentro del servidor.
+  # La config se genera al arrancar desde traccar.xml.template inyectando las
+  # credenciales de PostgreSQL (sin secretos versionados en git).
+  traccar:
+    image: traccar/traccar:latest
+    env_file: .env.production
+    volumes:
+      - ./traccar.xml.template:/traccar.xml.template:ro
+      - ./docker/traccar-start.sh:/traccar-start.sh:ro
+      - traccar_data:/opt/traccar/data
+    ports:
+      - "5000-5150:5000-5150"     # rango de protocolos GPS (TCP/UDP)
+      - "5055:5055/udp"           # OsmAnd (UDP)
+      - "8082:8082"               # interfaz web/API de Traccar
+    entrypoint: ["/bin/sh", "/traccar-start.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # Servicio efímero: crea el administrador de Traccar la primera vez y termina.
+  traccar-init:
+    image: alpine:3.20
+    env_file: .env.production
+    volumes:
+      - ./docker/traccar-init.sh:/init.sh:ro
+    command: ["/bin/sh", "/init.sh"]
+    depends_on:
+      traccar:
+        condition: service_started
+    restart: "no"
+
+  backend:
+    build: ./gestion_backend
+    env_file: .env.production
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+      - ./gestion_backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # Instala el esquema, recolecta estáticos y levanta el servidor ASGI (HTTP + WebSockets).
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 gestion_backend.asgi:application"
+    restart: unless-stopped
+    # Tareas programadas, ejecutadas por el servicio "scheduler" (Ofelia) dentro
+    # de este mismo contenedor. Sin esto, los comandos de gestión periódicos
+    # (alertas de mantenimiento predictivo, ciclo de vida de suscripciones)
+    # nunca se ejecutan en producción.
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.evaluar-mantenciones.schedule: "0 0 8 * * *"
+      ofelia.job-exec.evaluar-mantenciones.command: "python manage.py evaluar_mantenciones_predictivas"
+      ofelia.job-exec.verificar-suscripciones.schedule: "0 0 9 * * *"
+      ofelia.job-exec.verificar-suscripciones.command: "python manage.py verificar_suscripciones"
+
+  # Programador de tareas: dispara los comandos de gestión periódicos definidos
+  # como labels en otros servicios (ver "backend"). No requiere cron en el host.
+  scheduler:
+    image: mcuadros/ofelia:latest
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  frontend:
+    build: ./gestion-frontend
+    ports:
+      - "80:80"
+    volumes:
+      - static_volume:/staticfiles:ro
+      - media_volume:/media:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  static_volume:
+  media_volume:
+  traccar_data:

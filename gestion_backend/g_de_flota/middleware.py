@@ -3,6 +3,157 @@ from django.http import JsonResponse
 from django.contrib.auth import logout
 from django.conf import settings
 
+# ─────────────────────────────────────────
+# Rutas que nunca son bloqueadas por suscripción
+# ─────────────────────────────────────────
+_RUTAS_LIBRES = [
+    '/api/login/',
+    '/api/token/',
+    '/api/token/refresh/',
+    '/api/planes/',
+    '/api/auto-registro/',
+    '/api/verificar-rut/',
+    '/api/pago/',                          # checkout Webpay Plus
+    '/api/pago/retorno/',                  # retorno Webpay Plus
+    '/api/terminos/',                      # ver términos públicos
+    '/api/empresa/tarjeta/retorno/',       # retorno OneClick (inscripción)
+    '/api/empresa/tarjeta/inscribir/',     # iniciar inscripción OneClick
+    '/api/empresa/tarjeta/',              # consultar tarjeta guardada (necesario en página de pago)
+    '/api/empresa/suscripcion/',          # consultar estado (necesario para mostrar overlay de bloqueo)
+    '/api/empresa/plan-uso/',             # consultar plan (necesario en página de pago con suscripción pendiente)
+    '/admin/',
+]
+
+
+def _resolver_usuario(request):
+    """Devuelve el usuario autenticado por sesión Django o, en su defecto, por JWT.
+
+    El proyecto autentica con JWT en la capa de DRF (a nivel de vista), no en el
+    middleware de Django, por lo que aquí `request.user` suele ser AnonymousUser.
+    Se valida el token manualmente para que el bloqueo (empresa desactivada /
+    suscripción) funcione también en las peticiones a la API.
+    """
+    u = getattr(request, 'user', None)
+    if u is not None and u.is_authenticated:
+        return u
+    try:
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        resultado = JWTAuthentication().authenticate(request)
+        if resultado is not None:
+            return resultado[0]
+    except Exception:
+        pass
+    return None
+
+
+class BloqueoSuscripcionMiddleware:
+    """
+    Bloquea el acceso a la API si la empresa está desactivada (403) o su suscripción
+    está bloqueada (402). Solo aplica a USUARIO y CONDUCTOR; SUPERADMIN nunca.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if any(request.path.startswith(r) for r in _RUTAS_LIBRES):
+            return self.get_response(request)
+
+        user = _resolver_usuario(request)
+        if user is None:
+            return self.get_response(request)
+
+        rol = getattr(user, 'rol', None)
+
+        # SUPERADMIN nunca es bloqueado
+        if rol not in ('USUARIO', 'CONDUCTOR'):
+            return self.get_response(request)
+
+        empresa = getattr(user, 'empresa', None)
+        if not empresa:
+            return self.get_response(request)
+
+        # Empresa desactivada por el SUPERADMIN: ni USUARIO ni CONDUCTOR pueden operar.
+        if getattr(empresa, 'estado', None) == 'suspendida':
+            return JsonResponse({
+                'error':  'Tu empresa fue desactivada. Contacta al administrador del sistema.',
+                'codigo': 'EMPRESA_DESACTIVADA',
+                'estado': 'suspendida',
+            }, status=403)
+
+        try:
+            sus = empresa.suscripcion
+        except Exception:
+            # Sin suscripción asignada → 402 solo si realmente es falta de suscripción
+            if not empresa.pk:
+                return self.get_response(request)
+            return JsonResponse({
+                'error':  'Tu empresa aún no tiene una suscripción activa. Realiza el pago de tu plan para continuar.',
+                'codigo': 'SUSCRIPCION_BLOQUEADA',
+                'estado': 'sin_suscripcion',
+            }, status=402)
+
+        if sus.esta_bloqueada:
+            from .models import ConfiguracionSistema
+            config = ConfiguracionSistema.get()
+
+            if sus.estado == 'pendiente':
+                if rol == 'CONDUCTOR':
+                    mensaje = 'Tu empresa aún no ha activado su plan. Contacta al administrador.'
+                else:
+                    mensaje = 'Tu empresa aún no tiene un pago registrado. Realiza el pago de tu plan para continuar.'
+            elif rol == 'CONDUCTOR':
+                mensaje = 'La suscripción de tu empresa está suspendida. Contacta al administrador.'
+            else:
+                mensaje = config.mensaje_pago_pendiente
+
+            return JsonResponse({
+                'error':  mensaje,
+                'codigo': 'SUSCRIPCION_BLOQUEADA',
+                'estado': sus.estado,
+            }, status=402)
+
+        # Advertencia en header si está en período de gracia (solo USUARIO)
+        response = self.get_response(request)
+        if rol == 'USUARIO' and sus.estado == 'gracia':
+            dias = sus.dias_para_vencer
+            response['X-Gracia-Dias'] = str(dias if dias is not None else 0)
+
+        return response
+
+class ErrorHandlerMiddleware:
+    """
+    Captura cualquier excepción no manejada y retorna JSON en lugar de HTML.
+    Evita que Django devuelva páginas de error 500 a una SPA que espera JSON.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        return self.get_response(request)
+
+    def process_exception(self, request, exception):
+        import traceback as tb
+        try:
+            from .audit import registrar_log
+            user = request.user if hasattr(request, 'user') else None
+            registrar_log(
+                'SEGURIDAD', 'excepcion_no_manejada',
+                request if user and user.is_authenticated else None,
+                detalle={
+                    'error':     str(exception),
+                    'traceback': tb.format_exc()[-800:],
+                },
+            )
+        except Exception:
+            pass
+        return JsonResponse({
+            'error':  'Error interno del servidor.',
+            'codigo': 'ERROR_INTERNO',
+        }, status=500)
+
+
 class ConfiguracionSeguridadMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response

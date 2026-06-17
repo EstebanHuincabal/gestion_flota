@@ -1,23 +1,34 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
+import { apiFetch } from '../../../utils/api.js'
+import { useToast } from '../../../utils/useToast.js'
+import { validarPatente, validarAnioVehiculo, soloDescripcion } from '../../../utils/validators.js'
+import { useModeracion } from '../../../composables/useModeracion.js'
+import AvisoModeracion from '../../../components/AvisoModeracion.vue'
 
 const props = defineProps({ modo: { type: String, default: 'nuevo' } })
 const router = useRouter()
 const route  = useRoute()
 const { ruta } = useEmpresaNav()
 const vehiculoId = route.params.id
-const flotaIdParam = route.params.flotaId   // solo en modo nuevo desde flota
 
+const toast     = useToast()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const cargando  = ref(props.modo === 'editar')
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
-const flotas    = ref([])
+
+const esSuperadmin = computed(() => {
+  try { return JSON.parse(localStorage.getItem('usuario') || '{}').rol === 'SUPERADMIN' } catch { return false }
+})
+const esTodas       = computed(() => getEmpresaActiva()?.id === EMPRESA_TODAS)
+const empresas      = ref([])
+const empresaIdForm = ref('')
 
 const form = ref({
-  flota: null,
   patente: '',
   marca: '',
   modelo: '',
@@ -26,23 +37,36 @@ const form = ref({
   km_actuales: 0,
 })
 
-const formatPatente = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')
+watch([() => form.value.marca, () => form.value.modelo], () => {
+  if (avisoMod.value) limpiarMod()
+})
 
-const cargarFlotas = async () => {
-  const res = await apiFetchEmpresa('/api/empresa/flotas/')
-  if (res.ok) {
-    const data = await res.json()
-    flotas.value = data
-    if (flotaIdParam && !form.value.flota) form.value.flota = Number(flotaIdParam)
-  }
+// Foto del vehículo
+const fotoFile    = ref(null)      // File nuevo elegido (si lo hay)
+const fotoPreview = ref(null)      // URL para previsualizar (existente o nueva)
+
+function onFotoChange(e) {
+  const f = e.target.files?.[0]
+  if (!f) return
+  if (f.size > 8 * 1024 * 1024) { toast.error('La imagen no puede superar 8 MB.'); e.target.value = ''; return }
+  if (!f.type.startsWith('image/')) { toast.error('El archivo debe ser una imagen.'); e.target.value = ''; return }
+  fotoFile.value    = f
+  fotoPreview.value = URL.createObjectURL(f)
 }
+function quitarFoto() {
+  fotoFile.value    = null
+  fotoPreview.value = null
+}
+
+const formatPatente = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '')
 
 const cargarVehiculo = async () => {
   try {
     const res = await apiFetchEmpresa(`/api/empresa/vehiculos/${vehiculoId}/`)
     if (!res.ok) throw new Error('Vehículo no encontrado')
     const v = await res.json()
-    form.value = { flota: v.flota, patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, km_actuales: v.km_actuales }
+    form.value = { patente: v.patente, marca: v.marca, modelo: v.modelo, anio: v.anio || '', tipo_combustible: v.tipo_combustible, km_actuales: v.km_actuales }
+    fotoPreview.value = v.foto_url || null
   } catch (e) { error.value = e.message }
   finally { cargando.value = false }
 }
@@ -50,12 +74,56 @@ const cargarVehiculo = async () => {
 const guardar = async () => {
   error.value = ''
   errores.value = {}
+
+  // Validar patente
+  const patenteResult = validarPatente(form.value.patente)
+  if (!patenteResult.valido) {
+    errores.value = { patente: [patenteResult.error] }
+    return
+  }
+
+  // Validar año si se ingresó
+  if (form.value.anio !== '' && form.value.anio !== null) {
+    const anioResult = validarAnioVehiculo(form.value.anio)
+    if (!anioResult.valido) {
+      errores.value = { anio: [anioResult.error] }
+      return
+    }
+  }
+
+  if (esTodas.value && props.modo !== 'editar' && !empresaIdForm.value) {
+    error.value = 'Selecciona una empresa para registrar el vehículo.'
+    return
+  }
+
+  const textoMod = [form.value.marca, form.value.modelo].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const ok = await moderar(textoMod)
+    if (!ok) return
+  }
+
   guardando.value = true
   try {
-    const payload = { ...form.value, anio: form.value.anio || null }
     const url     = props.modo === 'editar' ? `/api/empresa/vehiculos/${vehiculoId}/` : '/api/empresa/vehiculos/'
     const method  = props.modo === 'editar' ? 'PUT' : 'POST'
-    const res     = await apiFetchEmpresa(url, { method, body: payload })
+
+    // Con foto nueva → multipart; si no, JSON como siempre.
+    let body
+    if (fotoFile.value) {
+      body = new FormData()
+      body.append('patente',          form.value.patente)
+      body.append('marca',            form.value.marca || '')
+      body.append('modelo',           form.value.modelo || '')
+      if (form.value.anio) body.append('anio', form.value.anio)
+      body.append('tipo_combustible', form.value.tipo_combustible)
+      body.append('km_actuales',      form.value.km_actuales)
+      body.append('foto',             fotoFile.value, fotoFile.value.name)
+      if (esTodas.value && props.modo !== 'editar') body.append('empresa_id', empresaIdForm.value)
+    } else {
+      body = { ...form.value, anio: form.value.anio || null }
+      if (esTodas.value && props.modo !== 'editar') body.empresa_id = empresaIdForm.value
+    }
+    const res  = await apiFetchEmpresa(url, { method, body })
     const data    = await res.json()
     if (!res.ok) {
       if (data.error === 'Sin permisos.') return  // el toast global ya lo notifica
@@ -63,14 +131,18 @@ const guardar = async () => {
       else error.value = data.error || 'Error al guardar'
       return
     }
+    toast.success(props.modo === 'editar' ? 'Vehículo actualizado exitosamente' : 'Vehículo registrado exitosamente')
     router.push(ruta('/flota'))
   } catch { error.value = 'Error de conexión' }
   finally { guardando.value = false }
 }
 
 onMounted(async () => {
-  await cargarFlotas()
   if (props.modo === 'editar') await cargarVehiculo()
+  if (props.modo !== 'editar' && esSuperadmin.value) {
+    const res = await apiFetch('/api/empresas/')
+    if (res.ok) empresas.value = await res.json()
+  }
 })
 </script>
 
@@ -83,7 +155,7 @@ onMounted(async () => {
       Volver a Flota
     </button>
     <h1 class="page-title">{{ modo === 'editar' ? 'Editar Vehículo' : 'Nuevo Vehículo' }}</h1>
-    <p class="page-subtitle">{{ modo === 'editar' ? 'Modifica los datos del vehículo' : 'Registra un nuevo vehículo en la flota' }}</p>
+    <p class="page-subtitle">{{ modo === 'editar' ? 'Modifica los datos del vehículo' : 'Registra un nuevo vehículo' }}</p>
 
     <div v-if="cargando" class="loading"><div class="spinner"/> <span>Cargando...</span></div>
 
@@ -91,13 +163,13 @@ onMounted(async () => {
       <div v-if="error" class="alert-error">{{ error }}</div>
       <form @submit.prevent="guardar" class="form">
 
-        <div class="form-group">
-          <label class="label">Flota</label>
-          <select v-model="form.flota" class="input select" :class="{ 'input-error': errores.flota }" required>
-            <option :value="null">— Seleccionar flota —</option>
-            <option v-for="f in flotas" :key="f.id" :value="f.id">{{ f.nombre }}</option>
+        <!-- Selector de empresa (solo SUPERADMIN en modo "Todas", creación) -->
+        <div v-if="esTodas && modo !== 'editar'" class="form-group" style="margin-bottom:1.25rem">
+          <label class="label">Empresa</label>
+          <select v-model="empresaIdForm" class="input select" required>
+            <option value="" disabled>Seleccionar empresa…</option>
+            <option v-for="e in empresas" :key="e.id" :value="e.id">{{ e.nombre }}</option>
           </select>
-          <p v-if="errores.flota" class="field-error">{{ errores.flota[0] }}</p>
         </div>
 
         <div class="form-row">
@@ -122,18 +194,23 @@ onMounted(async () => {
         <div class="form-row">
           <div class="form-group">
             <label class="label">Marca</label>
-            <input v-model="form.marca" type="text" class="input" placeholder="Ej: Toyota" autocomplete="off"/>
+            <input v-model="form.marca" @input="form.marca = soloDescripcion(form.marca)"
+              type="text" class="input" placeholder="Ej: Toyota" autocomplete="off" maxlength="60"/>
           </div>
           <div class="form-group">
             <label class="label">Modelo</label>
-            <input v-model="form.modelo" type="text" class="input" placeholder="Ej: Hilux" autocomplete="off"/>
+            <input v-model="form.modelo" @input="form.modelo = soloDescripcion(form.modelo)"
+              type="text" class="input" placeholder="Ej: Hilux 560" autocomplete="off" maxlength="60"/>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
             <label class="label">Año</label>
-            <input v-model="form.anio" type="number" class="input" placeholder="2020" min="1990" :max="new Date().getFullYear() + 1"/>
+            <input v-model="form.anio" type="number" class="input"
+              :class="{ 'input-error': errores.anio }"
+              placeholder="2020" min="1950" :max="new Date().getFullYear() + 1"/>
+            <p v-if="errores.anio" class="field-error">{{ errores.anio[0] }}</p>
           </div>
           <div class="form-group">
             <label class="label">KM actuales</label>
@@ -142,6 +219,31 @@ onMounted(async () => {
           </div>
         </div>
 
+        <!-- Foto del vehículo -->
+        <div class="form-group">
+          <label class="label">Foto del vehículo <span class="label-opt">(opcional)</span></label>
+          <div class="foto-row">
+            <div class="foto-preview">
+              <img v-if="fotoPreview" :src="fotoPreview" alt="Foto del vehículo"/>
+              <svg v-else fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1"/>
+              </svg>
+            </div>
+            <div class="foto-acciones">
+              <label class="btn-foto">
+                <input type="file" accept="image/*" class="hidden-input" @change="onFotoChange"/>
+                {{ fotoPreview ? 'Cambiar foto' : 'Subir foto' }}
+              </label>
+              <button v-if="fotoPreview" type="button" class="btn-foto-quitar" @click="quitarFoto">Quitar</button>
+              <p class="foto-hint">JPG o PNG · máx 8 MB. Ayuda a identificar el vehículo de un vistazo.</p>
+            </div>
+          </div>
+        </div>
+
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push(ruta('/flota'))" :disabled="guardando">Cancelar</button>
           <button type="submit" class="btn-primary" :disabled="guardando">
@@ -175,6 +277,7 @@ onMounted(async () => {
 .input.input-error { border-color: #EF4444; }
 .select { cursor: pointer; }
 .field-error { font-size: 0.8125rem; color: #EF4444; margin: 0; }
+.field-help  { font-size: 0.8125rem; color: #9CA3AF; margin: 0.25rem 0 0; }
 .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; }
 .btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; font-family: inherit; }
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -182,4 +285,74 @@ onMounted(async () => {
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .spinner-inline { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-title { font-size: 1.25rem; }
+  .form-row { grid-template-columns: 1fr !important; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
+
+/* ── Foto del vehículo ── */
+.label-opt { font-weight: 400; color: #9CA3AF; font-size: 0.8em; }
+.foto-row { display: flex; gap: 1rem; align-items: center; }
+.foto-preview {
+  flex-shrink: 0;
+  width: 120px; height: 90px;
+  border-radius: 10px;
+  border: 1.5px dashed #D1D5DB;
+  background: #F9FAFB;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.foto-preview img { width: 100%; height: 100%; object-fit: cover; }
+.foto-preview svg { width: 34px; height: 34px; color: #D1D5DB; }
+.foto-acciones { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.hidden-input { display: none; }
+.btn-foto {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: #EEF2FF; color: #4338CA;
+  border: 1px solid #C7D2FE; border-radius: 8px;
+  font-size: 0.8125rem; font-weight: 600; cursor: pointer;
+}
+.btn-foto:hover { background: #E0E7FF; }
+.btn-foto-quitar {
+  padding: 0.35rem 0.75rem;
+  background: none; border: none;
+  color: #DC2626; font-size: 0.8125rem; font-weight: 500; cursor: pointer;
+}
+.btn-foto-quitar:hover { text-decoration: underline; }
+.foto-hint { font-size: 0.75rem; color: #9CA3AF; margin: 0; max-width: 280px; }
 </style>

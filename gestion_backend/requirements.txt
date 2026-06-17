@@ -1,0 +1,48 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Sistema de Gestión de Flota — Dependencias Python
+# Actualizado: Junio 2026
+# Instalar: pip install -r requirements.txt
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Core Django ───────────────────────────────────────────────────────────────
+django==5.2.6
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.3.1
+
+# ── ASGI / WebSockets (Channels + Daphne como servidor de producción) ─────────
+daphne==4.2.1
+channels==4.1.0
+channels-redis==4.2.0
+redis==5.0.1
+
+# ── Base de datos ─────────────────────────────────────────────────────────────
+# Desarrollo: SQLite (incluido en Python, sin instalación extra)
+# Producción: PostgreSQL — el conector se instala siempre para que el servidor
+# arranque correctamente cuando POSTGRES_DB esté definido en el entorno.
+psycopg[binary]==3.3.4
+
+# ── Seguridad y cifrado ───────────────────────────────────────────────────────
+cryptography==46.0.3
+
+# ── Variables de entorno ──────────────────────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── Exportación Excel ─────────────────────────────────────────────────────────
+openpyxl==3.1.5
+
+# ── Archivos adjuntos (documentos, fotos de solicitudes) ─────────────────────
+Pillow==11.3.0
+
+# ── Pagos — Webpay Plus (Transbank) ───────────────────────────────────────────
+transbank-sdk==6.1.0
+
+# ── Notificaciones push (Firebase Cloud Messaging) ────────────────────────────
+firebase-admin==7.4.0
+
+# ── Moderación de contenido con IA (Gemini) ───────────────────────────────────
+google-generativeai==0.8.6
+
+# ── HTTP externo (OSRM rutas, Nominatim geocodificación) ──────────────────────
+requests==2.31.0
+django-ratelimit==4.1.0

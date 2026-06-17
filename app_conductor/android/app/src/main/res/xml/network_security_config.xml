@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    network_security_config.xml
+    Permite HTTP y WebSocket sin cifrar (ws://).
+    Solo aplica en el APK de DEBUG/desarrollo.
+    En produccion usar HTTPS y eliminar este archivo.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

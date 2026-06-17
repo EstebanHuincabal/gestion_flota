@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#534AB7"/>
+  <g fill="#ffffff">
+    <!-- caja de carga -->
+    <rect x="86" y="176" width="230" height="134" rx="14"/>
+    <!-- cabina -->
+    <path d="M316 224 h66 a22 22 0 0 1 19 11 l34 53 a22 22 0 0 1 3 11 v25 h-122 z"/>
+    <!-- ventana de la cabina -->
+    <rect x="334" y="244" width="52" height="42" rx="6" fill="#534AB7"/>
+    <!-- parachoques -->
+    <rect x="86" y="300" width="350" height="16" rx="8"/>
+    <!-- ruedas -->
+    <circle cx="176" cy="334" r="36"/>
+    <circle cx="176" cy="334" r="15" fill="#534AB7"/>
+    <circle cx="378" cy="334" r="36"/>
+    <circle cx="378" cy="334" r="15" fill="#534AB7"/>
+  </g>
+</svg>

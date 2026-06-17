@@ -1,12 +1,19 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { validarTelefono, validarNombre, validarRut, validarEmail } from '../../utils/validators.js'
+import InputTelefono from '../../components/InputTelefono.vue'
+import { COMUNAS_POR_REGION } from '../../utils/comunasChile.js'
+import { useModeracion } from '../../composables/useModeracion.js'
+import AvisoModeracion from '../../components/AvisoModeracion.vue'
 
 const router = useRouter()
+const { moderar, aviso: avisoMod, sugerencia: sugerenciaMod, limpiar: limpiarMod } = useModeracion()
 const guardando = ref(false)
 const error = ref('')
 const errores = ref({})
+const planes = ref([])
 
 const REGIONES = [
   { value: 'arica_y_parinacota', label: 'Arica y Parinacota' },
@@ -31,6 +38,7 @@ const form = ref({
   nombre:   '',
   rut:      '',
   estado:   'activa',
+  plan_id:  null,
   email:    '',
   telefono: '',
   direccion: '',
@@ -40,9 +48,24 @@ const form = ref({
   pais:     'Chile',
 })
 
+watch([() => form.value.nombre, () => form.value.direccion], () => {
+  if (avisoMod.value) limpiarMod()
+})
+
+const comunasDisponibles = computed(() => COMUNAS_POR_REGION[form.value.region] || [])
+
+watch(() => form.value.region, () => {
+  form.value.comuna = ''
+  form.value.ciudad = ''
+})
+
+function onComunaChange() {
+  if (form.value.comuna) form.value.ciudad = form.value.comuna
+}
+
 const aplicarFormatoRut = (val) => {
   if (!val) return ''
-  val = val.replace(/[^0-9kK]/g, '').toUpperCase()
+  val = val.replace(/[^0-9kK]/g, '').toUpperCase().slice(0, 9)
   if (val.length <= 1) return val
   const dv     = val.slice(-1)
   let cuerpo   = val.slice(0, -1)
@@ -50,13 +73,82 @@ const aplicarFormatoRut = (val) => {
   return `${cuerpo}-${dv}`
 }
 
-const formatRut = (e) => {
-  form.value.rut = aplicarFormatoRut(e.target.value)
+// Verificación de RUT duplicado contra la BD (ambas tablas)
+const rutVerificando = ref(false)
+let _debounceRut = null
+
+async function verificarRut() {
+  const r = validarRut(form.value.rut)
+  if (!r.valido) return
+  rutVerificando.value = true
+  try {
+    const res = await apiFetch(`/api/verificar-rut/?rut=${encodeURIComponent(form.value.rut)}&tipo=empresa`)
+    if (res.ok) {
+      const data = await res.json()
+      if (!data.disponible) {
+        errores.value = { ...errores.value, rut: [data.mensaje || 'Este RUT ya está registrado.'] }
+      }
+    }
+  } catch {} finally {
+    rutVerificando.value = false
+  }
 }
+
+const formatRut = (e) => {
+  const v = aplicarFormatoRut(e.target.value)
+  form.value.rut = v
+  e.target.value = v
+  if (errores.value.rut) errores.value = { ...errores.value, rut: undefined }
+  clearTimeout(_debounceRut)
+  _debounceRut = setTimeout(verificarRut, 600)
+}
+
+onMounted(async () => {
+  const res = await apiFetch('/api/configuracion/planes/')
+  if (res.ok) planes.value = await res.json()
+})
 
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  const nombreResult = validarNombre(form.value.nombre, 2, 30)
+  if (!nombreResult.valido) {
+    errores.value = { nombre: [nombreResult.error] }
+    return
+  }
+
+  // Validar email si se ingresó
+  if (form.value.email) {
+    const emailResult = validarEmail(form.value.email)
+    if (!emailResult.valido) {
+      errores.value = { email: [emailResult.error] }
+      return
+    }
+  }
+
+  // Validar teléfono si se ingresó
+  if (form.value.telefono) {
+    const telResult = validarTelefono(form.value.telefono)
+    if (!telResult.valido) {
+      errores.value = { telefono: [telResult.error] }
+      return
+    }
+  }
+
+  // Verificación final del RUT contra la BD antes de crear
+  clearTimeout(_debounceRut)
+  if (form.value.rut) {
+    await verificarRut()
+    if (errores.value.rut) return
+  }
+
+  const textoMod = [form.value.nombre, form.value.direccion].filter(Boolean).join(' ')
+  if (textoMod.trim()) {
+    const okMod = await moderar(textoMod)
+    if (!okMod) return
+  }
+
   guardando.value = true
 
   try {
@@ -107,15 +199,18 @@ const guardar = async () => {
             <label class="label" for="nombre">Nombre de la empresa <span class="required">*</span></label>
             <input id="nombre" v-model="form.nombre" type="text" class="input"
               :class="{ 'input-error': errores.nombre }"
-              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off"/>
+              placeholder="Ej: Transportes del Norte S.A." required autocomplete="off" maxlength="30"/>
             <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
 
           <div class="form-group">
             <label class="label" for="rut">RUT <span class="required">*</span></label>
-            <input id="rut" :value="form.rut" @input="formatRut" type="text" class="input"
-              :class="{ 'input-error': errores.rut }"
-              placeholder="Ej: 76.123.456-7" required autocomplete="off"/>
+            <div style="position:relative">
+              <input id="rut" :value="form.rut" @input="formatRut" type="text" class="input"
+                :class="{ 'input-error': errores.rut }"
+                placeholder="Ej: 76.123.456-7" required autocomplete="off" maxlength="12"/>
+              <span v-if="rutVerificando" class="rut-spinner"/>
+            </div>
             <p v-if="errores.rut" class="field-error">{{ errores.rut[0] }}</p>
           </div>
         </div>
@@ -128,6 +223,19 @@ const guardar = async () => {
           </select>
         </div>
 
+        <!-- ── Suscripción ── -->
+        <h2 class="section-title">Suscripción</h2>
+
+        <div class="form-group form-group--small">
+          <label class="label" for="plan_id">Plan</label>
+          <select id="plan_id" v-model="form.plan_id" class="input select">
+            <option :value="null">Sin plan</option>
+            <option v-for="p in planes" :key="p.id" :value="p.id">
+              {{ p.nombre_display }} — {{ p.precio_display || 'A convenir' }}
+            </option>
+          </select>
+        </div>
+
         <!-- ── Contacto ── -->
         <h2 class="section-title">Contacto</h2>
 
@@ -136,14 +244,14 @@ const guardar = async () => {
             <label class="label" for="email">Email de contacto</label>
             <input id="email" v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="contacto@empresa.cl" autocomplete="off"/>
+              placeholder="contacto@empresa.cl" autocomplete="off" maxlength="50"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
 
           <div class="form-group">
             <label class="label" for="telefono">Teléfono</label>
-            <input id="telefono" v-model="form.telefono" type="text" class="input"
-              placeholder="+56 9 1234 5678" autocomplete="off"/>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
           </div>
         </div>
 
@@ -153,21 +261,7 @@ const guardar = async () => {
         <div class="form-group">
           <label class="label" for="direccion">Dirección</label>
           <input id="direccion" v-model="form.direccion" type="text" class="input"
-            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off"/>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label class="label" for="comuna">Comuna</label>
-            <input id="comuna" v-model="form.comuna" type="text" class="input"
-              placeholder="Providencia" autocomplete="off"/>
-          </div>
-
-          <div class="form-group">
-            <label class="label" for="ciudad">Ciudad</label>
-            <input id="ciudad" v-model="form.ciudad" type="text" class="input"
-              placeholder="Santiago" autocomplete="off"/>
-          </div>
+            placeholder="Av. Providencia 1234, Of. 5" autocomplete="off" maxlength="40"/>
         </div>
 
         <div class="form-row">
@@ -182,11 +276,32 @@ const guardar = async () => {
           <div class="form-group">
             <label class="label" for="pais">País</label>
             <input id="pais" v-model="form.pais" type="text" class="input"
-              placeholder="Chile" autocomplete="off"/>
+              placeholder="Chile" autocomplete="off" maxlength="100"/>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label" for="ciudad">Ciudad</label>
+            <select id="ciudad" v-model="form.ciudad" class="input select"
+              :disabled="!form.region">
+              <option value="">{{ form.region ? '— Selecciona ciudad —' : '— Elige región primero —' }}</option>
+              <option v-for="c in comunasDisponibles" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="label" for="comuna">Comuna</label>
+            <select id="comuna" v-model="form.comuna" class="input select"
+              :disabled="!form.region" @change="onComunaChange">
+              <option value="">{{ form.region ? '— Selecciona comuna —' : '— Elige región primero —' }}</option>
+              <option v-for="c in comunasDisponibles" :key="c" :value="c">{{ c }}</option>
+            </select>
           </div>
         </div>
 
         <!-- Acciones -->
+        <AvisoModeracion :aviso="avisoMod" :sugerencia="sugerenciaMod" />
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="router.push('/empresas')" :disabled="guardando">
             Cancelar
@@ -303,5 +418,51 @@ const guardar = async () => {
   border-top-color: #fff; border-radius: 50%;
   animation: spin 0.7s linear infinite; flex-shrink: 0;
 }
+
+.rut-spinner {
+  position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px;
+  border: 2px solid #D1D5DB; border-top-color: #7C3AED;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-header { flex-direction: column; gap: 0.625rem; }
+  .page-title { font-size: 1.25rem; }
+  .form-row { grid-template-columns: 1fr !important; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>

@@ -1,16 +1,18 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '../../utils/api.js'
+import { useToast } from '../../utils/useToast.js'
+import { validarPassword, validarTelefono, validarNombre, validarRut, soloTexto } from '../../utils/validators.js'
+import InputTelefono from '../../components/InputTelefono.vue'
 
 const router  = useRouter()
 const route   = useRoute()
+const toast     = useToast()
 const guardando = ref(false)
 const error     = ref('')
 const errores   = ref({})
 const empresas  = ref([])
-const todosPermisos = ref([])
-const permisosSeleccionados = ref([])
 
 // Detectar si venimos del flujo "crear empresa"
 const desdeEmpresa    = computed(() => !!route.query.empresa_id)
@@ -20,7 +22,10 @@ const empresaFijada   = computed(() => ({
 }))
 
 const form = ref({
-  nombre_completo: '',
+  nombre:           '',
+  apellido_paterno: '',
+  apellido_materno: '',
+  telefono: '',
   rut:      '',
   email:    '',
   password: '',
@@ -28,37 +33,48 @@ const form = ref({
   empresa_id: null,
 })
 
-const permisosAgrupados = computed(() => {
-  const grupos = {}
-  for (const p of todosPermisos.value) {
-    if (!grupos[p.categoria]) grupos[p.categoria] = []
-    grupos[p.categoria].push(p)
-  }
-  return grupos
+const nivelPassword = computed(() => {
+  if (!form.value.password) return null
+  const r = validarPassword(form.value.password)
+  return r.nivel || null
 })
 
-const toggleCategoria = (permisosCat) => {
-  const codigos = permisosCat.map(p => p.codigo)
-  const todosActivos = codigos.every(c => permisosSeleccionados.value.includes(c))
-  if (todosActivos) {
-    permisosSeleccionados.value = permisosSeleccionados.value.filter(c => !codigos.includes(c))
-  } else {
-    const nuevos = codigos.filter(c => !permisosSeleccionados.value.includes(c))
-    permisosSeleccionados.value = [...permisosSeleccionados.value, ...nuevos]
-  }
-}
-
-const categoriaCompleta = (permisosCat) =>
-  permisosCat.every(p => permisosSeleccionados.value.includes(p.codigo))
-
 const formatRut = (value) => {
-  let cleaned = value.replace(/[^0-9kK]/g, '')
+  let cleaned = value.replace(/[^0-9kK]/g, '').slice(0, 9)
   if (cleaned.length < 2) return cleaned
   const body = cleaned.slice(0, -1)
   const dv   = cleaned.slice(-1).toUpperCase()
   return `${body.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`
 }
-const onRutInput = (e) => { form.value.rut = formatRut(e.target.value) }
+// Verificación de RUT duplicado contra la BD (ambas tablas)
+const rutVerificando = ref(false)
+let _debounceRut = null
+
+async function verificarRut() {
+  const r = validarRut(form.value.rut)
+  if (!r.valido) return
+  rutVerificando.value = true
+  try {
+    const res = await apiFetch(`/api/verificar-rut/?rut=${encodeURIComponent(form.value.rut)}&tipo=usuario`)
+    if (res.ok) {
+      const data = await res.json()
+      if (!data.disponible) {
+        errores.value = { ...errores.value, rut: [data.mensaje || 'Este RUT ya está registrado.'] }
+      }
+    }
+  } catch {} finally {
+    rutVerificando.value = false
+  }
+}
+
+const onRutInput = (e) => {
+  const v = formatRut(e.target.value)
+  form.value.rut = v
+  e.target.value = v
+  if (errores.value.rut) errores.value = { ...errores.value, rut: undefined }
+  clearTimeout(_debounceRut)
+  _debounceRut = setTimeout(verificarRut, 600)
+}
 
 const cargarEmpresas = async () => {
   if (desdeEmpresa.value) {
@@ -67,8 +83,6 @@ const cargarEmpresas = async () => {
     const res = await apiFetch('/api/empresas/')
     if (res.ok) empresas.value = (await res.json()).filter(e => e.estado === 'activa')
   }
-  const resP = await apiFetch('/api/permisos/')
-  if (resP.ok) todosPermisos.value = await resP.json()
 }
 
 const volver = () => router.push(desdeEmpresa.value ? '/empresas' : '/usuarios')
@@ -76,10 +90,37 @@ const volver = () => router.push(desdeEmpresa.value ? '/empresas' : '/usuarios')
 const guardar = async () => {
   error.value   = ''
   errores.value = {}
+
+  // Validar nombre y apellidos (los tres obligatorios)
+  const nomR = validarNombre(form.value.nombre, 2, 30)
+  if (!nomR.valido) { errores.value = { nombre: [nomR.error] }; return }
+  const apPatR = validarNombre(form.value.apellido_paterno, 2, 30)
+  if (!apPatR.valido) { errores.value = { apellido_paterno: [apPatR.error] }; return }
+  const apMatR = validarNombre(form.value.apellido_materno, 2, 30)
+  if (!apMatR.valido) { errores.value = { apellido_materno: [apMatR.error] }; return }
+
+  // Validar teléfono (obligatorio)
+  const telR = validarTelefono(form.value.telefono)
+  if (!telR.valido) { errores.value = { telefono: [telR.error] }; return }
+
+  // Validar contraseña
+  const pwdResult = validarPassword(form.value.password)
+  if (!pwdResult.valido) {
+    errores.value = { password: [pwdResult.error] }
+    return
+  }
+
+  // Verificación final del RUT contra la BD antes de crear
+  clearTimeout(_debounceRut)
+  if (form.value.rut) {
+    await verificarRut()
+    if (errores.value.rut) return
+  }
+
   guardando.value = true
   try {
     const payload = { ...form.value }
-    if (form.value.rol === 'USUARIO') payload.permisos = permisosSeleccionados.value
+    if (payload.rol === 'SUPERADMIN') payload.empresa_id = null
     const res  = await apiFetch('/api/usuarios/crear/', { method: 'POST', body: payload })
     const data = await res.json()
     if (!res.ok) {
@@ -88,6 +129,7 @@ const guardar = async () => {
       else error.value = data.error || 'Error al crear el usuario'
       return
     }
+    toast.success('Usuario creado exitosamente')
     router.push(desdeEmpresa.value ? '/empresas' : '/usuarios')
   } catch {
     error.value = 'Error de conexión con el servidor'
@@ -95,6 +137,11 @@ const guardar = async () => {
     guardando.value = false
   }
 }
+
+// Al elegir SUPERADMIN se desvincula de cualquier empresa
+watch(() => form.value.rol, (rol) => {
+  if (rol === 'SUPERADMIN') form.value.empresa_id = null
+})
 
 onMounted(cargarEmpresas)
 </script>
@@ -136,42 +183,76 @@ onMounted(cargarEmpresas)
 
         <div class="form-row">
           <div class="form-group">
-            <label class="label">Nombre completo</label>
-            <input v-model="form.nombre_completo" type="text" class="input"
-              :class="{ 'input-error': errores.nombre_completo }"
-              placeholder="Ej: Juan Pérez González" required autocomplete="off"/>
-            <p v-if="errores.nombre_completo" class="field-error">{{ errores.nombre_completo[0] }}</p>
+            <label class="label">Nombre</label>
+            <input v-model="form.nombre" @input="form.nombre = soloTexto(form.nombre)" type="text" class="input"
+              :class="{ 'input-error': errores.nombre }"
+              placeholder="Ej: Juan" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.nombre" class="field-error">{{ errores.nombre[0] }}</p>
           </div>
-
           <div class="form-group">
             <label class="label">RUT</label>
-            <input :value="form.rut" @input="onRutInput" type="text" class="input"
-              :class="{ 'input-error': errores.rut }"
-              placeholder="12.345.678-9" maxlength="12" required autocomplete="off"/>
+            <div style="position:relative">
+              <input :value="form.rut" @input="onRutInput" type="text" class="input"
+                :class="{ 'input-error': errores.rut }"
+                placeholder="12.345.678-9" maxlength="12" required autocomplete="off"/>
+              <span v-if="rutVerificando" class="rut-spinner"/>
+            </div>
             <p v-if="errores.rut" class="field-error">{{ errores.rut[0] }}</p>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
+            <label class="label">Apellido paterno</label>
+            <input v-model="form.apellido_paterno" @input="form.apellido_paterno = soloTexto(form.apellido_paterno)" type="text" class="input"
+              :class="{ 'input-error': errores.apellido_paterno }"
+              placeholder="Ej: Pérez" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.apellido_paterno" class="field-error">{{ errores.apellido_paterno[0] }}</p>
+          </div>
+          <div class="form-group">
+            <label class="label">Apellido materno</label>
+            <input v-model="form.apellido_materno" @input="form.apellido_materno = soloTexto(form.apellido_materno)" type="text" class="input"
+              :class="{ 'input-error': errores.apellido_materno }"
+              placeholder="Ej: González" required autocomplete="off" maxlength="30"/>
+            <p v-if="errores.apellido_materno" class="field-error">{{ errores.apellido_materno[0] }}</p>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="label">Teléfono</label>
+            <InputTelefono v-model="form.telefono" :error="!!errores.telefono" />
+            <p v-if="errores.telefono" class="field-error">{{ errores.telefono[0] }}</p>
+          </div>
+          <div class="form-group">
             <label class="label">Email</label>
             <input v-model="form.email" type="email" class="input"
               :class="{ 'input-error': errores.email }"
-              placeholder="usuario@ejemplo.com" required autocomplete="off"/>
+              placeholder="usuario@ejemplo.com" required autocomplete="off" maxlength="50"/>
             <p v-if="errores.email" class="field-error">{{ errores.email[0] }}</p>
           </div>
+        </div>
 
+        <div class="form-row">
           <div class="form-group">
             <label class="label">Contraseña</label>
             <input v-model="form.password" type="password" class="input"
               :class="{ 'input-error': errores.password }"
-              placeholder="Mínimo 8 caracteres" required autocomplete="new-password"/>
+              placeholder="Mín. 8 chars, 1 mayúscula, 1 número" required autocomplete="new-password"/>
             <p v-if="errores.password" class="field-error">{{ errores.password[0] }}</p>
+            <div v-if="form.password && nivelPassword" class="pwd-strength">
+              <div class="pwd-strength-bar">
+                <div class="pwd-strength-fill" :class="`pwd-strength-${nivelPassword}`"/>
+              </div>
+              <span class="pwd-strength-label" :class="`pwd-level-${nivelPassword}`">
+                {{ nivelPassword === 'debil' ? 'Débil' : nivelPassword === 'media' ? 'Media' : 'Fuerte' }}
+              </span>
+            </div>
           </div>
         </div>
 
         <!-- Empresa fijada (flujo desde NuevaEmpresa) -->
-        <div v-if="desdeEmpresa" class="form-group">
+        <div v-if="desdeEmpresa && form.rol !== 'SUPERADMIN'" class="form-group">
           <label class="label">Empresa</label>
           <div class="input-bloqueado">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -184,7 +265,7 @@ onMounted(cargarEmpresas)
         </div>
 
         <!-- Empresa selector (flujo normal) -->
-        <div v-else class="form-group">
+        <div v-else-if="form.rol !== 'SUPERADMIN'" class="form-group">
           <label class="label">Empresa</label>
           <select v-model="form.empresa_id" class="input select"
             :class="{ 'input-error': errores.empresa_id }" required>
@@ -199,33 +280,8 @@ onMounted(cargarEmpresas)
           <label class="label">Rol</label>
           <select v-model="form.rol" class="input select">
             <option value="USUARIO">Usuario</option>
-            <option value="CONDUCTOR">Conductor</option>
             <option value="SUPERADMIN">Super Administrador</option>
           </select>
-        </div>
-
-        <!-- Sección de permisos (solo para USUARIO) -->
-        <div v-if="form.rol === 'USUARIO' && todosPermisos.length" class="permisos-seccion">
-          <div class="permisos-header">
-            <span class="label">Permisos</span>
-            <button type="button" class="btn-todos" @click="permisosSeleccionados = todosPermisos.map(p => p.codigo)">Todos</button>
-            <button type="button" class="btn-todos btn-ninguno" @click="permisosSeleccionados = []">Ninguno</button>
-          </div>
-          <div class="permisos-grid">
-            <div v-for="(permisosCat, cat) in permisosAgrupados" :key="cat" class="permiso-categoria">
-              <label class="categoria-label">
-                <input type="checkbox" :checked="categoriaCompleta(permisosCat)"
-                  @change="toggleCategoria(permisosCat)" class="check-cat"/>
-                <span class="categoria-nombre">{{ cat }}</span>
-              </label>
-              <div class="permiso-items">
-                <label v-for="p in permisosCat" :key="p.codigo" class="permiso-item">
-                  <input type="checkbox" :value="p.codigo" v-model="permisosSeleccionados" class="check-item"/>
-                  <span>{{ p.nombre }}</span>
-                </label>
-              </div>
-            </div>
-          </div>
         </div>
 
         <p v-if="errores.non_field_errors" class="field-error">{{ errores.non_field_errors[0] }}</p>
@@ -286,6 +342,12 @@ onMounted(cargarEmpresas)
 .input.input-error { border-color: #EF4444; }
 .select { cursor: pointer; }
 .field-error { font-size: 0.8125rem; color: #EF4444; margin: 0; }
+.rut-spinner {
+  position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px;
+  border: 2px solid #D1D5DB; border-top-color: #7C3AED;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
 .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; }
 .btn-secondary { padding: 0.6rem 1.25rem; background: #fff; border: 1.5px solid #D1D5DB; border-radius: 10px; font-size: 0.875rem; font-weight: 600; color: #374151; cursor: pointer; font-family: inherit; transition: border-color 0.15s; }
 .btn-secondary:hover { border-color: #9CA3AF; }
@@ -296,25 +358,52 @@ onMounted(cargarEmpresas)
 .spinner-inline { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.permisos-seccion { border: 1.5px solid #E5E7EB; border-radius: 12px; padding: 1rem 1.25rem; background: #FAFAFA; }
-.permisos-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
-.permisos-header .label { flex: 1; margin: 0; }
-.btn-todos {
-  font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.625rem;
-  border: 1.5px solid #7C3AED; border-radius: 6px; color: #7C3AED;
-  background: #fff; cursor: pointer; font-family: inherit; transition: background 0.15s;
-}
-.btn-todos:hover { background: #EDE9FE; }
-.btn-ninguno { border-color: #9CA3AF; color: #6B7280; }
-.btn-ninguno:hover { background: #F3F4F6; }
+.pwd-strength { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; }
+.pwd-strength-bar { flex: 1; height: 4px; background: #E5E7EB; border-radius: 99px; overflow: hidden; }
+.pwd-strength-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+.pwd-strength-debil  { width: 33%; background: #EF4444; }
+.pwd-strength-media  { width: 66%; background: #F59E0B; }
+.pwd-strength-fuerte { width: 100%; background: #10B981; }
+.pwd-strength-label { font-size: 0.75rem; font-weight: 500; white-space: nowrap; }
+.pwd-level-debil  { color: #EF4444; }
+.pwd-level-media  { color: #F59E0B; }
+.pwd-level-fuerte { color: #10B981; }
 
-.permisos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
-.permiso-categoria { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 0.75rem 1rem; }
-.categoria-label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin-bottom: 0.5rem; }
-.categoria-nombre { font-size: 0.8rem; font-weight: 700; color: #374151; text-transform: capitalize; }
-.check-cat { accent-color: #7C3AED; width: 14px; height: 14px; cursor: pointer; }
-.permiso-items { display: flex; flex-direction: column; gap: 0.35rem; padding-left: 0.25rem; }
-.permiso-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
-.permiso-item span { font-size: 0.8125rem; color: #4B5563; }
-.check-item { accent-color: #7C3AED; width: 13px; height: 13px; cursor: pointer; }
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-title { font-size: 1.25rem; }
+  .form-row { grid-template-columns: 1fr !important; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>

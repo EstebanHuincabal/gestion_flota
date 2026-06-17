@@ -1,0 +1,210 @@
+@import "tailwindcss";
+@import "@tabler/icons-webfont/dist/tabler-icons.min.css";
+
+/* ── Variables de tema ────────────────────────────────────────────────────── */
+:root {
+  /* Colores primarios */
+  --color-acento:       #534AB7;
+  --color-acento-dark:  #3D3598;
+  --color-acento-light: #6B63CC;
+  --color-acento-suave: #EEEDFE;
+  --color-acento-suave2: #F5F4FF;
+
+  /* Gradientes */
+  --gradient-primary:   linear-gradient(135deg, #534AB7 0%, #7C3AED 100%);
+  --gradient-hero:      linear-gradient(160deg, #534AB7 0%, #3D3598 60%, #2D2578 100%);
+  --gradient-success:   linear-gradient(135deg, #22c55e, #16a34a);
+  --gradient-card:      linear-gradient(135deg, #6B63CC 0%, #534AB7 100%);
+
+  /* Sombras */
+  --shadow-xs:    0 1px 3px rgba(0,0,0,0.06);
+  --shadow-sm:    0 2px 8px rgba(0,0,0,0.08);
+  --shadow-md:    0 4px 16px rgba(0,0,0,0.10);
+  --shadow-lg:    0 8px 32px rgba(0,0,0,0.12);
+  --shadow-acento: 0 4px 20px rgba(83,74,183,0.35);
+  --shadow-green:  0 4px 16px rgba(34,197,94,0.40);
+
+  /* Radios */
+  --radius-sm:  0.75rem;   /* 12px */
+  --radius-md:  1rem;      /* 16px */
+  --radius-lg:  1.25rem;   /* 20px */
+  --radius-xl:  1.5rem;    /* 24px */
+  --radius-2xl: 1.75rem;   /* 28px */
+
+  /* Safe area (valores seguros por defecto cuando no hay notch) */
+  --safe-top:    env(safe-area-inset-top,    0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left,   0px);
+  --safe-right:  env(safe-area-inset-right,  0px);
+
+  /* Altura del BottomNav: contenido (64px) + safe area inferior */
+  --nav-h:     64px;
+  --nav-total: calc(var(--nav-h) + var(--safe-bottom));
+}
+
+/* ── Reset base para app móvil ───────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;  /* sin flash azul al tocar en Android */
+}
+
+/*
+ * Viewport dinámico:
+ *   - 100dvh  → unidad que excluye la barra de dirección (Chrome/Safari modernos)
+ *   - -webkit-fill-available → fallback para iOS Safari < 15.4
+ */
+html {
+  height: -webkit-fill-available;
+  height: 100dvh;
+}
+
+html, body, #app {
+  height: 100%;
+  width: 100%;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  min-height: -webkit-fill-available;   /* fallback iOS < 15.4 */
+  min-height: 100dvh;
+  overscroll-behavior: none;            /* sin rebote de scroll en iOS/Android */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  font-size: 16px;    /* evita zoom automático en iOS al enfocar */
+  outline: none;
+}
+
+button {
+  outline: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Utilidades de safe area / viewport (usadas en todas las vistas) ─────── */
+
+/* Header con notch / Dynamic Island */
+.pt-safe {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+/* Padding inferior que siempre cubre el BottomNav + home indicator */
+.pb-nav {
+  padding-bottom: var(--nav-total);
+}
+
+/* Altura de pantalla dinámica (excluye barra de dirección del browser) */
+.min-h-dvh {
+  min-height: -webkit-fill-available;
+  min-height: 100dvh;
+}
+.h-dvh {
+  height: -webkit-fill-available;
+  height: 100dvh;
+}
+
+/* ── Scroll suave sin scrollbar en modales ───────────────────────────────── */
+.scroll-hidden {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.scroll-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Tap feedback ────────────────────────────────────────────────────────── */
+.tap-highlight:active {
+  opacity: 0.75;
+  transform: scale(0.97);
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+
+/* ── Glassmorphism ───────────────────────────────────────────────────────── */
+.glass {
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+.glass-dark {
+  background: rgba(30,20,80,0.75);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+/* ── Tarjeta elevada ─────────────────────────────────────────────────────── */
+.card {
+  background: #fff;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+}
+.card-hero {
+  background: var(--gradient-card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-acento);
+  color: #fff;
+}
+
+/* ── Badge de estado ─────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.2rem 0.625rem;
+  line-height: 1.4;
+}
+
+/* ── Skeleton animado ────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: var(--radius-md);
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Botón primario ──────────────────────────────────────────────────────── */
+.btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--gradient-primary);
+  box-shadow: var(--shadow-acento);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  min-height: 54px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-primary:active { opacity: 0.85; transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.5; box-shadow: none; }
+
+/* ── Sección de título ───────────────────────────────────────────────────── */
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9CA3AF;
+  margin-bottom: 0.625rem;
+}

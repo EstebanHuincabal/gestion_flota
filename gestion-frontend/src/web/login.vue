@@ -1,6 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { initEmpresaActivaDefault } from '../utils/empresaActiva.js'
 
 const router = useRouter()
 
@@ -10,8 +11,18 @@ const error = ref('')
 const isLoading = ref(false)
 const showPassword = ref(false)
 
+// Motivo de un cierre de sesión forzado (p. ej. empresa desactivada): se guarda
+// antes de redirigir al login y se muestra aquí como aviso, en vez de un alert().
+onMounted(() => {
+  const motivo = sessionStorage.getItem('mensaje_logout')
+  if (motivo) {
+    error.value = motivo
+    sessionStorage.removeItem('mensaje_logout')
+  }
+})
+
 const formatRut = (value) => {
-  let cleaned = value.replace(/[^0-9kK]/g, '')
+  let cleaned = value.replace(/[^0-9kK]/g, '').slice(0, 9)
   if (cleaned.length < 2) return cleaned
   let body = cleaned.slice(0, -1)
   let dv = cleaned.slice(-1).toUpperCase()
@@ -20,7 +31,9 @@ const formatRut = (value) => {
 }
 
 const onRutInput = (e) => {
-  rut.value = formatRut(e.target.value)
+  const v = formatRut(e.target.value)
+  rut.value      = v
+  e.target.value = v
 }
 
 const validateRut = (rutFull) => {
@@ -35,6 +48,46 @@ const validateRut = (rutFull) => {
   }
   const dvCalc = S ? S - 1 + '' : 'k'
   return dvCalc === dv
+}
+
+// ── Recuperar contraseña ─────────────────────────────────────────────────────
+const recuperarOpen   = ref(false)
+const recuperarRut    = ref('')
+const recuperarEstado = ref('')   // '' | 'enviando' | 'ok'
+const recuperarError  = ref('')
+
+const onRecuperarRutInput = (e) => {
+  const v = formatRut(e.target.value)
+  recuperarRut.value = v
+  e.target.value     = v
+  recuperarError.value = ''
+}
+
+const abrirRecuperar = () => {
+  recuperarRut.value    = ''
+  recuperarEstado.value = ''
+  recuperarError.value  = ''
+  recuperarOpen.value   = true
+}
+
+const enviarRecuperar = async () => {
+  recuperarError.value = ''
+  if (!validateRut(recuperarRut.value)) {
+    recuperarError.value = 'Ingresa un RUT válido.'
+    return
+  }
+  recuperarEstado.value = 'enviando'
+  try {
+    await fetch('/api/recuperar-password/', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rut: recuperarRut.value }),
+    })
+    recuperarEstado.value = 'ok'   // respuesta genérica: no se filtra si el RUT existe
+  } catch {
+    recuperarEstado.value = ''
+    recuperarError.value  = 'Error de conexión. Intenta nuevamente.'
+  }
 }
 
 const handleLogin = async () => {
@@ -57,7 +110,16 @@ const handleLogin = async () => {
     })
     const data = await response.json()
     if (response.ok) {
+      localStorage.setItem('access_token',  data.access)
+      localStorage.setItem('refresh_token', data.refresh)
       localStorage.setItem('usuario', JSON.stringify(data.user))
+      if (Array.isArray(data.user.plan_modulos)) {
+        sessionStorage.setItem('plan_modulos', JSON.stringify(data.user.plan_modulos))
+      }
+      sessionStorage.setItem('plan_nombre',   data.user.plan_nombre   || '')
+      sessionStorage.setItem('plan_permisos', JSON.stringify(data.user.plan_permisos || []))
+      // SUPERADMIN entra con "Todas las empresas" preseleccionada.
+      initEmpresaActivaDefault()
       const destino = data.user.rol === 'SUPERADMIN' ? '/dashboard' : (data.user.rol === 'USUARIO' ? '/empresa/dashboard' : '/login')
       router.push(destino)
     } else {
@@ -175,7 +237,7 @@ const handleLogin = async () => {
             <div class="field">
               <div class="field-row">
                 <label class="field-label">Contraseña</label>
-                <a href="#" class="forgot-link">¿Olvidaste tu contraseña?</a>
+                <button type="button" class="forgot-link" @click="abrirRecuperar">¿Olvidaste tu contraseña?</button>
               </div>
               <div class="input-wrap">
                 <span class="input-icon">
@@ -245,6 +307,57 @@ const handleLogin = async () => {
         </p>
       </div>
     </main>
+
+    <!-- ── Modal: recuperar contraseña ── -->
+    <transition name="fade-slide">
+      <div v-if="recuperarOpen" class="rec-overlay" @click.self="recuperarOpen = false">
+        <div class="rec-modal">
+          <button class="rec-close" @click="recuperarOpen = false" aria-label="Cerrar">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+
+          <!-- Estado: enviado -->
+          <div v-if="recuperarEstado === 'ok'" class="rec-ok">
+            <div class="rec-ok-icon">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+            <h2 class="rec-title">Correo enviado</h2>
+            <p class="rec-desc">
+              Si el RUT está registrado, recibirás una contraseña temporal en tu correo electrónico.
+            </p>
+            <button class="submit-btn" @click="recuperarOpen = false">Volver al inicio</button>
+          </div>
+
+          <!-- Estado: formulario -->
+          <div v-else>
+            <h2 class="rec-title">Recuperar contraseña</h2>
+            <p class="rec-desc">
+              Ingresa tu RUT y te enviaremos una contraseña temporal al correo registrado.
+            </p>
+
+            <label class="rec-label">RUT</label>
+            <input
+              :value="recuperarRut"
+              @input="onRecuperarRutInput"
+              @keyup.enter="enviarRecuperar"
+              type="text" inputmode="numeric" placeholder="12.345.678-9"
+              autocomplete="off"
+              :class="['rec-input', { 'rec-input-error': recuperarError }]"
+            />
+            <p v-if="recuperarError" class="rec-error">{{ recuperarError }}</p>
+
+            <button class="submit-btn" :disabled="recuperarEstado === 'enviando'" @click="enviarRecuperar">
+              <span v-if="recuperarEstado === 'enviando'" class="spinner"></span>
+              {{ recuperarEstado === 'enviando' ? 'Enviando...' : 'Enviar contraseña temporal' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
 
   </div>
 </template>
@@ -512,6 +625,11 @@ const handleLogin = async () => {
   color: #4F46E5;
   text-decoration: none;
   transition: color 0.2s;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 .forgot-link:hover { color: #7C3AED; }
 
@@ -660,4 +778,95 @@ const handleLogin = async () => {
   opacity: 0;
   transform: translateY(-6px);
 }
+
+/* ─────────────────────────────────────────
+   Recuperar contraseña
+───────────────────────────────────────── */
+.rec-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 100;
+}
+.rec-modal {
+  position: relative;
+  background: #fff;
+  border-radius: 16px;
+  padding: 2rem 1.75rem 1.75rem;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+}
+.rec-close {
+  position: absolute;
+  top: 0.875rem;
+  right: 0.875rem;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: #F3F4F6;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #6B7280;
+}
+.rec-close svg { width: 16px; height: 16px; }
+.rec-close:hover { background: #E5E7EB; }
+.rec-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.375rem;
+}
+.rec-desc {
+  font-size: 0.875rem;
+  color: #6B7280;
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+}
+.rec-label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.4rem;
+}
+.rec-input {
+  width: 100%;
+  padding: 0.7rem 0.875rem;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 10px;
+  font-size: 0.9375rem;
+  color: #111827;
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+  margin-bottom: 0.875rem;
+}
+.rec-input:focus { border-color: #4F46E5; }
+.rec-input-error { border-color: #F87171; background: #FEF2F2; }
+.rec-error {
+  font-size: 0.75rem;
+  color: #DC2626;
+  margin: -0.625rem 0 0.875rem;
+}
+.rec-ok { text-align: center; }
+.rec-ok-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0.5rem auto 1rem;
+  border-radius: 50%;
+  background: #ECFDF5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rec-ok-icon svg { width: 28px; height: 28px; color: #059669; }
+.rec-ok .rec-desc { margin-bottom: 1.5rem; }
 </style>

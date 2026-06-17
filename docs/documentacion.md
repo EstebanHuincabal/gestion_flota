@@ -1,81 +1,2560 @@
-# Documentación General: Gestión de Flota
+# Sistema de Gestión de Flota — Documentación Técnica
 
-¡Bienvenido/a al proyecto de **Gestión de Flota**! Esta guía está diseñada para brindarte una introducción rápida, clara y profesional sobre la estructura, tecnologías y funcionamiento principal del sistema. Si acabas de unirte al equipo, este es el lugar ideal para empezar.
+> **Versión:** 3.1 · **Última actualización:** Junio 2026  
+> **Stack:** Django 5 · Vue 3 · Capacitor 8 · PostgreSQL · JWT
 
-## 📌 1. Visión General
-Este sistema está diseñado para administrar de manera eficiente la flota de vehículos, conductores, asignaciones y mantenimientos de múltiples empresas. Funciona a través de un modelo de subscripciones, gestionado por un "Superadmin", donde cada empresa tiene su propio panel aislado.
+---
 
-## 🏗️ 2. Arquitectura y Tecnologías
-El sistema utiliza una arquitectura **desacoplada**, separando completamente el frontend del backend.
+## Tabla de contenidos
 
-*   **Frontend (La interfaz de usuario):**
-    *   **Vue.js 3:** Usando la moderna Composition API.
-    *   **Vite:** Herramienta de compilación ultra rápida.
-    *   **TailwindCSS:** Para un diseño rápido y responsivo.
-    *   **Vue Router:** Para la navegación interna.
-    *   **Chart.js:** Para la visualización de datos estadísticos.
+1. [Visión general](#1-visión-general)
+2. [Arquitectura del sistema](#2-arquitectura-del-sistema)
+3. [Estructura del repositorio](#3-estructura-del-repositorio)
+4. [Puesta en marcha (entorno de desarrollo)](#4-puesta-en-marcha-entorno-de-desarrollo)
+5. [Seguridad y cifrado de datos](#5-seguridad-y-cifrado-de-datos)
+6. [Autenticación JWT](#6-autenticación-jwt)
+7. [Roles y sistema de permisos](#7-roles-y-sistema-de-permisos)
+8. [Planes de suscripción](#8-planes-de-suscripción)
+9. [Módulos del sistema](#9-módulos-del-sistema)
+    - 9.10 [Notificaciones](#910-notificaciones)
+    - 9.11 [Auditoría (Logs)](#911-auditoría-logs)
+    - 9.12 [Configuración de Cuenta](#912-configuración-de-cuenta)
+    - 9.13 [Rutas y Trabajos](#913-rutas-y-trabajos)
+    - 9.14 [App Móvil de Conductores](#914-app-móvil-de-conductores)
+    - 9.15 [Solicitudes de Conductores (USUARIO + SUPERADMIN)](#915-solicitudes-de-conductores-panel-web)
+    - 9.16 [Geolocalización GPS (Traccar)](#916-geolocalización-gps-traccar)
+    - 9.17 [Selector de empresa del SUPERADMIN](#917-selector-de-empresa-del-superadmin-y-opción-todas-las-empresas)
+    - 9.18 [Moderación de contenido (Gemini + diccionario)](#918-moderación-de-contenido-gemini--diccionario)
+10. [Referencia de la API REST](#10-referencia-de-la-api-rest)
+11. [Modelo de datos](#11-modelo-de-datos)
+12. [Frontend — Estructura de vistas](#12-frontend--estructura-de-vistas)
+13. [Sistema de notificaciones](#13-sistema-de-notificaciones)
+14. [Alertas de interfaz (Toasts)](#14-alertas-de-interfaz-toasts)
+15. [Sistema de emails transaccionales](#15-sistema-de-emails-transaccionales)
+16. [Variables de entorno](#16-variables-de-entorno)
+17. [Manejo de errores](#17-manejo-de-errores-v25)
+18. [Pasarela de pago Transbank y suscripciones](#18-pasarela-de-pago-transbank-y-suscripciones)
+19. [Notas técnicas y apéndices](#19-notas-técnicas-y-apéndices)
 
-*   **Backend (El motor y la API):**
-    *   **Python con Django 5.x:** Framework principal robusto y seguro.
-    *   **Django REST Framework (DRF):** Para construir la API RESTful que comunica los datos con el frontend.
-    *   **Base de Datos:** SQLite (actualmente configurado para el entorno de desarrollo).
+---
 
-## 📁 3. Estructura del Proyecto
+## 1. Visión general
 
-El repositorio principal está dividido en dos grandes bloques:
+El **Sistema de Gestión de Flota** es una aplicación SaaS multiempresa orientada a la administración integral de flotas vehiculares en Chile. Permite a cada empresa cliente gestionar sus vehículos, conductores, mantenciones, documentos legales y finanzas operativas desde un panel privado y aislado.
 
-```text
-gestion-de-flota/
-├── gestion-frontend/    <-- Todo el código de Vue.js (Interfaz visual)
-│   ├── src/             <-- Código fuente principal
-│   │   ├── components/  <-- Componentes reutilizables (Botones, Modales, etc.)
-│   │   ├── router/      <-- Configuración de rutas
-│   │   ├── utils/       <-- Funciones auxiliares (Llamadas a la API, validaciones)
-│   │   └── web/         <-- Vistas principales de la aplicación (Páginas)
-│   └── package.json     <-- Dependencias de Node.js
-│
-├── gestion_backend/     <-- Todo el código de Python/Django (Lógica y BD)
-│   ├── g_de_flota/      <-- La "App" principal de Django
-│   │   ├── models.py    <-- Definición de las tablas de la base de datos
-│   │   ├── views.py     <-- Lógica que responde a las peticiones del frontend
-│   │   ├── serializers.py<- Convierte datos complejos a formato JSON
-│   │   └── urls.py      <-- Rutas de la API (Endpoints)
-│   ├── manage.py        <-- Script de comandos de Django
-│   └── .env             <-- Variables de entorno (Contraseñas y claves)
-│
-└── CONTEXTO.md          <-- Documentación técnica más profunda y detallada
+Un usuario **Superadmin** opera a nivel global: administra las empresas cliente, sus planes de suscripción y tiene acceso a métricas y reportes consolidados de toda la plataforma.
+
+### Capacidades principales
+
+| Área | Funcionalidad |
+|---|---|
+| **Flota** | Gestión de flotas, vehículos y asignación conductor-vehículo |
+| **Mantenciones** | Registro correctivo + mantenimiento predictivo basado en reglas |
+| **Documentos** | Control de vigencia para permisos, revisión técnica, SOAP y licencias |
+| **Finanzas** | Gastos operativos categorizados, presupuesto mensual y dashboard SaaS |
+| **Reportes** | Exportación XLSX y visualizaciones Chart.js por módulo |
+| **Rutas y Trabajos** | Planificación de rutas con mapa Leaflet, cálculo OSRM (distancia/duración/polyline), checklist pre-viaje, registro de km y notas al finalizar, historial de eventos y comentarios por ruta |
+| **Notificaciones** | Alertas in-app en tiempo real (WebSocket) + preferencias de canal |
+| **Permisos** | Una capa basada en el plan: módulos visibles y acciones disponibles se definen a nivel de plan de suscripción |
+| **App Conductores** | Aplicación móvil (Vue 3 + Capacitor 8) para conductores: consulta de rutas asignadas, inicio/finalización con km y costos reales, mapa Leaflet, solicitudes de mantención/combustible/incidencia/documento con foto, soporte offline con SQLite |
+
+---
+
+## 2. Arquitectura del sistema
+
+El proyecto sigue una arquitectura **desacoplada** (API REST + SPA):
+
+```
+┌─────────────────────────┐  ┌─────────────────────────┐
+│   Panel Web (Navegador)  │  │  App Conductores (móvil) │
+│  Vue 3 · Chart.js        │  │  Vue 3 · Capacitor 8     │
+│  http://localhost:7183   │  │  http://localhost:5174   │
+└────────────┬────────────┘  └──────┬──────────┬────────┘
+             │ HTTP/JSON (JWT)       │ HTTP/JSON │ WebSocket
+             │ WebSocket (ws://)     │ + WS      │ ws/conductor/
+┌────────────▼───────────────────────▼───────────▼───────┐
+│                Backend (Django 5 / ASGI)                │
+│   Django REST Framework · SimpleJWT · Channels          │
+│                 http://localhost:8000                   │
+└────────────────────────┬───────────────────────┬────────┘
+                         │ ORM                    │ Firebase Admin SDK
+┌────────────────────────▼───────┐   ┌────────────▼────────────────────┐
+│           Base de datos         │   │   Firebase Cloud Messaging (FCM) │
+│         SQLite (desarrollo)     │   │   Push notifications → dispositivos│
+└─────────────────────────────────┘   └──────────────────────────────────┘
 ```
 
-## 🚀 4. Cómo empezar (Entorno de Desarrollo)
+### Tecnologías
 
-Para levantar el proyecto en tu máquina local de forma sencilla, puedes utilizar los scripts preparados.
+**Backend**
 
-### Scripts de inicio rápido
-El proyecto cuenta con scripts que levantan tanto el servidor del backend como el frontend de manera simultánea:
-*   En Windows: Ejecuta el archivo `iniciar.bat` o `iniciar.ps1` ubicados en la raíz del proyecto.
+| Tecnología | Versión | Propósito |
+|---|---|---|
+| Python / Django | 5.x | Framework web y ORM |
+| Django REST Framework | — | API RESTful |
+| djangorestframework-simplejwt | — | Autenticación JWT |
+| Django Channels + Daphne | — | WebSockets (notificaciones en tiempo real) |
+| cryptography (Fernet) | — | Cifrado simétrico de datos sensibles |
+| openpyxl | — | Exportación de reportes a XLSX |
+| python-dotenv | — | Gestión de variables de entorno |
+| firebase-admin | 7.4.x | Envío de notificaciones push mediante Firebase Cloud Messaging |
 
-### Arranque Manual (Paso a paso)
-Si prefieres tener más control, puedes levantar cada entorno en terminales separadas:
+**Frontend web**
 
-**Para el Backend (API en Python):**
-1. Abre una terminal y navega hasta la carpeta `gestion_backend`.
-2. Activa tu entorno virtual (si tienes uno configurado).
-3. Ejecuta el servidor de Django: `python manage.py runserver`
+| Tecnología | Versión | Propósito |
+|---|---|---|
+| Vue.js 3 (Composition API) | — | Framework SPA |
+| Vite | — | Bundler y servidor de desarrollo |
+| Vue Router | — | Navegación entre vistas |
+| TailwindCSS | — | Estilos utilitarios |
+| Chart.js | — | Visualizaciones y gráficos |
 
-**Para el Frontend (Interfaz en Node.js):**
-1. Abre una nueva terminal en la carpeta `gestion-frontend`.
-2. Si es tu primera vez, instala las dependencias con: `npm install`
-3. Inicia el servidor de desarrollo: `npm run dev` (La aplicación estará disponible en `http://localhost:7183`).
+**App móvil de conductores**
 
-## 🔒 5. Aspectos Claves a tener en cuenta
+| Tecnología | Versión | Propósito |
+|---|---|---|
+| Vue.js 3 (Composition API) | — | Framework SPA |
+| Vite + Capacitor 8 | — | Bundler + empaquetado Android/iOS |
+| Pinia | — | Gestión de estado global |
+| @capacitor/preferences | — | Almacenamiento seguro de tokens (Keychain/EncryptedSharedPreferences) |
+| @capacitor-community/sqlite | — | Base de datos local para modo offline |
+| @capacitor/network | — | Detección de conectividad |
+| @capacitor/push-notifications | — | Registro de token FCM y recepción de notificaciones push nativas |
+| Leaflet.js | — | Mapas interactivos con paradas y polilínea |
 
-*   **Seguridad y Privacidad:** Los datos sensibles en la base de datos (como RUTs, números de teléfono y licencias) se almacenan **encriptados**. Se utiliza una librería avanzada (Fernet) para proteger esta información.
-*   **Autenticación Híbrida:** El acceso al panel principal se realiza mediante el RUT del usuario y su contraseña.
-*   **Tipos de Usuarios (Roles):** El sistema reconoce 3 jerarquías:
-    *   `SUPERADMIN`: Administra a nivel global, gestiona las empresas cliente.
-    *   `USUARIO`: Es el administrador o responsable dentro de una empresa específica.
-    *   `CONDUCTOR`: Perfil operativo asociado directamente a un vehículo de la flota.
-*   **Aislamiento de Datos:** Todo en el frontend gira en torno a la "empresa activa". El código asegura que cada usuario solo vea e interactúe con la información que pertenece a su propia organización.
+---
 
-## 📚 6. ¿Dónde aprender más?
-Una vez que te familiarices con este documento, te sugerimos leer el archivo `CONTEXTO.md` ubicado en la raíz del proyecto. Ese documento contiene detalles técnicos más profundos sobre los modelos de datos, arquitectura de seguridad y reglas de negocio.
+## 3. Estructura del repositorio
+
+```
+gestion_flota/
+├── iniciar.ps1                   # Script de arranque conjunto (3 servicios)
+├── .env                          # Variables de entorno centralizadas (no commitear)
+├── docs/
+│   └── documentacion.md          # Este archivo
+│
+├── gestion-frontend/             # Panel web — Vue 3 SPA
+│   ├── src/
+│   │   ├── App.vue               # Raíz de la aplicación
+│   │   ├── router/               # Definición de rutas del SPA
+│   │   ├── utils/
+│   │   │   └── api.js            # Cliente HTTP con auto-refresh JWT
+│   │   ├── components/           # Componentes reutilizables
+│   │   │   ├── AppToast.vue      # Sistema de toasts global
+│   │   │   ├── ConfirmModal.vue  # Modal de confirmación genérico
+│   │   │   ├── LimitePlanModal.vue
+│   │   │   ├── NotificacionesBell.vue
+│   │   │   ├── PermisoToast.vue  # Aviso de permiso denegado
+│   │   │   └── PlanUsageBanner.vue
+│   │   └── web/                  # Vistas de la aplicación
+│   │       ├── login.vue
+│   │       ├── Base.vue          # Layout SUPERADMIN
+│   │       ├── Dashboard.vue     # Dashboards empresa y superadmin
+│   │       ├── clientes/         # Gestión de empresas (SUPERADMIN)
+│   │       ├── configuracion/    # Perfil, notificaciones, mi plan
+│   │       ├── documentos/       # Gestión documental
+│   │       ├── empresa/          # Layout y submódulos de empresa
+│   │       │   ├── EmpresaLayout.vue
+│   │       │   ├── conductores/
+│   │       │   ├── flota/
+│   │       │   │   └── mantenciones/
+│   │       │   └── predictivo/
+│   │       ├── finanzas/         # Gastos, presupuesto y SaaS
+│   │       ├── logs/             # Auditoría
+│   │       ├── notificaciones/
+│   │       ├── permisos/
+│   │       ├── planes/
+│   │       ├── reportes/         # Reportes empresa y superadmin
+│   │       ├── rutas/            # Rutas y trabajos
+│   │       │   ├── Rutas.vue     # Vista principal con tabla, panel y modales (incl. carga masiva)
+│   │       │   └── MapaRuta.vue  # Componente Leaflet reutilizable
+│   │       ├── solicitudes/      # Solicitudes de conductores (panel web)
+│   │       │   └── SolicitudesConductores.vue  # Tabla + modales + badge WS
+│   │       └── usuarios/
+│   └── package.json
+│
+├── app_conductor/                # App móvil conductores — Vue 3 + Capacitor 8
+│   ├── src/
+│   │   ├── main.js               # Punto de entrada
+│   │   ├── router/
+│   │   │   └── index.js          # Rutas + guard de autenticación
+│   │   ├── stores/
+│   │   │   ├── auth.js           # Sesión: login con RUT, tokens en Preferences
+│   │   │   ├── rutas.js          # Estado de rutas + offline optimista
+│   │   │   ├── solicitudes.js    # Estado de solicitudes + WebSocket + tipos permitidos por plan
+│   │   │   └── mantenciones.js   # Mantenciones del vehículo asignado (urgente, bloqueado)
+│   │   ├── services/
+│   │   │   ├── api.js            # Cliente HTTP con auto-refresh JWT
+│   │   │   ├── db.js             # SQLite (nativo) / Map en memoria (navegador)
+│   │   │   ├── sync.js           # Sincronización offline → online
+│   │   │   └── websocket.js      # Singleton WebSocket con backoff exponencial (WS conductor)
+│   │   ├── views/
+│   │   │   ├── Login.vue         # Login con RUT chileno + validación módulo 11
+│   │   │   ├── Rutas/
+│   │   │   │   ├── ListaRutas.vue   # Lista activa, pendientes e historial
+│   │   │   │   └── DetalleRuta.vue  # Mapa Leaflet + acción iniciar/finalizar
+│   │   │   ├── Solicitudes/
+│   │   │   │   └── ListaSolicitudes.vue
+│   │   │   ├── Mantenciones/
+│   │   │   │   └── MiMantencion.vue  # Mantenciones pendientes/en proceso del vehículo
+│   │   │   ├── Ajustes/
+│   │   │   │   └── Ajustes.vue
+│   │   │   └── Onboarding/
+│   │   │       └── SubirDocumentos.vue
+│   │   ├── components/
+│   │   │   ├── BottomNav.vue     # Barra de navegación inferior (4 tabs: Rutas/Solicitudes/Mantención/Ajustes)
+│   │   │   └── RutaCard.vue      # Tarjeta de ruta (variantes: activa/pendiente/finalizada)
+│   │   ├── utils/
+│   │   │   └── formato.js        # formatCLP, formatDuracion, formatFechaRuta, tiempoDesde, agruparPorFecha, iniciales
+│   │   └── assets/
+│   │       └── main.css          # Tailwind + variables CSS --color-acento
+│   ├── vite.config.js            # Puerto 5174 · envDir '..' · proxy /api → :8000
+│   └── package.json
+│
+└── gestion_backend/              # Backend Django
+    ├── manage.py
+    ├── requirements.txt
+    ├── serviceAccountKey.json    # Credenciales Firebase Admin SDK (no commitear — local/server)
+    ├── g_de_flota/               # App principal
+    │   ├── models.py             # Modelos ORM (incluye Vehiculo.en_mantencion)
+    │   ├── views.py              # Endpoints principales (incluye login con vehiculo_asignado)
+    │   ├── views_gastos.py       # Endpoints de finanzas
+    │   ├── views_reportes.py     # Endpoints de reportes
+    │   ├── views_documentos.py   # Endpoints de documentos (logs enriquecidos)
+    │   ├── views_planes.py       # Endpoints de planes
+    │   ├── views_config.py       # Perfil y configuración
+    │   ├── views_rutas.py        # Endpoints de rutas y trabajos (panel web)
+    │   ├── views_conductor.py    # Endpoints exclusivos app móvil conductores (rutas, solicitudes, mantenciones, push-token)
+    │   ├── views_solicitudes.py  # Endpoints panel web: gestión solicitudes + push FCM + WS conductor
+    │   ├── firebase_push.py      # Envío push FCM (inicialización lazy, falla silenciosamente si no configurado)
+    │   ├── consumers.py          # WS consumers: NotificacionesConsumer, SolicitudesConsumer, ConductorConsumer
+    │   ├── routing.py            # Rutas WebSocket (ws/solicitudes/, ws/conductor/)
+    │   ├── ruta_calculator.py    # Motor de cálculo OSRM (distancia, duración, polyline — sin costos ni peajes)
+    │   ├── audit.py              # registrar_log() + _parse_navegador/so() + _diff_campos()
+    │   ├── serializers.py        # Serializadores DRF (LogAuditoria incluye navegador/so)
+    │   ├── backends.py           # Backend de autenticación por RUT
+    │   └── middleware.py         # Middleware de seguridad
+    └── gestion_backend/
+        ├── settings.py           # load_dotenv desde raíz del monorepo; FIREBASE_CREDENTIALS
+        ├── urls.py               # Router principal (84+ endpoints)
+        ├── asgi.py               # Configuración ASGI / Channels
+        └── wsgi.py
+```
+
+---
+
+## 4. Puesta en marcha (entorno de desarrollo)
+
+### Requisitos previos
+
+- Python 3.11+
+- Node.js 18+ / npm
+- Git
+
+### Arranque rápido (recomendado)
+
+Desde la raíz del proyecto ejecutar el script PowerShell que levanta los **3 servicios** simultáneamente en pestañas separadas de Windows Terminal:
+
+```powershell
+.\iniciar.ps1
+```
+
+Los tres servicios que se inician son:
+- **Backend Django** → `http://localhost:8000`
+- **Panel web** → `http://localhost:7183`
+- **App conductores** → `http://localhost:5174`
+
+### Arranque manual
+
+**Backend (terminal 1)**
+
+```bash
+cd gestion_backend
+# Crear y activar entorno virtual (primera vez)
+python -m venv venv
+.\venv\Scripts\Activate.ps1   # Windows
+
+# Instalar dependencias (primera vez)
+pip install -r requirements.txt
+
+# Aplicar migraciones (primera vez)
+python manage.py migrate
+
+# Iniciar servidor ASGI
+python manage.py runserver
+# → API disponible en http://localhost:8000
+```
+
+**Panel web (terminal 2)**
+
+```bash
+cd gestion-frontend
+
+# Instalar dependencias (primera vez)
+npm install
+
+# Iniciar servidor de desarrollo
+npm run dev
+# → Interfaz disponible en http://localhost:7183
+```
+
+**App conductores (terminal 3)**
+
+```bash
+cd app_conductor
+
+# Instalar dependencias (primera vez)
+npm install
+
+# Iniciar servidor de desarrollo (web/browser)
+npm run dev
+# → App disponible en http://localhost:5174
+```
+
+### Variables de entorno necesarias
+
+Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`) que es leído por Django y por Vite de ambos frontends (ver sección 15 para detalle completo):
+
+```ini
+SECRET_KEY=<clave-django-aleatoria>
+ENCRYPTION_KEY=<clave-cifrado-fernet>
+DEBUG=True
+VITE_API_URL=
+```
+
+---
+
+## 5. Seguridad y cifrado de datos
+
+### Cifrado Fernet de campos sensibles
+
+Los datos personales se almacenan **cifrados en la base de datos** usando el algoritmo simétrico AES-128-CBC a través de la librería `cryptography.fernet`. La clave derivada se obtiene aplicando SHA-256 a `settings.ENCRYPTION_KEY`.
+
+Los campos cifrados son:
+
+| Modelo | Campos cifrados |
+|---|---|
+| `Usuario` | `rut_cifrado`, `nombre_cifrado`, `telefono_cifrado`, `licencia_cifrada` |
+| `Empresa` | `rut_cifrado`, `email_cifrado`, `telefono_cifrado`, `direccion_cifrada`, `comuna_cifrada`, `ciudad_cifrada` |
+
+Para búsquedas por RUT (login, deduplicación) se almacena adicionalmente el hash SHA-256 del RUT normalizado (`rut_hash`), permitiendo comparación sin descifrar.
+
+### Cifrado transparente de datos operativos
+
+Además de los campos anteriores (que usan el patrón `_cifrado` + propiedad), los **datos operativos sensibles** se cifran de forma **transparente** mediante campos personalizados definidos en `g_de_flota/fields.py`:
+
+- `EncryptedCharField` / `EncryptedTextField` — texto cifrado; a nivel de Python se trabaja siempre con el valor en claro, así que serializers, vistas y admin no requieren cambios.
+- `EncryptedFloatField` — números (coordenadas GPS) cifrados; se guardan como texto cifrado y se devuelven como `float`.
+
+El descifrado degrada con gracia: si el valor almacenado no es un token Fernet válido (dato antiguo en claro), se devuelve tal cual.
+
+| Modelo | Campos cifrados (transparentes) |
+|---|---|
+| `Vehiculo` | `patente` (+ `patente_hash`), `marca`, `modelo` |
+| `Usuario` | `email` (+ `email_hash`) |
+| `Parada` | `nombre`, `direccion`, `latitud`, `longitud`, `notas` |
+| `Ubicacion` | `latitud`, `longitud`, `velocidad` |
+| `Ruta` | `nombre`, `descripcion`, `notas` |
+| `EventoRuta` | `texto` |
+| `Mantencion` | `tipo_mantencion`, `descripcion`, `taller_proveedor` |
+| `GastoOperativo` | `descripcion` |
+| `SolicitudConductor` | `titulo`, `descripcion`, `respuesta` |
+| `Notificacion` | `titulo`, `mensaje` |
+
+**Limitación (por el IV aleatorio de Fernet):** no se puede filtrar, ordenar ni exigir `unique=True` sobre estos campos a nivel de BD. Por eso la búsqueda de solicitudes por texto se realiza en Python tras descifrar (`SolicitudListView`). Los **montos/costos financieros se dejan sin cifrar** a propósito, para no romper las sumas y reportes del dashboard.
+
+**Campos con búsqueda/unicidad (columna `_hash` SHA-256 determinista):** `Vehiculo.patente` usa `patente_hash` (normalizada sin espacios/guiones, mayúsculas) para dedup y lookups; `Usuario.email` usa `email_hash` para deduplicación, búsqueda exacta y el **login del admin de Django**. Como el email está cifrado, `UsuarioManager.get_by_natural_key()` se sobreescribe para buscar por `email_hash` (el login del frontend ya era por `rut_hash`). Las búsquedas parciales por email (lista de usuarios, logs) se resuelven en Python tras descifrar.
+
+> Migraciones de datos: `0066`+`0067` (lote inicial) · `0068`+`0069` (patentes) · `0070`+`0071` (emails). Todas idempotentes.
+
+### Normalización del RUT
+
+Antes de cifrar o hashear, el RUT se normaliza eliminando puntos y convirtiendo a minúsculas:
+
+```
+12.345.678-9  →  12345678-9
+```
+
+### Backend de autenticación personalizado
+
+El inicio de sesión se realiza con **RUT + contraseña** (no email). El backend `RutBackend` busca al usuario por `rut_hash` y valida la contraseña con el sistema de Django.
+
+### Bloqueo de cuenta
+
+Tras intentos fallidos consecutivos, la cuenta puede ser bloqueada (`is_blocked=True`). El desbloqueo lo realiza un administrador desde el panel de usuarios.
+
+---
+
+## 6. Autenticación JWT
+
+El sistema utiliza autenticación **stateless** mediante JSON Web Tokens, implementada con `djangorestframework-simplejwt`.
+
+### Flujo de autenticación
+
+```
+[Cliente]  POST /api/login/ {rut, password}
+                    ↓
+[Backend]  Valida credenciales → devuelve {access, refresh}
+                    ↓
+[Cliente]  Almacena tokens en localStorage
+           Incluye header en cada petición:
+           Authorization: Bearer <access_token>
+```
+
+### Configuración de tokens
+
+| Parámetro | Valor |
+|---|---|
+| Duración `access_token` | 60 minutos |
+| Duración `refresh_token` | 7 días |
+| Rotación de refresh | Habilitada (`ROTATE_REFRESH_TOKENS = True`) |
+| Tipo de cabecera | `Bearer` |
+
+### Renovación automática (auto-refresh)
+
+La función `apiFetch` en `src/utils/api.js` intercepta respuestas `401` automáticamente:
+
+1. Llama a `POST /api/token/refresh/` con el `refresh_token` almacenado.
+2. Si la renovación es exitosa, guarda los nuevos tokens y reintenta la petición original de forma transparente.
+3. Si el refresh está expirado o es inválido, limpia el storage y redirige al login.
+
+### Endpoints de autenticación
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/api/login/` | Login por RUT — devuelve `access` + `refresh` |
+| `POST` | `/api/token/refresh/` | Renueva el `access_token` usando el `refresh_token` |
+
+---
+
+## 7. Roles y sistema de permisos
+
+### Roles (jerarquía)
+
+| Rol | Descripción |
+|---|---|
+| `SUPERADMIN` | Administrador global de la plataforma. Gestiona empresas, planes y tiene acceso a métricas SaaS. Tiene todos los permisos sin restricción. |
+| `USUARIO` | Administrador de una empresa cliente. Sus módulos y permisos disponibles están determinados íntegramente por el plan de suscripción de su empresa. |
+| `CONDUCTOR` | Perfil operativo. Sin acceso a módulos de gestión — accede únicamente a la información de su vehículo asignado. |
+
+### Sistema de permisos (una capa — basado en el plan)
+
+Los permisos **no se configuran por usuario individualmente**. Todo lo que un usuario de tipo `USUARIO` puede ver y hacer está determinado exclusivamente por el **plan de suscripción** de su empresa. El plan define dos conjuntos:
+
+**`modulos` — Secciones habilitadas:**  
+JSON array almacenado en `PlanSuscripcion.modulos`. Controla qué secciones aparecen en el menú de navegación. Si un módulo no está en el plan, la vista muestra una pantalla de bloqueo.
+
+```json
+["conductores", "documentos", "finanzas", "reportes", "predictivo"]
+```
+
+**`permisos` — Acciones disponibles:**  
+Relación M2M entre `PlanSuscripcion` y `Permiso`. Define qué operaciones (crear, editar, eliminar, exportar, etc.) están disponibles dentro de los módulos habilitados.
+
+Ejemplo de códigos de permiso:
+
+```
+flota.ver            flota.crear          flota.editar         flota.eliminar
+mantencion.ver       mantencion.crear     mantencion.editar
+conductores.ver      conductores.asignar
+finanzas.ver         finanzas.crear       finanzas.editar      finanzas.eliminar      finanzas.presupuesto
+reportes.ver         reportes.exportar
+documentos.ver       documentos.subir
+```
+
+### Cómo fluyen los permisos al frontend
+
+Al iniciar sesión (y periódicamente cada 15 segundos), el frontend obtiene los permisos y módulos vigentes:
+
+1. **Login** (`POST /api/login/`): el backend incluye `plan_modulos` y `plan_permisos` en la respuesta. Se guardan en `sessionStorage`.
+2. **Refresco** (`GET /api/usuario/perfil/`): `EmpresaLayout.vue` llama a este endpoint al montar y cada 15 s, actualizando `sessionStorage` si el plan cambia.
+3. **Verificación** (`src/utils/permisos.js`):
+   - `tieneModulo(modulo)` → consulta `sessionStorage['plan_modulos']`
+   - `tienePermiso(codigo)` → consulta `sessionStorage['plan_permisos']`
+   - Para `SUPERADMIN`, ambas funciones retornan `true` siempre.
+   - Para `CONDUCTOR`, ambas retornan `false` siempre.
+
+### Verificación de permisos en el frontend
+
+El componente `PermisoToast.vue` muestra una notificación de acceso denegado cuando un usuario intenta realizar una acción sin el permiso correspondiente. El componente `PlanUsageBanner.vue` avisa cuando la empresa se acerca a los límites cuantitativos del plan (vehículos, flotas, conductores, usuarios).
+
+---
+
+## 8. Planes de suscripción
+
+### Planes disponibles
+
+El Superadmin puede crear **cuantos planes quiera**, con el **nombre libre** que defina (campo `PlanSuscripcion.nombre`, texto libre único, máx. 30 caracteres). Ya no existe una lista fija de códigos (`basico`/`pro`/`enterprise`). El comando `seed_planes` solo siembra unos planes de ejemplo iniciales.
+
+Validaciones del formulario de plan (frontend `Planes.vue` + backend): nombre máx. **30** caracteres, descripción máx. **100**, orden de visualización **≥ 0**, y todos los valores numéricos (precio mensual y límites) **no pueden ser negativos**.
+
+La facturación es **únicamente mensual**. No existe ciclo anual: se eliminó el campo `precio_anual` y toda la lógica/selección de ciclo anual (cobros, renovaciones a 30 días, registro público, landing y pago). El campo `ciclo` de los pagos/suscripciones se conserva en BD (siempre `'mensual'` de aquí en adelante) solo para que el historial de pagos antiguos que fueron anuales siga siendo legible.
+
+Cada plan define sus propios límites cuantitativos (flotas, vehículos, conductores, usuarios) y, además:
+- **`modulos`**: qué secciones del sistema son visibles para las empresas suscritas.
+- **`permisos`**: qué acciones (crear, editar, eliminar, exportar, etc.) están disponibles dentro de esos módulos.
+
+Todos los usuarios de una empresa comparten los mismos módulos y permisos — ambos determinados exclusivamente por el plan. No existe configuración de permisos por usuario individual.
+
+#### Desactivar planes (no se eliminan)
+
+Los planes **no se eliminan** desde la interfaz; se **desactivan** (`activo=False`). Al desactivar un plan:
+- Las empresas que ya lo tienen **lo conservan y siguen pagando con normalidad** (no se tocan `Empresa.plan` ni su `Suscripcion`).
+- El plan **deja de ofrecerse a nuevos clientes**: la lista de planes para empresas (`GET /api/configuracion/planes/`) ya filtra `activo=True`.
+
+Desde `Planes.vue`, cada tarjeta tiene un botón **Desactivar/Activar** (toggle vía `PUT` con `{ activo }`). Un plan inactivo puede reactivarse en cualquier momento.
+
+#### Permisos de solicitudes de conductores (por tipo)
+
+Desde la migración `0042`, cada tipo de solicitud de conductor tiene su propio permiso granular:
+
+| Código de permiso | Tipo de solicitud |
+|---|---|
+| `solicitudes.mantencion` | Solicitar mantención del vehículo |
+| `solicitudes.combustible` | Solicitar combustible |
+| `solicitudes.incidencia` | Reportar incidencia o accidente |
+| `solicitudes.documento` | Subir o renovar documentos |
+
+Por defecto todos los planes tienen los cuatro tipos habilitados. El Superadmin puede quitar permisos específicos de un plan desde el panel de administración Django. Cuando un tipo no está en el plan:
+- El backend rechaza el POST con `403` y `codigo: "plan_sin_permiso"`.
+- La app móvil muestra el tipo en gris con candado y el texto "No disponible en tu plan".
+- Se muestra un aviso informativo indicando que el administrador de la empresa puede gestionar el plan.
+
+### Asignación de plan
+
+El Superadmin asigna o cambia el plan de una empresa directamente desde los formularios de creación y edición de empresa. Cada cambio queda registrado en `CambioPlan` con el motivo, el usuario responsable y los planes anterior y posterior.
+
+### Uso del plan
+
+El endpoint `GET /api/empresa/plan-uso/` devuelve el consumo actual vs. los límites del plan activo (flotas, vehículos, conductores, usuarios). Este dato alimenta el banner de advertencia en la interfaz.
+
+---
+
+## 9. Módulos del sistema
+
+### 9.1 Gestión de Empresas (SUPERADMIN)
+
+Permite al Superadmin crear, editar, suspender y eliminar empresas cliente. Incluye asignación de plan, visualización de KPIs por empresa y acceso a su historial de cambios de plan.
+
+**Vistas:** `ListaEmpresas.vue` · `NuevaEmpresa.vue` · `EditarEmpresa.vue` · `DetalleEmpresa.vue`
+
+El **nombre de la empresa** admite un máximo de **30 caracteres** (mínimo 2) y la **dirección** un máximo de **40 caracteres**. Ambos límites se aplican en el modelo/serializer (`Empresa.nombre` con `max_length=30`; `direccion` con `max_length=40` en `EmpresaSerializer`), en la validación del registro público (`views_publico.py`) y en los formularios web (`NuevaEmpresa.vue`, `EditarEmpresa.vue`, `RegistroPublico.vue`).
+
+### 9.2 Usuarios y Permisos
+
+Gestión de usuarios dentro de cada empresa: creación, edición, cambio de contraseña, bloqueo/desbloqueo y asignación de permisos granulares.
+
+**Vistas:** `ListaUsuarios.vue` · `NuevoUsuario.vue` · `EditarUsuario.vue` · `GestionPermisos.vue`
+
+### 9.3 Conductores
+
+Gestión de conductores (usuarios con rol `CONDUCTOR`). Incluye asignación y desasignación de vehículo, visualización del vehículo actualmente asignado y datos de licencia.
+
+**Vistas:** `ListaConductores.vue` · `NuevoConductor.vue` · `EditarConductor.vue` · `DetalleConductor.vue`
+
+### 9.4 Flota y Vehículos
+
+Organización jerárquica: **Empresa → Flotas → Vehículos**. Cada vehículo registra patente, marca, modelo, año, tipo de combustible y kilometraje actual.
+
+**Vistas:** `ListaFlota.vue` · `NuevaFlota.vue` · `EditarFlota.vue` · `FormVehiculo.vue`
+
+### 9.5 Mantenciones Correctivas
+
+Registro de mantenciones por vehículo con soporte de estados (`pendiente`, `en_proceso`, `realizada`, `cancelada`). Incluye vista de calendario y panel de sugerencias.
+
+**Vistas:** `MantencionesLista.vue` · `MantencionesForm.vue` · `MantencionesDetalle.vue` · `MantencionesHistorial.vue` · `MantencionesCalendario.vue`
+
+### 9.6 Mantenimiento Predictivo
+
+Sistema basado en reglas para programar mantenciones preventivas. Cada empresa crea **Planes de Mantenimiento** con **Reglas** (tipo, intervalo en días, umbral de alerta, prioridad, canal de notificación). Los vehículos se asignan a planes, generando `MantencionProgramada` con fechas calculadas automáticamente.
+
+Un proceso de generación de alertas evalúa las fechas próximas y crea `AlertaMantencion` para notificar a los responsables. Esta evaluación corre **automáticamente todos los días** vía el scheduler (`evaluar_mantenciones_predictivas`, ver §18.8) y también puede dispararse manualmente con el botón "Evaluar ahora".
+
+**Vista:** `MantencionPredictiva.vue`  
+**Endpoints clave:** `GET /api/empresa/predictivo/resumen/` · `POST /api/empresa/predictivo/generar-alertas/` (botón "Evaluar ahora", mismo cálculo que el comando de gestión `evaluar_mantenciones_predictivas`)
+
+### 9.7 Documentos
+
+Gestión de documentos legales asociados a vehículos y conductores, con control automático de vigencia.
+
+**Tipos de documento — Vehículo:**
+- Permiso de circulación
+- Revisión técnica
+- Seguro SOAP
+
+**Tipos de documento — Conductor:**
+- Licencia de conducir
+- Antecedentes comerciales
+
+El método `Documento.estado()` devuelve `vigente`, `por_vencer` (≤ 30 días) o `vencido` según la `fecha_vencimiento`. Los documentos pueden ser renovados (nueva versión vinculada a la anterior).
+
+**Validaciones del formulario:**
+- **Archivo:** Solo se aceptan PDF o imágenes (JPG, PNG, GIF, WebP, etc.). Se rechaza cualquier otro formato con mensaje de error.
+- **Fechas:** La fecha de vencimiento debe ser posterior a la de emisión.
+- **Notas:** No pueden contener solo espacios en blanco; máximo 50 caracteres. Se muestra un contador `X/50` en tiempo real que se torna rojo al superar el límite.
+
+**Vistas:** `Documentos.vue` · `DocumentosBadge.vue`
+
+> **SUPERADMIN (modo «Todas»):** al abrir el modal de subida, el selector de empresa filtra dinámicamente los vehículos y conductores disponibles — solo se muestran los de la empresa seleccionada. Los selects quedan deshabilitados con el placeholder "Selecciona empresa primero" hasta que se elige empresa.
+
+### 9.8 Finanzas Operativas
+
+**Para USUARIO (empresa):**
+- **Gastos operativos:** registro de gastos categorizados (combustible, mantención, multa, peaje, seguro, otro) con adjunto de comprobante.
+- **Presupuesto mensual:** definición de presupuesto por mes/año y comparativa gráfica con el gasto real.
+- **Pago de servicio:** tab dedicado con historial de pagos de la suscripción SaaS (Webpay Plus y transferencia manual), filtrados por mes/año. KPI card en el resumen con el total del período. Datos servidos desde `GastosListView` vía `pagos_servicio` / `total_servicio` en el response (modelo `PagoTransbank` estado `aprobado`).
+- **Exportación:** descarga de gastos filtrados en formato XLSX.
+
+**Vista:** `FinanzasEmpresa.vue`
+
+**Para SUPERADMIN:**
+- **Dashboard SaaS:** MRR, total de suscripciones activas, ingresos por plan, proyección lineal de MRR.
+
+**Vista:** `FinanzasSuperAdmin.vue`
+
+### 9.9 Reportes
+
+**Para USUARIO (empresa):** Módulo con tabs por área:
+
+| Tab | Contenido |
+|---|---|
+| Mantenciones | Costos por mes (línea dual), tabla detalle + barras presupuesto vs. real |
+| Costo Total (TCO) | Barras horizontales comparativas por vehículo + tabla TCO |
+| Conductores | Estadísticas y asignaciones por conductor |
+| Documentos | Semáforo documental por vehículo + timeline de vencimientos próximos (60 días) |
+| Combustible | KPIs, top-5 vehículos por gasto, evolución mensual (12 meses) |
+
+Exportación disponible en **XLSX (Excel)** para estado de flota, mantenciones y conductores. No hay soporte para XML, CSV ni PDF; todos los reportes usan `openpyxl` vía la función interna `_xlsx_response()` en `views_reportes.py`.
+
+**Vista:** `ReportesEmpresa.vue`
+
+> **Nota (Junio 2026):** `reporte_rutas` y `reporte_solicitudes` calculan el inicio de la ventana de "últimos 12 meses" como `(hoy.year if hoy.month == 12 else hoy.year - 1, (hoy.month % 12) + 1, 1)`. La condición estaba antes invertida y producía una fecha de inicio futura, dejando vacíos los gráficos de rutas finalizadas/canceladas y solicitudes por mes/tipo.
+
+**Para SUPERADMIN:** Métricas de empresas, distribución de planes (gráfico dona) y resumen de plataforma.
+
+**Vista:** `ReportesSuperAdmin.vue`
+
+### 9.10 Notificaciones
+
+Sistema de notificaciones in-app con soporte de WebSocket (Django Channels). Tipos: `mantencion_por_vencer`, `mantencion_vencida`, `documento_por_vencer`, `documento_vencido`, `seguridad`, `actividad`, `limite_plan`.
+
+Cada usuario configura sus preferencias de canal (in-app, email) por categoría desde su perfil.
+
+**Vistas:** `Notificaciones.vue` · `PreferenciasNotificaciones.vue`  
+**Componente:** `NotificacionesBell.vue` (campana en la barra de navegación)
+
+### 9.11 Auditoría (Logs)
+
+Registro de eventos de seguridad y actividad del sistema. Accesible únicamente por SUPERADMIN.
+
+**Vista:** `Logs.vue`
+
+**Campos almacenados por evento:**
+
+| Campo | Descripción |
+|---|---|
+| `tipo` | `SEGURIDAD` o `ACTIVIDAD` |
+| `accion` | Código del evento (`login_exitoso`, `documento_subido`, etc.) |
+| `usuario` | FK al usuario que generó la acción |
+| `ip` | IP del cliente (soporta proxy `X-Forwarded-For`) |
+| `user_agent` | User-Agent completo del navegador |
+| `so` | Sistema operativo detectado (Windows 10/11, macOS, Android, iOS, Linux) |
+| `metodo` | Método HTTP de la request (GET, POST, PUT, DELETE) |
+| `endpoint` | URL path que generó el evento (ej: `/api/empresa/documentos/`) |
+| `detalle` | JSON con contexto específico — incluye `cambios` en ediciones |
+| `fecha` | Timestamp con auto_now_add |
+
+**Campos calculados en el serializer** (no almacenados en BD):
+- `navegador` — nombre del browser extraído del `user_agent` y cabeceras adicionales (Chrome, Edge, Firefox, Opera, Safari, Brave, Arc, Vivaldi, Samsung Internet, App Móvil, Internet Explorer, Otro)
+- `descripcion` — oración legible en español que resume el evento (ej: "Juan subió Permiso de circulación para ABC-123")
+
+> **Etiquetas de acción:** el badge de cada fila usa el mapa `ACCION_LABELS` del frontend (`Logs.vue`); la descripción del modal usa `_generar_descripcion` del backend (`serializers.py`). Ambos deben cubrir toda acción registrada con `registrar_log`, o el log mostrará el código crudo (ej. `pago_iniciado`). Incluyen pagos/suscripción (`pago_iniciado`, `pago_aprobado`, `pago_oneclick`, `pago_manual_registrado`, `suscripcion_reactivada`, `gracia_extendida`, `tarjeta_eliminada`, `terminos_actualizados`), correo (`email_config_guardada`, `email_test_enviado`) y errores (`pago_error`, `oneclick_error`, `excepcion_no_manejada`).
+
+**Diff antes/después en ediciones** — los eventos de edición de vehículo, conductor, flota, mantención y documento incluyen en `detalle.cambios` una lista de campos modificados con valor anterior y nuevo:
+```json
+{ "cambios": [{"campo": "marca", "antes": "Toyota", "despues": "Ford"}] }
+```
+
+**Detalles enriquecidos de documentos** — todos los eventos de documentos registran: ID, tipo, entidad, nombre del archivo, patente del vehículo o nombre del conductor, fechas de emisión/vencimiento y notas.
+
+**Helpers en `audit.py`:** `registrar_log()`, `_parse_navegador(ua, sec_ch_ua='', plataforma='')`, `_parse_so(ua)`, `_diff_campos(antes, despues)`, `_snap(obj, campos)`.
+
+**Filtros disponibles en la UI:** tipo, acción, usuario/IP, rango de fechas. Paginación de 50 registros.
+
+### 9.12 Configuración de Cuenta
+
+Panel de configuración personal con cuatro secciones:
+
+| Tab | Contenido |
+|---|---|
+| Perfil | Edición de nombre, email y contraseña |
+| Notificaciones | Preferencias de canal por categoría |
+| Mi Plan | Uso actual del plan y solicitud de cambio |
+| Apariencia | Preferencias visuales de la interfaz |
+
+**Vista:** `ConfiguracionPage.vue` + tabs: `PerfilTab.vue` · `NotificacionesTab.vue` · `MiPlanTab.vue` · `AparienciaTab.vue`
+
+---
+
+### 9.13 Rutas y Trabajos
+
+Módulo de planificación y seguimiento de rutas vehiculares. Permite crear rutas con conductor, vehículo y paradas, calcular el trayecto óptimo con OSRM, registrar km al iniciar y finalizar, y mantener un historial de eventos automáticos y comentarios manuales por ruta.
+
+> **Cambio v2.4 (Mayo 2026):** Se eliminaron por completo los modelos `Peaje`, `PeajeRuta` y `ConfiguracionRuta`, así como todos los campos de costos (`costo_combustible_est/real`, `costo_peajes_est/real`, `costo_total_est/real`) en `Ruta` y los campos `consumo_l_100km` y `categoria_peaje` en `Vehiculo`. Se reemplazó la lógica de costos y peajes por el modelo `EventoRuta` (historial de la ruta).
+
+#### Flujo de una ruta
+
+```
+BORRADOR → PENDIENTE → ACTIVO → FINALIZADO
+                   ↘               ↘
+                  CANCELADO      CANCELADO
+```
+
+| Estado | Descripción |
+|---|---|
+| `borrador` | Guardado sin validar |
+| `pendiente` | Lista para ser ejecutada — conductor asignado, paradas definidas |
+| `activo` | En tránsito — se registra `km_inicio` |
+| `finalizado` | Completada — se registra `km_fin` y notas |
+| `cancelado` | Cancelada con motivo registrado |
+
+#### Cálculo de ruta
+
+Al crear o calcular una ruta, el sistema:
+
+1. **Geocodificación:** Nominatim (`nominatim.openstreetmap.org`) resuelve cada dirección a coordenadas (debounce 500 ms).
+2. **Trazado OSRM:** El motor de enrutamiento `router.project-osrm.org` calcula la polilínea óptima entre todas las paradas y devuelve `distancia_km`, `duracion_min` y `polyline`. Si OSRM no está disponible, se aplica el **cálculo fallback Haversine**: distancia en línea recta × 1.3 (factor de sinuosidad) y velocidad media de 60 km/h para la duración.
+
+#### Al iniciar / finalizar
+
+- **Iniciar:** se registra `km_inicio`, se actualiza `km_actuales` del vehículo y se crea un `EventoRuta` automático.
+- **Finalizar:** solo acepta `km_fin` y `notas`. Se actualiza `vehiculo.km_actuales`. Se crea un `EventoRuta` automático.
+- **Cancelar:** se registra `fecha_fin` (igual que al finalizar), de modo que la ruta cancelada quede incluida en el desglose mensual de `reporte_rutas`.
+- No se generan gastos operativos de combustible ni peajes automáticamente.
+
+#### Historial (`EventoRuta`)
+
+Cada ruta mantiene una lista cronológica de eventos:
+
+| Campo | Descripción |
+|---|---|
+| `tipo` | `auto` (generado por el sistema) o `comentario` (escrito por admin o conductor) |
+| `texto` | Texto descriptivo del evento |
+| `autor` | FK a `Usuario` (nulo en eventos automáticos) |
+| `created_at` | Timestamp automático |
+
+Eventos automáticos creados en: creación de ruta, inicio, finalización y cancelación.
+
+#### Campo `hora_programada`
+
+La ruta acepta un campo opcional `hora_programada` (`TimeField`, formato `HH:MM`) que indica la hora de inicio prevista. Se muestra en:
+- La tabla del panel web (junto a la fecha, en color índigo)
+- El panel lateral de detalle de la ruta
+- El chip de resumen en la app móvil
+- La sección "Salida programada" del origen en el detalle de la app
+
+#### Validaciones al crear/editar una ruta
+
+El sistema aplica validaciones en dos momentos: un **pre-vuelo** (`POST /api/empresa/rutas/validar/`) antes de guardar y una validación definitiva al guardar.
+
+**Errores bloqueantes** (impiden guardar):
+
+| Validación | Regla |
+|---|---|
+| **Fecha no pasada** | `fecha_programada` debe ser ≥ hoy |
+| **Conflicto de conductor (activo)** | El conductor tiene una ruta actualmente en curso |
+| **Conflicto de conductor (pendiente)** | El conductor ya tiene una ruta pendiente en un margen de ±1 día respecto a la fecha solicitada |
+| **Conflicto de vehículo (activo)** | El vehículo está asignado a una ruta en curso |
+| **Conflicto de vehículo (pendiente)** | El vehículo está asignado a otra ruta pendiente dentro del margen de ±1 día |
+| **Vehículo inactivo** | `vehiculo.activo = False` |
+| **Vehículo en mantención** | `vehiculo.en_mantencion = True` |
+| **Conductor inactivo** | `conductor.is_active = False` |
+| **Conductor bloqueado** | `conductor.is_blocked = True` |
+
+**Advertencias (warnings)** — permiten continuar con "Programar de todas formas":
+
+| Advertencia | Regla |
+|---|---|
+| Mantención predictiva vencida | Existe `AlertaMantencion` con `nivel='vencida'` y `atendida=False` para el vehículo |
+| Mantención correctiva pendiente | Existe `Mantencion` activa sin fecha de fin para el vehículo |
+| Próxima mantención predictiva | `AlertaMantencion` con `nivel='por_vencer'` y ≤7 días |
+| SOAP vencido / por vencer | `Documento` tipo `seguro_soap` vencido o con ≤15 días de vigencia |
+| Revisión técnica vencida / por vencer | `Documento` tipo `revision_tecnica` con la misma lógica |
+| Permiso de circulación vencido / por vencer | `Documento` tipo `permiso_circulacion` con la misma lógica |
+| Licencia vencida / por vencer | `Documento` tipo `licencia` del conductor con ≤30 días de vigencia |
+
+Las rutas en estado `cancelado` o `finalizado` **no** cuentan como conflicto. Al editar, la ruta se excluye de su propio chequeo. Sin `fecha_programada`, no se aplican conflictos de fecha.
+
+**Frontend (panel web):** el paso 1 del asistente llama al endpoint `/validar/` al avanzar al paso 2; los errores se muestran en rojo (bloquean avanzar), las advertencias en amarillo (se puede continuar con "Programar de todas formas").
+
+#### Restricción de inicio por hora
+
+Si la ruta tiene `hora_programada`, **solo puede iniciarse con hasta 30 minutos de anticipación**. Si se intenta iniciar antes de ese margen:
+
+- **Backend (`RutaIniciarView`):** retorna HTTP 400 con el mensaje de tiempo restante.
+- **App móvil (`DetalleRuta.vue`):** el botón "Iniciar ruta" se reemplaza por un banner ámbar con el tiempo restante (calculado en el cliente). Al llegar al margen, el banner desaparece y el botón aparece sin necesidad de recargar.
+- **Panel web (`Rutas.vue`):** aplica la misma validación server-side; si el admin intenta iniciar prematuramente, recibe el error con el tiempo restante.
+
+#### Mejoras del módulo (selector de ubicación, combustible, carga masiva)
+
+- **Ingreso de ubicaciones (paso 2 del modal):** cada parada (origen/destino/intermedias) tiene un **buscador de dirección por texto** (Nominatim, debounce 500ms) con autocompletado, y un toggle de **coordenadas manuales** (validación de rango Chile: lat −56/−17, lng −76/−65). Debajo de la lista de paradas hay **un solo mapa** Leaflet (`MapaRuta`) que muestra todos los marcadores de las paradas con coordenadas. El mapa incluye:
+- **Buscador de ciudad** (prop `buscador`): busca en Nominatim (debounce 500ms, Chile) y centra/encuadra el mapa en la ciudad elegida (no crea paradas).
+- **Clic para fijar ubicación** (prop `seleccionable`, evento `map-click`): se selecciona una parada (las tarjetas son clicables y la activa se resalta) y al hacer clic en el mapa se asigna esa coordenada a la parada activa, con **geocodificación inversa** para rellenar el nombre/dirección.
+- **Gasto estimado de combustible (solo frontend):** estimación con valores por defecto — consumo **10 L/100km** (no hay consumo por vehículo en el modelo) y precios fijos **$1.250 diésel / $1.380 bencina**, según `tipo_combustible` del vehículo. Se muestra en el paso 3 del modal, en la columna "Costo est." de la tabla (prefijo `~`) y en el panel de detalle. Sin endpoint nuevo.
+- **Carga masiva por Excel (`xlsx`):** botón "Carga masiva" → modal para descargar la plantilla `.xlsx`, subir el archivo (máx. 5MB), previsualizar/validar e importar las válidas una a una con barra de progreso. Columnas: `nombre, tipo, conductor_rut, fecha_programada, hora_programada, origen_direccion, destino_direccion, notas`.
+  - **Direcciones, no coordenadas:** la plantilla pide la **dirección de origen/destino** (texto). Al subir el archivo se **geocodifican** con Nominatim (caché + throttle ~1 req/s, con barra "Ubicando direcciones X/Y"); si una dirección no se puede ubicar, la fila se marca como error.
+  - **Vehículo inferido del RUT:** no hay columna de patente. Con solo el `conductor_rut` se asigna el **vehículo activo** de ese conductor (el preview muestra la patente inferida).
+  - **RUT con formato `12.333.444-5`** (acepta con/sin puntos); fecha `AAAA-MM-DD` y hora `HH:mm` en columnas separadas (parseo con `cellDates`).
+  - Validaciones del preview: nombre, tipo `carga`/`personas`, dirección ubicable (en Chile), fecha futura, hora `HH:mm`, y RUT (formato + existencia como conductor de la empresa). El backend **no crea** conductores; solo los busca por RUT.
+  - El POST `/api/empresa/rutas/` acepta `vehiculo_patente` y `conductor_rut` como alternativa a `vehiculo_id`/`conductor_id`.
+
+**Vistas:** `Rutas.vue` · `MapaRuta.vue`  
+**Backend:** `views_rutas.py`  
+**Modelos:** `Ruta` · `Parada` · `EventoRuta`  
+**Permiso requerido:** `rutas.ver` (ver lista y detalle), `rutas.crear` (crear, editar, cambiar estado)
+
+---
+
+### 9.14 App Móvil de Conductores
+
+Aplicación Vue 3 + Capacitor 8 orientada exclusivamente al rol `CONDUCTOR`. Accede al mismo backend Django mediante JWT, con soporte **offline-first** usando `@capacitor-community/sqlite`.
+
+#### Compatibilidad cross-device (optimizado Mayo 2026)
+
+La app está optimizada para todos los tamaños de pantalla y modelos de teléfono:
+
+| Problema | Solución aplicada |
+|---|---|
+| `100vh` incluye la barra de dirección en iOS Safari | `100dvh` + fallback `-webkit-fill-available` en `main.css` |
+| Notch, Dynamic Island y home indicator | `viewport-fit=cover` en `index.html` + `env(safe-area-inset-*)` en todos los elementos fijos |
+| `pb-24` (96px fijo) no cubre el home indicator | Variable CSS `--nav-total: calc(60px + env(safe-area-inset-bottom))` usada con `.pb-nav` |
+| Toast en DetalleRuta quedaba detrás del notch | `top: max(1rem, env(safe-area-inset-top) + 0.5rem)` |
+| Botón "Iniciar/Finalizar ruta" quedaba debajo del BottomNav en iPhone X+ | `bottom: var(--nav-total)` en lugar de `bottom: 64px` fijo |
+| Modales con `height: 80vh` desbordaban en pantallas pequeñas | `min(80vh, 80dvh)` que respeta la altura dinámica |
+| Modal de logout (Ajustes) y bottom sheets tapados por BottomNav | Todos los modales/sheets usan `z-[60]`; BottomNav permanece en `z-50` |
+| Login con `min-height: 60vh` cortaba en iPhone SE | Card con `max-height: 72vh` y scroll interno |
+| Barra de estado fija en color púrpura aunque el tema cambie | `inicializarStatusBar()` en `App.vue` usa `@capacitor/status-bar` para fijar color en runtime desde `themeStore.temaActual.colorGrad[0]`; `watch(temaActualId)` lo actualiza al cambiar tema |
+
+#### Pantallas
+
+| Pantalla | Ruta | Descripción |
+|---|---|---|
+| `Login.vue` | `/login` | Autenticación por RUT chileno + contraseña. Validación módulo 11 en el cliente. |
+| `ListaRutas.vue` | `/rutas` | Muestra ruta activa (en curso), próximas rutas pendientes e historial colapsable. Pull-to-refresh. Banner offline. La campanita del header navega a `/notificaciones` y muestra un punto rojo si hay notificaciones sin leer (`GET /api/notificaciones/no-leidas/`). |
+| `DetalleRuta.vue` | `/rutas/:id` | 3 tabs (Ruta / Detalles / Historial). Mapa Leaflet (carga dinámica desde CDN). Lista de paradas con tipo e ícono. Bottom-sheet modales con validación para iniciar (km_inicio) y finalizar (km_fin + notas). Tab Historial con lista de `EventoRuta` e input para agregar comentarios. Toast de confirmación. **Para rutas pendientes**, si el checklist pre-viaje no está completo muestra un botón morado "Completar checklist antes de iniciar"; una vez completado aparece el botón verde "Iniciar ruta". |
+| `ChecklistPreviaje.vue` | `/rutas/:id/checklist` | Checklist pre-viaje de 12 ítems agrupados (Documentos, Mecánica, Seguridad). Barra de progreso animada, ítems con estado visual (pendiente/ok/falla), documentos vigentes pre-marcados automáticamente, textarea de observación para fallas, firma digital por canvas (touch). Botón de envío deshabilitado hasta completar todos los ítems obligatorios y firmar. |
+| `ListaSolicitudes.vue` | `/solicitudes` | Módulo de solicitudes del conductor. Tipos: mantención, combustible, incidencia, documento. FAB para crear nueva solicitud (2 pasos: elegir tipo → formulario). Sección "En proceso" y "Historial". El Historial está **siempre visible** (no colapsa) y se agrupa en secciones por fecha (Hoy/Ayer/Esta semana/Este mes/Anteriores) mediante el helper `agruparPorFecha()`. ModalDetalleSolicitud de solo lectura. Pull-to-refresh. Soporte offline con SQLite. Captura de foto con `@capacitor/camera`. **Validación de plan:** tipos bloqueados por el plan aparecen en gris con candado e ícono "No disponible en tu plan". El backend rechaza con 403 si se intenta crear un tipo no permitido. |
+| `Notificaciones.vue` | `/notificaciones` | Historial de notificaciones del conductor (rutas, mantenciones, solicitudes, recordatorios). Lista paginada (`GET /api/notificaciones/`) agrupada por secciones de fecha (Hoy/Ayer/Esta semana/Este mes/Anteriores) con `agruparPorFecha()`, ícono y color por tipo, indicador de no leída, botón "Marcar todas" y "Cargar más" para paginar. Al tocar una notificación se marca como leída y navega a `url_accion` si existe; si no, abre un modal con el mensaje completo. Se accede desde la campanita de `ListaRutas.vue`. |
+| `MiMantencion.vue` | `/mantencion` | Mantenciones pendientes y en proceso del vehículo asignado. Muestra fecha programada, taller, presupuesto, días restantes, chips de urgencia. Alerta roja si el vehículo está fuera de servicio. Pull-to-refresh. Al tocar una tarjeta se abre `ModalDetalleMantencion` con la acción correspondiente al estado. Toast de feedback tras iniciar o completar. |
+| `MisDocumentos.vue` | `/documentos` | Documentación del conductor y del vehículo asignado. **Sección conductor:** Licencia de conducir. **Sección vehículo:** Permiso de circulación, Revisión técnica y Seguro SOAP (vinculados al vehículo asignado vía `Asignacion`). Cada tarjeta muestra estado (Vigente/Por vencer/Vencido/Sin documento), fechas e historial de versiones. Sheet modal con Cámara/Galería/Archivo, fechas y notas. Los documentos quedan registrados en el módulo de Documentos del panel web. Pull-to-refresh. |
+| `SubirDocumentos.vue` | `/onboarding` | Pantalla de onboarding (primer login). Muestra las mismas tarjetas de documentación (conductor + vehículo) con encabezado "Completa tu documentación". Botón **Continuar** al pie que redirige al primer módulo disponible según el plan. Comparte el mismo store `documentos.js`. |
+| `Ajustes.vue` | `/ajustes` | Perfil del conductor (nombre, RUT, email, empresa). Tarjeta de vehículo asignado. **Sección Apariencia** con selector de 6 temas de color. **Botón "Cerrar sesión"** como botón destacado rojo autónomo (no dentro de un grupo iOS) con bottom-sheet de confirmación. |
+
+#### Rediseño visual (Mayo 2026)
+
+Se realizó un rediseño completo de la UI de la app móvil (`v2.3`). Cambios principales:
+
+| Archivo | Cambio |
+|---|---|
+| `assets/main.css` | Nuevos tokens CSS: `--gradient-primary/hero/success/card`, `--shadow-xs/sm/md/lg/acento`, clases utilitarias `.card`, `.card-hero`, `.glass`, `.btn-primary`, `.skeleton`, `.badge` |
+| `BottomNav.vue` | Glassmorphism (`backdrop-filter: blur(20px)`), pill de indicador activo con sombra púrpura, íconos rellenos vs. contorno para estado activo/inactivo, altura nav aumentada a 64px (`--nav-h: 64px`) |
+| `RutaCard.vue` | Variante `activa`: tarjeta hero con gradiente verde + pulso animado. Variante `pendiente`: acento izquierdo con gradiente, fecha, distancia y duración. Variante `finalizada`: chip de check verde con km recorridos |
+| `ListaRutas.vue` | Header con gradiente `--gradient-hero` (azul-morado profundo), avatar con borde translúcido, stats row con chips de estado, botón sync e íconos ghost |
+| `ListaSolicitudes.vue` | Header hero con título grande, chips de resumen (activas/resueltas), FAB rediseñado con gradiente y sombra `var(--shadow-acento)`, sección labels estilo uppercase |
+| `MiMantencion.vue` | Header hero con ícono de llave decorativo, chip de información del vehículo, skeleton mejorado |
+| `HistorialMantenciones.vue` | Header con gradiente, botón volver circular translúcido, lista convertida a **timeline visual** con eje punteado, puntos de color y tarjetas flotantes |
+| `Ajustes.vue` | Header hero tipo "profile card" con avatar grande con anillo, chips de datos del conductor, tarjeta de vehículo rediseñada, grupos de ajustes estilo iOS (íconos de colores + chevrons) |
+
+#### Componentes
+
+| Componente | Descripción |
+|---|---|
+| `BottomNav.vue` | Barra inferior con glassmorphism, pill activo con sombra `--shadow-acento`, íconos filled/outline según estado. Badge rojo `!` si hay mantención urgente; badge azul con cantidad si hay activas. Altura total: 64px + safe area. |
+| `RutaCard.vue` | Tarjeta de ruta con 3 variantes: `activa` (hero gradient verde + pulso animado), `pendiente` (borde izquierdo gradiente, fecha y distancia), `finalizada` (compacta con chip de check y km recorridos) |
+| `MapaRuta.vue` | Mapa Leaflet cargado dinámicamente desde unpkg CDN. Marcadores SVG por tipo (origen/parada/destino). Polyline OSRM o punteada de fallback. Mensaje offline si no carga. |
+| `ModalDetalleMantencion.vue` | Bottom-sheet con el detalle completo de una mantención y las acciones disponibles por estado: **pendiente** → mini-confirm + botón azul "Iniciar mantención"; **en_proceso** → botón verde "Marcar como realizada" que abre `ModalCompletarMantencion`; **realizada** → solo lectura (precio, foto, quién la completó). |
+| `ModalCompletarMantencion.vue` | Bottom-sheet formulario para registrar la finalización de una mantención: costo final en CLP (con formato automático), fecha de realización, foto del recibo (captura de cámara con `capture="environment"`, opcional) y notas. Envía `multipart/FormData` al endpoint `/completar/`. |
+
+#### Servicios
+
+| Store | Archivo | Descripción |
+|---|---|---|
+| Temas | `stores/theme.js` | Store Pinia con 6 temas de color (Índigo, Océano, Esmeralda, Carmesí, Cobre, Pizarra). Aplica variables CSS en `:root` de forma reactiva. Persiste la elección en `@capacitor/preferences` (clave `tema_app`). Personal por conductor y por dispositivo. |
+| Documentos | `stores/documentos.js` | Store Pinia para la documentación del conductor y su vehículo. `cargarDocumentos()` → `GET /api/empresa/documentos/`. `subirDocumento(formData)` → `POST /api/empresa/documentos/`. Computed `docPorTipo` devuelve el doc más reciente por tipo. Exporta `TIPOS_CONDUCTOR` (`licencia`) y `TIPOS_VEHICULO` (`permiso_circulacion`, `revision_tecnica`, `seguro_soap`) con metadatos visuales. |
+
+| Servicio | Archivo | Descripción |
+|---|---|---|
+| API HTTP | `services/api.js` | `apiFetch()` con auto-refresh JWT en 401. Tokens en `@capacitor/preferences`. |
+| Base de datos local | `services/db.js` | SQLite en dispositivo nativo; Map en memoria en navegador. Guarda rutas, solicitudes y acciones pendientes. |
+| Sincronización | `services/sync.js` | Detecta reconexión (`@capacitor/network`) y envía acciones encoladas durante el modo offline. |
+| WebSocket | `services/websocket.js` | Singleton que mantiene conexión persistente a `ws/conductor/`. Reconexión automática con backoff exponencial (máx. 30 s). Notifica al store cuando cambia el estado de una solicitud. |
+
+#### Sistema de permisos por plan (Mayo 2026 — actualizado)
+
+La app aplica restricciones de acceso según los módulos que el plan de la empresa tiene habilitados. La fuente de verdad es `PlanSuscripcion.permisos` (M2M), no el campo `modulos` JSONField. El backend deriva los módulos visibles comprobando si el plan tiene **algún permiso** con el prefijo del módulo (`rutas.`, `solicitudes.`, `mantenciones.`).
+
+##### Endpoint de módulos activos
+
+```
+GET /api/conductor/mi-plan/
+→ { "plan_modulos": ["rutas", "solicitudes", "mantenciones"], "plan_nombre": "Premium" }
+```
+
+**Función auxiliar en backend** (`views_conductor.py`):
+
+```python
+_MODULO_A_PREFIJO = {
+    'rutas':        'rutas.',
+    'solicitudes':  'solicitudes.',
+    'mantenciones': 'mantenciones.',
+}
+
+def _modulos_desde_permisos(plan) -> list:
+    codigos = set(plan.permisos.values_list('codigo', flat=True))
+    return [m for m, p in _MODULO_A_PREFIJO.items()
+            if any(c.startswith(p) for c in codigos)]
+```
+
+##### Flujo de sincronización
+
+1. **Al iniciar la app:** `usePermisos()` carga Preferences (caché instantánea), luego llama a `/api/conductor/mi-plan/` y establece el estado reactivo. `cargando = false` solo después de que responde el servidor, para evitar parpadeos.
+2. **Polling automático:** cada 15 segundos `usePermisos` refresca los módulos. Si cambian, actualiza Preferences y los refs reactivos → todos los componentes se actualizan sin recargar.
+3. **Vuelta al primer plano:** `App.addListener('appStateChange', ...)` dispara un refresco inmediato al volver desde background.
+4. **Router guard:** antes de cada navegación lee `plan_modulos` desde Preferences. Si la ruta tiene `meta.modulo` y no está en el array, redirige silenciosamente al primer módulo disponible (rutas → solicitudes → mantenciones → ajustes).
+5. **Guard pasivo:** el router guard evalúa los módulos en cada cambio de ruta. Si el conductor está en pantalla cuando se le quita un módulo, el cambio se refleja sin redirección abrupta — la tab del BottomNav desaparece y el usuario puede navegar a otra sección libremente.
+6. **Logout:** `resetearPermisos()` limpia el singleton (interval + listener), luego `limpiarSesion()` borra Preferences.
+
+##### Módulos de la app y lo que controlan
+
+| Módulo clave | Tab visible | Rutas protegidas | Redirect si removido |
+|---|---|---|---|
+| `rutas` | Rutas (BottomNav) | `/rutas`, `/rutas/:id`, `/rutas/:id/checklist` | Redirect al primer módulo disponible (guard de ruta) |
+| `solicitudes` | Solicitudes (BottomNav) | `/solicitudes` | Redirect al primer módulo disponible (guard de ruta) |
+| `mantenciones` | Mantención (BottomNav) | `/mantencion`, `/mantencion/historial` | Redirect al primer módulo disponible (guard de ruta) |
+| — | Ajustes (BottomNav) | `/ajustes` | Siempre visible |
+
+##### Singleton `usePermisos`
+
+Estado a nivel de módulo JS (compartido entre todos los componentes):
+
+```javascript
+// Un solo intervalo y listener para toda la app
+const modulos    = ref([])
+const planNombre = ref('')
+const cargando   = ref(true)
+let _inicializado = false
+
+export function usePermisos() {
+  _inicializar()   // no-op si ya fue llamado
+  return { modulos, planNombre, tieneModulo, cargando }
+}
+export async function resetearPermisos() { /* limpia al hacer logout */ }
+```
+
+##### Archivos del sistema de permisos
+
+| Archivo | Descripción |
+|---|---|
+| `src/composables/usePermisos.js` | Singleton reactivo: polling 15 s + `appStateChange`. Expone `modulos`, `planNombre`, `tieneModulo()`, `cargando` |
+| `src/router/index.js` | Guard + `_primerModuloDisponible()` para redirigir al módulo correcto según el plan |
+| `src/components/BottomNav.vue` | `itemsVisibles` computed: filtra los 4 tabs según el plan (`rutas`, `solicitudes`, `mantenciones` requieren módulo; `ajustes` siempre visible) |
+| `src/views/Rutas/ListaRutas.vue` | Watch auto-redirect si módulo `rutas` es removido |
+| `src/views/Solicitudes/ListaSolicitudes.vue` | Watch auto-redirect si módulo `solicitudes` es removido |
+| `src/views/Mantenciones/MiMantencion.vue` | Watch auto-redirect si módulo `mantenciones` es removido |
+| `src/views/Mantenciones/HistorialMantenciones.vue` | Watch auto-redirect si módulo `mantenciones` es removido |
+| `src/stores/auth.js` | `logout()` llama `resetearPermisos()` antes de limpiar sesión |
+| `src/views/Ajustes/Ajustes.vue` | Sección "Plan de la empresa" con nombre del plan y chips de módulos activos |
+
+#### Autenticación con RUT chileno
+
+1. El usuario ingresa el RUT en formato `12.345.678-9` (formato display).
+2. El frontend normaliza a `12345678-9` (igual que `normalizar_rut()` del backend).
+3. Valida dígito verificador con algoritmo módulo 11 antes de llamar a la API.
+4. Si `primer_login = true`, redirige a la pantalla de onboarding; si no, a la lista de rutas.
+
+#### Actualizaciones en tiempo real (WebSocket)
+
+La app conecta automáticamente a `ws://<backend>/ws/conductor/?token=<JWT>` al cargar las solicitudes. El backend (Django Channels, `ConductorConsumer`) envía eventos cuando un administrador aprueba o rechaza una solicitud:
+
+```json
+{ "type": "solicitud_actualizada", "solicitud_id": 42, "estado": "aprobado", "respuesta": "..." }
+```
+
+El store actualiza la solicitud en el array reactivo de forma inmediata, lo que provoca:
+- La tarjeta de la solicitud se resalta brevemente (borde índigo).
+- Un toast informa al conductor: *"✓ Tu solicitud fue aprobada"* o *"✗ Tu solicitud fue rechazada"*.
+
+La conexión se reconecta automáticamente si se cae (backoff 1 s → 2 s → 4 s → … máx. 30 s). Al cerrar sesión, el WebSocket se desconecta limpiamente.
+
+#### Modo offline
+
+1. Al cargar rutas, si hay conexión se descarga desde la API y se persiste en SQLite.
+2. Sin conexión, se sirven los datos almacenados localmente y se muestra el banner naranja.
+3. Las acciones de inicio/fin de ruta se encolan en `acciones_pendientes` y se sincronizan automáticamente al recuperar la conexión.
+
+#### Endpoints exclusivos (app conductores)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/conductor/rutas/` | Lista rutas del conductor autenticado (pendiente, activo, finalizado). Retorna `403` si el plan de la empresa no incluye el módulo `rutas`. |
+| `GET` | `/api/conductor/rutas/:id/` | Detalle completo: paradas, vehículo con `km_actuales` |
+| `POST` | `/api/conductor/rutas/:id/iniciar/` | Marca la ruta como activa, registra `km_inicio` y actualiza `km_actuales` del vehículo. Crea `EventoRuta` automático. |
+| `POST` | `/api/conductor/rutas/:id/finalizar/` | Marca la ruta como finalizada, registra `km_fin` y `notas`. Actualiza `km_actuales`. Crea `EventoRuta` automático. |
+| `GET` | `/api/conductor/rutas/:id/comentarios/` | Lista los `EventoRuta` de la ruta (historial) |
+| `POST` | `/api/conductor/rutas/:id/comentario/` | Agrega un comentario a la ruta. Body: `{ texto }` |
+| `GET` | `/api/conductor/solicitudes/` | Lista las solicitudes del conductor + campo `tipos_permitidos` (lista de tipos habilitados por el plan de la empresa) |
+| `POST` | `/api/conductor/solicitudes/` | Crea una solicitud. Acepta `multipart/form-data` si hay foto, JSON si no. Campos: `tipo`, `titulo`, `descripcion`, `prioridad`, `foto` (opcional). Retorna `403` con `codigo: "plan_sin_permiso"` si el tipo no está habilitado por el plan |
+| `GET` | `/api/conductor/mantenciones/` | Mantenciones `pendiente` y `en_proceso` del vehículo asignado. Incluye `dias_restantes`, `urgente` (bool), `vehiculo_en_mantencion`. Las `realizadas` ya no se muestran aquí. |
+| `GET` | `/api/conductor/mantenciones/:id/` | Detalle completo de una mantención (incluye `foto_comprobante_url` con URL absoluta). |
+| `POST` | `/api/conductor/mantenciones/:id/iniciar/` | Transición `pendiente → en_proceso`. Setea `vehiculo.en_mantencion = True`. |
+| `POST` | `/api/conductor/mantenciones/:id/completar/` | Transición `en_proceso → realizada`. Acepta `multipart/form-data`: `costo_final` (requerido), `foto_comprobante` (opcional), `fecha_realizada` (opcional), `notas` (opcional). Crea automáticamente un `GastoOperativo` en finanzas (categoría `mantencion`). Setea `vehiculo.en_mantencion = False`. |
+| `POST` | `/api/conductor/push-token/` | Registra o actualiza el token FCM del dispositivo. Body: `{ "token": "..." }` |
+| `GET` | `/api/conductor/checklist/:id/` | Devuelve los 12 ítems del checklist pre-viaje con estado de documentos pre-cargado (documentos vigentes llegan pre-marcados como OK) y borrador si existe |
+| `POST` | `/api/conductor/checklist/:id/` | Guarda el resultado del checklist. Body: `{ respuestas: { item_id: { resultado, observacion } }, firma_base64 }`. Crea/actualiza una `SolicitudConductor` tipo `mantencion` y notifica a los admins |
+| `GET` | `/api/notificaciones/` | Notificaciones del conductor paginadas (20/página); filtros `leida`, `tipo` |
+| `POST` | `/api/notificaciones/leer/` | Marca notificaciones como leídas (`ids: []` o `todas: true`) |
+
+#### Flujo de mantenciones (conductor → finanzas)
+
+```
+Admin (panel web)
+  └─ Crea mantención en estado "pendiente"
+         │
+Conductor (app)
+  └─ Ve la mantención en MiMantencion.vue
+  └─ Toca → ModalDetalleMantencion → botón "Iniciar mantención"
+         │  POST /api/conductor/mantenciones/:id/iniciar/
+         │  vehiculo.en_mantencion = True
+         │
+  └─ Hace el servicio en el taller
+         │
+  └─ Toca → ModalDetalleMantencion → botón "Marcar como realizada"
+         │  → abre ModalCompletarMantencion (costo + foto + fecha + notas)
+         │  POST /api/conductor/mantenciones/:id/completar/ (multipart/form-data)
+         │  mantencion.estado = "realizada"
+         │  mantencion.confirmado_conductor = True
+         │  mantencion.fecha_confirmacion = now()
+         │  vehiculo.en_mantencion = False
+         └─ Crea GastoOperativo (categoria="mantencion", monto=costo_final)
+                                  └─ aparece en módulo de Finanzas del panel web
+```
+
+El admin puede anular o cambiar el estado manualmente desde el panel web en cualquier momento; los botones de acción del panel **no se eliminaron** (override administrativo). Los campos `Mantencion.confirmado_conductor` (Bool) y `Mantencion.fecha_confirmacion` (DateTime) registran si fue el conductor quien completó el ciclo.
+
+**Backend:** `views_conductor.py`  
+**Puerto de desarrollo:** `http://localhost:5174`  
+**CORS configurado:** `http://localhost:5174`, `capacitor://localhost`, `http://localhost`
+
+#### Push Notifications (Firebase Cloud Messaging)
+
+El backend usa `firebase-admin` para enviar notificaciones push a dispositivos iOS y Android.
+
+**Configuración (una sola vez):**
+1. Crear proyecto en [Firebase Console](https://console.firebase.google.com)
+2. Agregar app Android/iOS → descargar `google-services.json` / `GoogleService-Info.plist` al proyecto Capacitor
+3. Configuración del proyecto → Cuentas de servicio → Generar nueva clave privada → guardar como `gestion_backend/serviceAccountKey.json`
+4. Instalar dependencia: `pip install firebase-admin`
+
+**Flujo:**
+1. Al abrir la app, `App.vue` solicita permiso de notificaciones y obtiene el token FCM.
+2. El token se registra en `POST /api/conductor/push-token/` y se guarda en `usuario.notif_prefs['push_token']`.
+3. Cuando un admin aprueba o rechaza una solicitud, `firebase_push.enviar_push()` envía la notificación al token del conductor.
+4. Si la app está en primer plano → toast visual en pantalla. Si está en segundo plano/cerrada → notificación del sistema.
+
+Cada push lleva `data.tipo`, que `App.vue` usa para navegar al tocarla: `mantencion_aprobada` / `solicitud_aprobada` / `solicitud_rechazada` → `/solicitudes`; `mantencion_programada` → `/mantencion`; `recordatorio_documentos` → `/documentos`; `recordatorio_checklist` → `/rutas/<ruta_id>/checklist`; `recordatorio_ruta` / `recordatorio_finalizar` / `recordatorio_vispera` → `/rutas/<ruta_id>`.
+
+**Módulo:** `g_de_flota/firebase_push.py` — falla silenciosamente si Firebase no está configurado.
+
+##### Recordatorios push (disparados al cargar rutas)
+
+Además de los push reactivos (aprobación/rechazo de solicitudes), el backend envía **recordatorios** proactivos al conductor cada vez que la app llama a `GET /api/conductor/rutas/`. No requiere ningún scheduler ni configuración externa — usa el mismo `enviar_push()` que el resto del sistema.
+
+La función `_enviar_recordatorios_conductor()` en `views_conductor.py` evalúa las rutas recién cargadas y envía el push si corresponde:
+
+| Recordatorio | `data.tipo` | Condición | Navega a |
+|---|---|---|---|
+| **Inicio de ruta próxima** | `recordatorio_ruta` | Ruta `pendiente` de hoy con `hora_programada`, faltan ≤ 30 min para la salida | `/rutas/<id>` |
+| **Checklist pre-viaje pendiente** | `recordatorio_checklist` | Ruta `pendiente` de hoy, faltan ≤ 60 min y el checklist no está completo (`extra.checklist_completo` ausente) | `/rutas/<id>/checklist` |
+| **Ruta activa sin finalizar** | `recordatorio_finalizar` | Ruta `activo` cuyo tiempo transcurrido supera `duracion_min` + 30 min | `/rutas/<id>` |
+| **Ruta para mañana (víspera)** | `recordatorio_vispera` | Ruta `pendiente` de mañana, a partir de las 18:00 hs | `/rutas/<id>` |
+| **Documentos por vencer** | `recordatorio_documentos` | Licencia del conductor o docs del vehículo (SOAP/rev. técnica/permiso) con `dias_para_vencer` entre −30 y 7. **Máx. 1 aviso/día** por conductor | `/documentos` |
+
+- **Idempotencia:** los recordatorios de ruta marcan un flag en `Ruta.extra` (`recordatorio_inicio_enviado` / `recordatorio_checklist_enviado` / `recordatorio_finalizar_enviado` / `recordatorio_vispera_enviado`) para avisar una sola vez por evento. El de documentos guarda `Usuario.notif_prefs['recordatorio_docs_ultima']` (1 vez al día). Si se reprograma `fecha_programada` u `hora_programada` desde el panel, los flags se limpian vía `_reset_recordatorios()` en `views_rutas.py`.
+- **Fail-silent:** toda la función está envuelta en `try/except` — nunca bloquea ni retrasa la respuesta al conductor.
+
+##### Historial de notificaciones del conductor
+
+Cada push enviado con `enviar_push()` queda registrado como `Notificacion` para que el conductor pueda revisarlo después en `Notificaciones.vue` (`/notificaciones`), reutilizando los mismos endpoints genéricos del panel web (`/api/notificaciones/`, `/api/notificaciones/no-leidas/`, `/api/notificaciones/leer/`).
+
+- **`_registrar_notificacion(usuario, titulo, cuerpo, data)`** en `firebase_push.py` se ejecuta al inicio de `enviar_push()` (antes de la inicialización de Firebase, así el historial queda registrado aunque falle el envío FCM). Crea un `Notificacion` con `tipo=data['tipo']`, `url_accion` resuelta por `_url_accion()` y `extra=data`.
+- **`_TIPOS_YA_REGISTRADOS`**: conjunto de `data.tipo` que ya generan su propio `Notificacion` vía `notificar()`/`_notificar_conductor()` (`mantencion_*`, `solicitud_aprobada`, `solicitud_rechazada`, `ruta_*`). `_registrar_notificacion()` los ignora para no duplicar.
+- **`_RUTAS_POR_TIPO`**: mapea cada `data.tipo` de recordatorio/checklist a su `url_accion` (mismas rutas del tap-to-navigate descritas arriba: `/rutas/<id>`, `/rutas/<id>/checklist`, `/documentos`).
+- **Nuevos `TipoNotificacion`** (sin migración, son `TextChoices`): `recordatorio_ruta`, `recordatorio_checklist`, `recordatorio_finalizar`, `recordatorio_vispera`, `recordatorio_documentos`, `checklist_completado`, `checklist_enviado`. Estos dos últimos se disparan al completar el checklist pre-viaje (`views_conductor.py`), con o sin fallas.
+
+---
+
+### 9.15 Solicitudes de Conductores (panel web)
+
+Módulo del panel web que gestiona las solicitudes enviadas por los conductores desde la app móvil. Existen dos vistas según el rol del usuario.
+
+#### Vista USUARIO — `SolicitudesConductores.vue`
+
+Accesible en `/empresa/solicitudes`. Muestra las solicitudes de la propia empresa del usuario.
+
+- **KPI cards** superiores: Pendientes · En revisión · Aprobadas hoy · Total mes
+- **Filtros combinados:** buscar por título, estado, tipo, rango de fechas
+- **Tabla paginada** (20 registros/página): Conductor · Tipo · Título · Prioridad · Estado · Vehículo · Fecha · Acciones
+- **Acciones inline:** ver detalle (👁), aprobar (✓), rechazar (✕)
+- **Modal de detalle:** badges de estado/prioridad, grid de info, descripción, respuesta, foto adjunta, botones de acción directa
+- **Modal de rechazo:** campo de motivo con validación mínimo 10 caracteres
+- **Badge en tiempo real** en el sidebar de `EmpresaLayout.vue`: conteo de pendientes vía WebSocket; polling de 30 s como respaldo
+- **Toasts:** confirmación visual de cada acción
+
+#### Vista SUPERADMIN — `SolicitudesAdmin.vue`
+
+Accesible en `/solicitudes`. Permite al Superadmin revisar y gestionar las solicitudes de **cualquier empresa** de la plataforma.
+
+- **Selector de empresa** en la parte superior:
+  - Dropdown buscable con las empresas del sistema (cargadas de `/api/empresas/`)
+  - Búsqueda local por nombre
+  - Avatar con inicial de la empresa, nombre y RUT
+  - Botón de limpieza (✕) para cambiar de empresa
+  - Al seleccionar empresa: guarda `empresaActiva` en sessionStorage y conecta WebSocket
+- **Estado vacío:** cuando no hay empresa seleccionada se muestra un estado placeholder orientativo
+- **Mismo conjunto de KPIs, filtros, tabla, modales y toasts** que la vista USUARIO
+- **WebSocket por empresa:** al cambiar la empresa seleccionada se desconecta el WS anterior y se conecta uno nuevo a `ws/solicitudes/{nuevaEmpresa_id}/`
+- **Badge en sidebar** de `Base.vue`: ítem "Solicitudes" muestra el conteo de pendientes de la empresa activa; se actualiza vía evento `solicitudes-admin-badge` (disparado por la vista) y por polling cada 60 s como respaldo
+
+#### Acciones disponibles (ambas vistas)
+
+| Acción | Endpoint | Descripción |
+|---|---|---|
+| Marcar "En revisión" | `PUT /api/empresa/solicitudes/:id/` | Cambia estado a `en_revision` |
+| Aprobar | `PUT /api/empresa/solicitudes/:id/aprobar/` | Cambia a `aprobado`, crea entidades derivadas (Mantención/Documento según tipo), notifica al conductor |
+| Rechazar | `PUT /api/empresa/solicitudes/:id/rechazar/` | Cambia a `rechazado`, requiere motivo ≥10 chars, notifica al conductor |
+
+> Para SUPERADMIN todos los endpoints reciben el parámetro `?empresa_id=X` que es leído por `_get_empresa()` en `views_solicitudes.py`.
+
+#### Creación automática de entidades al aprobar
+
+| Tipo de solicitud | Entidad creada |
+|---|---|
+| `mantencion` | `Mantencion` en estado `pendiente` con el título/descripción de la solicitud |
+| `documento` | `Documento` tipo `revision_tecnica` con el archivo foto adjunto si existe |
+| `combustible` / `incidencia` | Sin entidad derivada (solo cambio de estado + notificación) |
+
+#### WebSocket en tiempo real
+
+Ambas vistas se conectan a `ws://host/ws/solicitudes/{empresa_id}/?token=<access_token>`.  
+Al recibir `nueva_solicitud`, incrementa el conteo de pendientes y recarga la tabla.  
+Si el WebSocket cae, reconecta automáticamente cada 5 s.
+
+#### Permiso de plan
+
+| Código | Categoría |
+|---|---|
+| `solicitudes.ver` | solicitudes |
+
+Migración: `0040_solicitudes_permisos.py`
+
+**Backend:** `views_solicitudes.py` · `consumers.SolicitudesConsumer`  
+**Modelo:** `SolicitudConductor`  
+**Rutas WS:** `ws/solicitudes/<empresa_id>/`
+
+### 9.16 Geolocalización GPS (Traccar)
+
+Permite seguir la flota en tiempo real en un mapa. El sistema es **agnóstico al
+hardware**: usa [Traccar](https://www.traccar.org/) como *gateway* que recibe a los
+dispositivos GPS físicos (~200 protocolos) y reenvía cada posición al backend.
+
+**Flujo de datos:**
+
+```
+GPS físico ──(protocolo del fabricante)──▶ Traccar ──(forward JSON)──▶ backend
+                                                                          │
+                       emulador ──(OsmAnd / endpoint directo)────────────┤
+                                                                          ▼
+                                              Ubicacion + WebSocket ▶ Mapa de flota
+```
+
+- **Alta automática en Traccar:** al registrar un GPS en el panel (Flota → GPS), el
+  backend lo crea también en Traccar por su API REST (`traccar_client.py`,
+  *fail-silent*: si Traccar no responde, no bloquea la operación). El dispositivo se
+  identifica por `uniqueId = IMEI`; el nombre en Traccar es la patente del vehículo.
+- **Ingesta de posiciones:** `TraccarWebhookView` (`/api/empresa/gps/traccar/`) recibe
+  el *position forwarding* de Traccar (convierte la velocidad de nudos a km/h). Existe
+  además `PosicionView` (`/api/empresa/gps/posicion/`) para dispositivos que hablan HTTP
+  directo, autenticados por `api_key`.
+- **Tiempo real:** cada posición crea una `Ubicacion` y se emite por WebSocket al grupo
+  `gps_{empresa_id}` para que `MapaFlota.vue` mueva los marcadores sin recargar.
+- **Emulador de pruebas:** `python manage.py run_gps_emulator` recorre rutas reales de
+  Santiago. Con `--traccar http://localhost:5055` entra por Traccar (protocolo OsmAnd);
+  sin ese flag envía al endpoint directo. Requiere un dispositivo modelo `emulador`
+  activo y con vehículo asignado.
+
+**Configuración (settings / variables de entorno):**
+
+| Variable | Uso |
+|---|---|
+| `TRACCAR_URL` | Base de la API de Traccar. Vacía = sincronización desactivada (dev sin Traccar). |
+| `TRACCAR_USER` / `TRACCAR_PASSWORD` | Credenciales del admin de Traccar para la sincronización. |
+| `GPS_WEBHOOK_KEY` | Clave opcional que protege el webhook Traccar→backend (header `X-Webhook-Key`). |
+
+**Producción (docker-compose):** Traccar corre como servicio sobre PostgreSQL (base
+`traccar`), genera su `traccar.xml` desde `traccar.xml.template` y el servicio
+`traccar-init` crea el administrador automáticamente en el primer arranque. Detalles en
+[`DEPLOY.md`](../DEPLOY.md) §9.
+
+> **Errores comunes en producción:**
+> - `TRACCAR_URL=http://localhost:8082` dentro del contenedor `backend` apunta al propio contenedor, no a Traccar. Usar siempre `http://traccar:8082` (nombre del servicio Docker). Si está vacío o con `localhost`, `_habilitado()` es `False` o falla en silencio y **ningún dispositivo se sincroniza**.
+> - `ALLOWED_HOSTS` debe incluir `backend` o el webhook `POST /api/empresa/gps/traccar/` recibe `DisallowedHost` (400). Corrección: `ALLOWED_HOSTS=<ip>,localhost,backend` y `docker compose up -d --force-recreate backend`.
+> - Cambios en `.env.production` requieren `docker compose up -d --force-recreate backend` (un simple `restart` no relee el `env_file`).
+
+**Backend:** `views_gps.py` · `traccar_client.py` · `gps_providers/` (adaptadores) ·
+**Frontend:** `GestionGPS.vue` · `MapaFlota.vue`
+
+---
+
+### 9.17 Selector de empresa del SUPERADMIN y opción «Todas las empresas»
+
+Los módulos del panel SUPERADMIN dejan elegir de qué empresa ver los datos. Hay dos
+implementaciones de selector que comparten el mismo estado (`empresaActiva` en
+`sessionStorage`): el componente compartido `SelectorEmpresa.vue` (Gestión GPS, Mapa de
+flota, Gastos correctivos) y selectores inline propios de cada módulo (Conductores,
+Flota, Documentos, Mantenciones, Rutas, Solicitudes, Predictivo). En todos, `apiFetch`
+inyecta `?empresa_id=X` en toda URL `/api/empresa/`.
+
+**Opción «Todas las empresas»:** el dropdown incluye una entrada fija (`OPCION_TODAS`,
+helper `conOpcionTodas()` en `empresaActiva.js`) que selecciona el centinela
+`empresa_id=__todas__` (constante `EMPRESA_TODAS`, replicada en el backend). Viaja por la
+misma tubería que una empresa normal, de modo que el backend decide filtrar (o no) por
+empresa. Cubre todos los módulos con selector: conductores, flota, documentos,
+mantenciones (programados/calendario/historial), rutas, solicitudes, predictivo,
+calendario global, GPS y gastos correctivos.
+
+- **Lectura y escritura habilitadas.** En modo «Todas» se muestran datos de todas las
+  empresas y los botones de crear/editar/eliminar permanecen visibles.
+  - **Crear:** los formularios de creación muestran un selector de empresa obligatorio
+    cuando `esTodas`. El `empresa_id` concreto elegido se envía en el body del POST.
+    Módulos con selector de empresa en el form: `NuevoConductor.vue`, `FormVehiculo.vue`,
+    `Documentos.vue` (modal inline), `Rutas.vue` (paso 1 del modal). En mantenciones la
+    empresa se resuelve automáticamente desde el vehículo elegido.
+  - **Editar/eliminar:** los botones aparecen directamente; el `empresa_id` viene del
+    propio registro y el backend resuelve la empresa desde él.
+- **Identificación de origen.** En modo «Todas», las respuestas incluyen
+  `empresa_nombre` por fila y las tablas/popups muestran una columna/línea de empresa.
+- **Tiempo real en el mapa.** El WebSocket de GPS es por empresa (canal
+  `gps_{empresa_id}`), por lo que en modo «Todas» `MapaFlota.vue` no abre WS y refresca
+  las posiciones por *polling* periódico (cada 20 s).
+- **Presupuesto en correctivos.** El presupuesto mensual es por empresa: en modo «Todas»
+  no aplica y el KPI de impacto se muestra como «no aplica al ver todas las empresas».
+
+**Backend (filtrado condicional + escritura):** cada vista de lectura detecta el
+centinela con `es_todas(request)` (`views.py`) o su equivalente local y omite el filtro
+`empresa=` cuando corresponde, agregando `empresa_nombre` por fila. Los endpoints de
+detalle (`conductores_detalle`, `vehiculos_detalle`, `mantenciones_detalle`,
+`RutaDetailView`, `SolicitudDetailView`, `SolicitudAprobarView`, `SolicitudRechazarView`)
+resuelven la empresa desde el propio registro cuando el query param es `__todas__`,
+permitiendo editar y eliminar. Los POST de creación en modo «Todas» aceptan `empresa_id`
+en el body (nunca `__todas__`; devuelven 400 si llega el centinela). El `_get_empresa()`
+de rutas prioriza `request.data['empresa_id']` sobre el query param.
+
+**Endpoints con soporte completo (lectura + escritura) en modo «Todas»:**
+`conductores_lista_crear`, `conductores_detalle`, `conductores_asignar`,
+`conductores_desasignar`, `vehiculos_lista_crear`, `vehiculos_detalle`,
+`mantenciones_lista_crear`, `mantenciones_detalle`, `RutasListView`, `RutaDetailView`,
+`RutaIniciarView`, `RutaFinalizarView`, `RutaCancelarView`, `SolicitudesListView`,
+`SolicitudDetailView`, `SolicitudAprobarView`, `SolicitudRechazarView`,
+`DocumentosListView`, GPS y gastos correctivos.
+
+**Frontend:** `SelectorEmpresa.vue` · `empresaActiva.js`
+(`EMPRESA_TODAS`, `esEmpresaTodas`, `OPCION_TODAS`, `conOpcionTodas`) + selectores inline
+de cada módulo. Los `v-if="!esTodas"` sobre botones de acción fueron eliminados; los
+formularios de creación muestran un `<select>` de empresa cuando `esTodas`.
+
+> **Nota — `apiFetch` y `empresa_id` explícito:** `api.js` solo agrega
+> `?empresa_id=<empresaActiva>` cuando la URL **no** trae ya `empresa_id=` (p. ej. cuando
+> un módulo arma la URL con `empresa_id` propio para cargar conductores/vehículos de una
+> empresa específica). Antes esto se duplicaba (`?empresa_id=2&empresa_id=__todas__`) y
+> Django tomaba el último valor (`__todas__`), devolviendo datos de todas las empresas.
+
+---
+
+### 9.18 Moderación de contenido (Gemini + diccionario)
+
+Capa de moderación aplicada a textos ingresados por usuarios (nombres en comentarios, solicitudes, avisos, etc.) para filtrar contenido inapropiado antes de guardarlo.
+
+**Funcionamiento:**
+1. **Filtro de diccionario** (siempre activo): lista de palabras bloqueadas configurable desde el panel SUPERADMIN.
+2. **Filtro IA con Gemini** (activo si `GEMINI_API_KEY` está definido): el texto se evalúa vía Google Gemini API. Si Gemini no responde o la clave está vacía, el sistema solo usa el diccionario.
+
+**Endpoints:**
+```
+POST   /api/moderacion/moderar/          Evalúa un texto y devuelve { permitido, motivo }
+GET    /api/moderacion/palabras/         Lista palabras bloqueadas (SUPERADMIN)
+POST   /api/moderacion/palabras/crear/   Agrega una palabra
+POST   /api/moderacion/palabras/lote/    Agrega varias a la vez
+DELETE /api/moderacion/palabras/<id>/    Elimina una palabra
+```
+
+**Frontend:** `web/admin/Moderacion.vue` (panel SUPERADMIN) · composable `useModeracion.js` (usado en formularios del panel y app conductor)
+
+**Variable de entorno:** `GEMINI_API_KEY` (opcional — ver §16).
+
+---
+
+## 10. Referencia de la API REST
+
+Todos los endpoints (excepto `/api/login/` y `/api/token/refresh/`) requieren el header:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### Autenticación
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/api/login/` | Inicio de sesión por RUT |
+| `POST` | `/api/token/refresh/` | Renovación de access token |
+
+### Dashboard
+
+| Método | Endpoint | Acceso | Descripción |
+|---|---|---|---|
+| `GET` | `/api/dashboard/` | SUPERADMIN | Dashboard global de plataforma |
+| `GET` | `/api/empresa/dashboard/` | USUARIO | Dashboard de la empresa activa |
+
+### Empresas
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/empresas/` | Listar empresas |
+| `POST` | `/api/empresas/crear/` | Crear empresa |
+| `GET/PUT/DELETE` | `/api/empresas/<id>/` | Detalle, editar, eliminar |
+
+### Usuarios
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/usuarios/` | Listar usuarios |
+| `POST` | `/api/usuarios/crear/` | Crear usuario |
+| `GET/PUT/DELETE` | `/api/usuarios/<id>/` | Detalle, editar, eliminar |
+| `POST` | `/api/usuarios/<id>/reset-password/` | Restablecer contraseña |
+| `POST` | `/api/usuarios/<id>/toggle-block/` | Bloquear / desbloquear |
+| `GET` | `/api/usuarios/<id>/historial/` | Historial de actividad |
+| `GET/PUT` | `/api/usuarios/<id>/permisos/` | Ver / asignar permisos |
+
+### Conductores
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/empresa/conductores/` | Listar / crear conductores |
+| `GET/PUT/DELETE` | `/api/empresa/conductores/<id>/` | Detalle, editar, eliminar |
+| `POST` | `/api/empresa/conductores/<id>/asignar/` | Asignar vehículo |
+| `POST` | `/api/empresa/conductores/<id>/desasignar/` | Desasignar vehículo |
+
+### Flota y Vehículos
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/admin/flotas/` | Todas las flotas (SUPERADMIN) |
+| `GET/POST` | `/api/empresa/flotas/` | Listar / crear flotas |
+| `GET/PUT/DELETE` | `/api/empresa/flotas/<id>/` | Detalle, editar, eliminar |
+| `GET/POST` | `/api/empresa/vehiculos/` | Listar / crear vehículos |
+| `GET/PUT/DELETE` | `/api/empresa/vehiculos/<id>/` | Detalle, editar, eliminar |
+
+### Mantenciones
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/empresa/mantenciones/` | Listar / crear mantenciones |
+| `GET/PUT/DELETE` | `/api/empresa/mantenciones/<id>/` | Detalle, editar, eliminar |
+| `GET` | `/api/empresa/mantenciones/resumen/` | KPIs de mantenciones |
+| `GET` | `/api/empresa/mantenciones/calendario/` | Vista calendario |
+| `GET` | `/api/empresa/mantenciones/sugerencias/` | Sugerencias predictivas |
+
+### Mantenimiento Predictivo
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/empresa/planes-mantenimiento/` | Planes (ViewSet) |
+| `GET/POST` | `/api/empresa/alertas-mantenimiento/` | Alertas (ViewSet) |
+| `GET/POST` | `/api/empresa/vehiculo-planes/` | Asignar vehículo a plan |
+| `GET/PUT/DELETE` | `/api/empresa/vehiculo-planes/<id>/` | Detalle de asignación |
+| `GET` | `/api/empresa/predictivo/resumen/` | Resumen de estado predictivo |
+| `POST` | `/api/empresa/predictivo/generar-alertas/` | Generar alertas pendientes |
+| `GET` | `/api/empresa/simulador-vencimientos/` | Simulador de fechas |
+
+### Documentos
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/empresa/documentos/` | Listar / subir documentos |
+| `GET/PUT/DELETE` | `/api/empresa/documentos/<id>/` | Detalle, editar, eliminar |
+| `GET` | `/api/empresa/documentos/<id>/descargar/` | Descarga del archivo |
+| `POST` | `/api/empresa/documentos/<id>/renovar/` | Crear nueva versión |
+
+### Finanzas
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/empresa/gastos/` | Listar / registrar gastos |
+| `GET/PUT/DELETE` | `/api/empresa/gastos/<id>/` | Detalle, editar, eliminar |
+| `GET/POST` | `/api/empresa/presupuesto/` | Listar / crear presupuestos |
+| `GET/PUT/DELETE` | `/api/empresa/presupuesto/<id>/` | Detalle de presupuesto |
+| `GET` | `/api/admin/finanzas/` | Dashboard SaaS (SUPERADMIN) |
+| `GET` | `/api/admin/finanzas/historico/` | Histórico MRR (SUPERADMIN) |
+
+### Reportes
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/empresa/reportes/mantencion/` | Reporte de mantenciones |
+| `GET` | `/api/empresa/reportes/flota/` | Estado de la flota |
+| `GET` | `/api/empresa/reportes/tco/` | Costo Total de Operación |
+| `GET` | `/api/empresa/reportes/conductores/` | Estadísticas de conductores |
+| `GET` | `/api/empresa/reportes/presupuesto/` | Presupuesto vs. gasto real por mes |
+| `GET` | `/api/empresa/reportes/documentos/` | Estado documental y vencimientos |
+| `GET` | `/api/empresa/reportes/combustible/` | Gasto en combustible |
+| `GET` | `/api/empresa/reportes/exportar/` | Exportación XLSX (param: `tipo`) |
+| `GET` | `/api/admin/reportes/empresas/` | Reporte global (SUPERADMIN) |
+
+### Rutas y Trabajos
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/empresa/rutas/` | Listar / crear rutas. GET incluye `resumen` con `finalizadas_mes`. |
+| `GET/PUT/DELETE` | `/api/empresa/rutas/<id>/` | Detalle, editar, eliminar |
+| `POST` | `/api/empresa/rutas/<id>/iniciar/` | Iniciar ruta (registra km_inicio, crea EventoRuta auto) |
+| `POST` | `/api/empresa/rutas/<id>/finalizar/` | Finalizar ruta (registra km_fin + notas, actualiza vehículo, crea EventoRuta auto) |
+| `POST` | `/api/empresa/rutas/<id>/cancelar/` | Cancelar ruta con motivo (crea EventoRuta auto) |
+| `POST` | `/api/empresa/rutas/calcular/` | Calcular trayecto OSRM — devuelve solo `distancia_km`, `duracion_min`, `polyline` |
+| `GET/POST` | `/api/empresa/rutas/<id>/comentarios/` | GET lista eventos de la ruta; POST crea comentario manual del admin |
+
+**Validación de atraso:** `_ruta_dict` calcula `atrasada` (bool) y `atraso_min`
+(minutos) para rutas en estado **pendiente** cuya hora programada
+(`fecha_programada` + `hora_programada`, interpretada en hora local) ya pasó sin
+iniciarse. El frontend (`Rutas.vue`) muestra un badge rojo "⚠ Atrasada · 2 h 15 min"
+en la lista y en el detalle. Es solo informativo (no notifica). Las rutas activas no
+cuentan (ya arrancaron).
+
+### App conductores (endpoints exclusivos)
+
+> Requieren `rol = CONDUCTOR`. Usan el mismo JWT que el resto de la API.
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/conductor/rutas/` | Rutas asignadas al conductor (pendiente / activo / finalizado) |
+| `GET` | `/api/conductor/rutas/<id>/` | Detalle completo: paradas, vehículo |
+| `POST` | `/api/conductor/rutas/<id>/iniciar/` | Inicia la ruta — registra `km_inicio`, crea `EventoRuta` auto |
+| `POST` | `/api/conductor/rutas/<id>/finalizar/` | Finaliza la ruta — registra `km_fin` y `notas`, crea `EventoRuta` auto |
+| `GET` | `/api/conductor/rutas/<id>/comentarios/` | Historial de `EventoRuta` de la ruta |
+| `POST` | `/api/conductor/rutas/<id>/comentario/` | Agrega comentario manual. Body: `{ texto }` |
+| `GET` | `/api/conductor/solicitudes/` | Lista solicitudes del conductor, ordenadas por fecha desc |
+| `POST` | `/api/conductor/solicitudes/` | Crea solicitud — `multipart/form-data` si incluye foto, JSON si no |
+| `PATCH` | `/api/conductor/vehiculo/foto/` | Sube/actualiza la foto de su vehículo asignado (`multipart`, campo `foto`, máx 8 MB, solo imágenes) |
+
+**Backend:** `views_conductor.py`
+
+#### Foto del vehículo
+
+`Vehiculo.foto` (ImageField, `upload_to='vehiculos/fotos/'`). El serializer expone
+`foto_url` (solo lectura) y acepta `foto` (write-only). Sirve para **identificar el
+vehículo de un vistazo**: en el form de mantención, la tarjeta de confirmación
+muestra la foto si existe, o el ícono de camión como fallback. La pueden subir:
+- **Admin** (panel web): campo de foto en `FormVehiculo.vue` (multipart al
+  crear/editar vehículo).
+- **Conductor** (app móvil): desde Ajustes → tarjeta de vehículo asignado, toca la
+  foto → cámara o galería → `PATCH /api/conductor/vehiculo/foto/`.
+
+### Solicitudes de Conductores (panel web — USUARIO)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/empresa/solicitudes/` | Lista paginada con filtros: `estado`, `tipo`, `conductor_id`, `fecha_desde`, `fecha_hasta`, `buscar`, `page`, `page_size`. Incluye `resumen` con contadores |
+| `GET` | `/api/empresa/solicitudes/conteo/` | Retorna `{ pendientes: N }` — lightweight para badge del sidebar |
+| `GET` | `/api/empresa/solicitudes/<id>/` | Detalle de una solicitud con datos del conductor, vehículo y respondido_por |
+| `PUT` | `/api/empresa/solicitudes/<id>/` | Cambia estado a `en_revision` |
+| `PUT` | `/api/empresa/solicitudes/<id>/aprobar/` | Aprueba la solicitud; crea `Mantencion` o `Documento` automáticamente; notifica al conductor |
+| `PUT` | `/api/empresa/solicitudes/<id>/rechazar/` | Rechaza la solicitud; requiere `respuesta` ≥10 caracteres; notifica al conductor |
+
+**Backend:** `views_solicitudes.py` · `SolicitudConductorSerializer`  
+**Autenticación:** `IsAuthenticated` (USUARIO ve solo su empresa; SUPERADMIN pasa `?empresa_id=`)
+
+### Notificaciones
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET` | `/api/notificaciones/` | Listar notificaciones del usuario |
+| `GET` | `/api/notificaciones/no-leidas/` | Contador de no leídas |
+| `POST` | `/api/notificaciones/leer/` | Marcar como leídas |
+| `GET/PUT` | `/api/notificaciones/preferencias/` | Preferencias de canal |
+
+### Planes de Suscripción (SUPERADMIN)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/configuracion/planes/` | Listar / crear planes |
+| `GET/PUT/DELETE` | `/api/configuracion/planes/<id>/` | Detalle, editar, eliminar |
+| `POST` | `/api/configuracion/planes/<id>/asignar/` | Asignar plan a empresa |
+| `GET/PUT` | `/api/configuracion/planes/<id>/permisos/` | Permisos por defecto del plan |
+| `GET` | `/api/empresa/plan-uso/` | Uso actual del plan + estado de suscripción y cambio programado (USUARIO) |
+| `POST` | `/api/empresa/solicitar-cambio-plan/` | Solicitar cambio de plan al SUPERADMIN (legacy) |
+| `POST` | `/api/empresa/cambiar-plan/` | Cambio de plan **self-service** (USUARIO) |
+| `POST` | `/api/empresa/cancelar-cambio-plan/` | Cancelar un downgrade programado |
+
+#### Cambio de plan self-service (upgrade/downgrade)
+
+El usuario (rol USUARIO) cambia de plan sin intervención del SUPERADMIN vía
+`POST /api/empresa/cambiar-plan/` (`{plan_id}`). El backend detecta el tipo por
+precio: **upgrade** (inmediato, cobra la diferencia prorrateada), **downgrade**
+(diferido al fin del período) o **lateral** (cambio directo).
+
+> El flujo completo — proración, cobro OneClick vs. Webpay Plus, aplicación
+> diferida del downgrade y autoría de los pagos — está documentado en detalle en
+> [§18. Pasarela de pago Transbank y suscripciones](#18-pasarela-de-pago-transbank-y-suscripciones).
+
+### Configuración
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `GET/PUT` | `/api/usuario/perfil/` | Perfil del usuario autenticado |
+| `POST` | `/api/usuario/cambiar-password/` | Cambio de contraseña |
+| `POST` | `/api/recuperar-password/` | Recuperar contraseña del panel web (público) |
+| `GET` | `/api/empresa/plan-historial/` | Historial de cambios de plan |
+| `GET` | `/api/permisos/` | Catálogo de permisos disponibles |
+| `GET` | `/api/logs/` | Logs de auditoría (SUPERADMIN) |
+
+---
+
+## 11. Modelo de datos
+
+### Diagrama de relaciones principales
+
+```
+PlanSuscripcion ──< Permiso (M2M)
+      │
+      └──< Empresa ──< CambioPlan
+                │
+                │
+                ├──< Usuario ──< Permiso (M2M)
+                │       └──< Asignacion
+                │
+                ├──< Flota ──< Vehiculo
+                │                 ├──< Mantencion
+                │                 ├──< Documento (docs_v)
+                │                 ├──< GastoOperativo
+                │                 ├──< MantencionProgramada ──< AlertaMantencion
+                │                 ├──< VehiculoPlan ──> PlanMantenimiento
+                │                 └──< Ruta (conductor, vehiculo)
+                │                           ├──< Parada
+                │                           └──< EventoRuta
+                │
+                ├──< PlanMantenimiento ──< ReglaMantenimiento
+                ├──< GastoOperativo
+                ├──< PresupuestoMensual
+                ├──< Ruta
+                └──< Documento (empresa)
+
+Usuario (CONDUCTOR) ──< Documento (docs_c)
+                    └──< SolicitudConductor
+```
+
+### Modelos principales
+
+| Modelo | Descripción |
+|---|---|
+| `PlanSuscripcion` | Planes SaaS con límites y módulos habilitados |
+| `Empresa` | Empresa cliente con datos cifrados |
+| `CambioPlan` | Auditoría de cambios de plan |
+| `Usuario` | Usuario del sistema (hereda de `AbstractUser`) |
+| `Permiso` | Permiso granular identificado por `codigo` |
+| `Flota` | Agrupación de vehículos dentro de una empresa |
+| `Vehiculo` | Vehículo con patente, datos técnicos y km actuales |
+| `Asignacion` | Relación activa conductor ↔ vehículo |
+| `Mantencion` | Registro correctivo de mantención |
+| `Documento` | Documento legal con control de vigencia |
+| `GastoOperativo` | Gasto categorizado vinculado a empresa/vehículo |
+| `PresupuestoMensual` | Presupuesto mensual por empresa |
+| `PlanMantenimiento` | Plan predictivo con conjunto de reglas |
+| `ReglaMantenimiento` | Regla de mantenimiento periódico |
+| `VehiculoPlan` | Asignación de vehículo a plan de mantenimiento |
+| `MantencionProgramada` | Instancia programada de una regla sobre un vehículo |
+| `AlertaMantencion` | Alerta generada por proximidad de vencimiento |
+| `Notificacion` | Notificación in-app por usuario |
+| `LogAuditoria` | Registro de eventos de seguridad y actividad — campos: tipo, accion, usuario (FK), detalle (JSON), ip, **user_agent**, fecha |
+| `Ruta` | Ruta planificada con conductor, vehículo, estado, distancia, duración, polyline, km inicio/fin y notas |
+| `Parada` | Punto de parada de una ruta (origen, intermedia, destino) con coordenadas |
+| `EventoRuta` | Evento de historial de una ruta: tipo (`auto`/`comentario`), texto, autor opcional y timestamp |
+| `SolicitudConductor` | Solicitud creada por un conductor: tipo (`mantencion`, `combustible`, `incidencia`, `documento`), título, descripción, prioridad (`baja`, `media`, `alta`), estado (`pendiente`, `en_revision`, `aprobado`, `rechazado`), foto opcional (ImageField), respuesta del administrador |
+
+---
+
+## 12. Frontend — Estructura de vistas
+
+### Layout por rol
+
+**SUPERADMIN** utiliza `Base.vue` como layout principal con navegación lateral que incluye: Empresas, Usuarios, Planes, Permisos, Finanzas, Reportes y Logs.
+
+**USUARIO** utiliza `EmpresaLayout.vue` con navegación que incluye: Dashboard, Flota, Conductores, Mantenciones, Predictivo, Documentos, Rutas, Finanzas, Reportes, Notificaciones y Configuración.
+
+**CONDUCTOR** accede a una vista simplificada con información de su vehículo y asignación actual.
+
+### Dashboards
+
+`Dashboard.vue` detecta el rol del usuario y renderiza la vista correspondiente:
+
+**Dashboard USUARIO:**
+- KPIs: vehículos activos, mantenciones pendientes, gastos del mes, presupuesto disponible
+- Gráfico dona: distribución del estado de la flota (activos / docs por vencer / en mantención)
+- Gráfico de barras: vehículos por flota
+- Gráfico de línea: mantenciones por mes (últimos 12 meses)
+- Barra de progreso: cumplimiento del presupuesto mensual
+- Barra de progreso: cumplimiento predictivo (al día vs. vencidas)
+- Widget: próximas mantenciones (7 días)
+
+**Gráficos ligados a permisos de módulo:** cada sección del dashboard de empresa
+(flota, mantenimiento, finanzas, documentos, rutas, conductores) se muestra solo si
+el plan incluye el permiso del **módulo** correspondiente (`flotas.ver`,
+`mantenciones.ver`, `finanzas.ver`, `documentos.ver`, `rutas.ver`,
+`conductores.ver`). El endpoint del dashboard (`views.py`) no computa ni envía los
+KPIs/gráficos de un módulo sin permiso, y el front (`permisosDash`) arranca en
+`false` (fail-closed). Los antiguos permisos por categoría
+`dashboard.flota/mantenimiento/...` se **eliminaron** (migración
+`0086_eliminar_permisos_dashboard`): cada gráfico depende ahora del permiso de su
+módulo, no de un `dashboard.*` aparte.
+
+**Acceso al dashboard completo (`dashboard.ver`):** permiso único que controla si el
+plan incluye el panel. Sin él, no aparece el ítem "Dashboard" en el menú, la ruta
+`/empresa/dashboard` se redirige y el endpoint responde 403. Permite vender planes
+**sin dashboard**. Se creó en `0088_permiso_dashboard_ver` asignado a todos los
+planes existentes (no cambia el comportamiento actual). El router usa
+`primeraRutaEmpresa()` para aterrizar al usuario en su primera vista accesible
+(dashboard → finanzas → flota → … → configuración), evitando bucles de redirección
+cuando el plan no tiene dashboard.
+
+**Pestañas de Finanzas ligadas a módulos:** `FinanzasEmpresa.vue` gatea las pestañas
+que muestran datos de otros módulos — **Mantención** solo con `mantenciones.ver` y
+**Por vehículo** solo con `flotas.ver` (también se oculta la tarjeta "Top vehículos"
+del Resumen). Las categorías propias de finanzas (Combustible, Multas, Pago de
+servicio, Resumen) y la pestaña Presupuesto (`finanzas.presupuesto`) se mantienen
+como antes. El total de gastos sí incluye todos los costos reales (el gating es de
+navegación, no oculta dinero efectivamente gastado).
+
+**Dashboard SUPERADMIN:**
+- KPIs: empresas activas, total vehículos, MRR, suscripciones activas
+- Gráfico de línea: crecimiento de empresas
+- Gráfico dona: distribución de flotas por empresa
+- Gráfico dona: distribución de empresas por plan
+
+### Componentes globales
+
+| Componente | Descripción |
+|---|---|
+| `AppToast.vue` | Notificaciones no intrusivas (top-right, z-index 9999) |
+| `ConfirmModal.vue` | Modal de confirmación genérico reutilizable |
+| `NotificacionesBell.vue` | Campana con contador de no leídas en la navbar |
+| `PermisoToast.vue` | Aviso de permiso denegado |
+| `PlanUsageBanner.vue` | Banner de advertencia de límite de plan |
+| `LimitePlanModal.vue` | Modal bloqueante al alcanzar el límite del plan |
+| `MapaRuta.vue` | Mapa Leaflet reutilizable — renderiza polilínea y marcadores de paradas (origen/parada/destino) |
+
+---
+
+## 13. Sistema de notificaciones
+
+### In-app (tiempo real)
+
+Las notificaciones se reciben a través de una conexión **WebSocket** (Django Channels con `InMemoryChannelLayer`). El componente `NotificacionesBell.vue` mantiene la conexión abierta y actualiza el contador en tiempo real.
+
+### Preferencias de canal
+
+Cada usuario configura desde su perfil qué tipos de notificaciones recibe por cada canal:
+
+```json
+{
+  "inapp": ["mantencion", "documentos", "seguridad"],
+  "email": ["mantencion", "documentos"],
+  "push_token": ""
+}
+```
+
+Las categorías de notificación son: `mantencion`, `documentos`, `seguridad`, `actividad`.
+
+### Filtro por permiso del plan
+
+Además de las preferencias de canal, `notificar()` y `notificar_admins_empresa()` aceptan
+un parámetro opcional **`permiso`**. Si se indica, la notificación solo se envía cuando el
+plan de la empresa incluye ese permiso (SUPERADMIN siempre pasa). Esto centraliza la regla
+"no notificar de módulos que la empresa no tiene": p. ej. tras un downgrade que quita GPS,
+deja de recibir alertas de salida de ruta sin que cada módulo lo verifique por su cuenta.
+
+Asociaciones aplicadas (notificación → permiso):
+
+| Notificación | `permiso` |
+|---|---|
+| Vehículo fuera de ruta (GPS) | `gps.ver` |
+| Ruta iniciada / finalizada | `rutas.ver` |
+| Mantención (predictiva / iniciada / completada) | `mantenciones.ver` |
+| Documento por vencer / vencido / subido | `documentos.ver` |
+| Gasto correctivo registrado | `correctivos.ver` |
+| Asignación / reasignación / perfil de conductor | `conductores.ver` |
+
+Las notificaciones **transversales** (pagos, cambios de plan, suscripción, solicitudes,
+seguridad) **no** llevan `permiso`: deben llegar siempre, independientemente de los módulos
+contratados.
+
+### Tipos de notificación
+
+| Tipo | Categoría | Disparado por |
+|---|---|---|
+| `mantencion_por_vencer` | mantencion | Regla predictiva próxima a vencer |
+| `mantencion_vencida` | mantencion | Regla predictiva vencida |
+| `documento_por_vencer` | documentos | Documento ≤ 30 días para vencer |
+| `documento_vencido` | documentos | Documento con fecha pasada |
+| `seguridad` | seguridad | Bloqueo de cuenta, cambio de contraseña |
+| `actividad` | actividad | Asignaciones, cambios de estado |
+| `limite_plan` | seguridad | Empresa cerca del límite del plan |
+
+---
+
+## 14. Alertas de interfaz (Toasts)
+
+Para mostrar una notificación desde cualquier vista Vue, emitir un `CustomEvent` en el objeto `window`:
+
+```javascript
+window.dispatchEvent(new CustomEvent('app-toast', {
+  detail: {
+    tipo:    'exito',              // 'exito' | 'error' | 'info' | 'advertencia'
+    mensaje: 'Operación completada exitosamente.',
+  }
+}))
+```
+
+El componente `AppToast.vue` escucha este evento globalmente y muestra la alerta en la esquina superior derecha durante 4 segundos.
+
+---
+
+## 15. Sistema de emails transaccionales
+
+### Arquitectura
+
+La configuración SMTP es **dinámica** — se almacena cifrada en la base de datos (modelo `ConfiguracionSistema`) y se administra desde el panel del SUPERADMIN en **Configuración → Email**. No requiere reiniciar el servidor al cambiar credenciales.
+
+### Archivo principal
+`g_de_flota/email_service.py`
+
+### Funciones disponibles
+
+| Función | Trigger |
+|---|---|
+| `email_bienvenida()` | Crear usuario nuevo |
+| `email_pago_aprobado()` | Pago Webpay / OneClick aprobado |
+| `email_pago_rechazado()` | Pago rechazado por Transbank |
+| `email_suscripcion_vence()` | Cron: 30/15/7/1 días antes del vencimiento |
+| `email_suscripcion_gracia()` | Cron: suscripción pasa a estado "gracia" |
+| `email_suscripcion_bloqueada()` | Cron: empresa suspendida |
+| `email_documento_vence()` | Cron: documento vencido o por vencer |
+| `email_mantencion_vence()` | Futuro hook en gestión de mantenciones |
+| `email_solicitud_nueva()` | Conductor crea solicitud |
+| `email_solicitud_resuelta()` | Admin aprueba o rechaza solicitud |
+| `email_ruta_asignada()` | Ruta asignada a conductor |
+| `email_checklist_fallas()` | Conductor reporta fallas en checklist pre-viaje |
+
+### Reglas de uso
+- Todas las llamadas están envueltas en `try/except` — nunca interrumpen el flujo HTTP.
+- La contraseña SMTP se cifra con Fernet antes de guardar; nunca se retorna en texto plano.
+- Cada evento tiene su toggle individual en `ConfiguracionSistema` (ej: `notif_pago_aprobado`).
+- Si `email_activo = False`, no se envía ningún email.
+
+### Endpoints
+| Método | URL | Descripción |
+|---|---|---|
+| `GET/PUT` | `/api/admin/email/` | Leer/actualizar configuración SMTP y toggles |
+| `POST` | `/api/admin/email/test/` | Enviar email de prueba (body: `{ email_destino }`) |
+
+---
+
+## 16. Variables de entorno
+
+### Archivo centralizado
+
+Existe **un único `.env`** en la raíz del monorepo (`gestion_flota/.env`). No debe commitearse al repositorio.
+
+- **Django** lo lee con `python-dotenv`: `load_dotenv(BASE_DIR.parent / '.env')` (en `settings.py`).
+- **Vite** (panel web y app conductores) lo lee con `envDir: '..'` en `vite.config.js`.
+
+| Variable | Requerida | Leída por | Descripción |
+|---|---|---|---|
+| `SECRET_KEY` | Sí | Django | Clave secreta de Django |
+| `ENCRYPTION_KEY` | Sí | Django | Clave Fernet (base64-url) para el cifrado simétrico de datos sensibles |
+| `DEBUG` | No | Django | `True` para desarrollo, `False` para producción |
+| `ALLOWED_HOSTS` | No | Django | Hosts permitidos (separados por coma) |
+| `VITE_API_URL` | No | Vite | URL base de la API; vacío = peticiones relativas (proxy Vite) |
+| `EMAIL_BACKEND` | No | Django | Backend de email (por defecto: consola; en producción no se usa — la config es dinámica en BD) |
+| `FRONTEND_URL` | No | Django | URL pública del frontend para links en emails (por defecto: `http://localhost:7183`) |
+| `TRANSBANK_ENVIRONMENT` | No | Django | `integration` (por defecto) o `production` |
+| `TRANSBANK_COMMERCE_CODE` | No | Django | Código de comercio Webpay Plus |
+| `TRANSBANK_API_KEY` | No | Django | API key de Transbank (Webpay Plus + OneClick) |
+| `ONECLICK_COMMERCE_CODE` | No | Django | Código de comercio mall de Webpay OneClick |
+| `ONECLICK_CHILD_CODE` | No | Django | Código de tienda hija (child) de OneClick |
+| `GEMINI_API_KEY` | No | Django | API key de Gemini para la capa de moderación por IA (gratis en [aistudio.google.com](https://aistudio.google.com/apikey)). Vacío = solo filtro de diccionario |
+| `TRACCAR_URL` | No | Django | URL base de la API de Traccar (ej: `http://traccar:8082`). **Vacío = sincronización desactivada** (`_habilitado()` retorna `False`). En Docker usar el nombre del servicio, NO `localhost`. |
+| `TRACCAR_USER` / `TRACCAR_PASSWORD` | No | Django | Credenciales del admin de Traccar para crear/actualizar/eliminar dispositivos vía API REST. |
+| `GPS_WEBHOOK_KEY` | No | Django | Clave opcional para proteger el webhook Traccar→backend (`X-Webhook-Key` header). Vacío = webhook abierto (seguro dentro de la red interna de Docker). |
+| `RATELIMIT_ENABLE` | No | Django | `True` (por defecto) / `False` para desactivar el rate limiting globalmente. Útil en staging con pruebas de carga. |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Sí (prod) | Django | Credenciales de la base de datos PostgreSQL. |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | No | Django | Host (`db` en Docker) y puerto (`5432`) de PostgreSQL. |
+| `REDIS_URL` | No | Django | URL de Redis para Django Channels (`redis://redis:6379/0` en Docker). |
+| `CORS_ALLOWED_ORIGINS_EXTRA` / `CSRF_TRUSTED_ORIGINS_EXTRA` | No | Django | Orígenes adicionales permitidos (IP pública, dominio). |
+
+> **Nota Docker:** `ALLOWED_HOSTS` debe incluir `backend` además de la IP/dominio público, porque Traccar reenvía posiciones con `Host: backend:8000`. Sin esto el webhook falla con `DisallowedHost` (400). Ejemplo: `ALLOWED_HOSTS=157.180.85.17,localhost,backend`. `DEBUG` debe ser `False` en producción.
+
+> Detalle completo de la pasarela de pago en [§18](#18-pasarela-de-pago-transbank-y-suscripciones).
+
+### Configuración CORS
+
+En desarrollo, el backend acepta peticiones desde:
+- `http://localhost:7183` (panel web)
+- `http://localhost:5174` (app conductores en navegador)
+- `capacitor://localhost` y `http://localhost` (app conductores en dispositivo)
+
+En producción, configurar `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` en `settings.py` con los dominios reales.
+
+### Hardening de seguridad
+
+A raíz de una auditoría externa se aplicaron tres medidas (todas en `settings.py` /
+vistas):
+
+1. **Headers de seguridad HTTP** — `SECURE_CONTENT_TYPE_NOSNIFF` y
+   `X_FRAME_OPTIONS='DENY'` siempre activos; con `DEBUG=False` se agrega
+   `SECURE_PROXY_SSL_HEADER` (Django reconoce HTTPS detrás de Nginx). Los
+   headers `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SESSION_COOKIE_SECURE`
+   y `CSRF_COOKIE_SECURE` están presentes en `settings.py` pero **comentados**:
+   se activan una vez que el servidor tenga HTTPS configurado (Certbot).
+2. **Limpieza de `FERNET_KEY`** — se eliminó `FERNET_KEYS = [os.environ['FERNET_KEY']]`,
+   una variable **muerta** (el cifrado usa solo `ENCRYPTION_KEY`) que además
+   obligaba a definir una env var inexistente y **rompía el arranque** si faltaba.
+3. **Rate limiting** (`django-ratelimit`, cache Redis en prod / memoria en dev):
+   - `POST /api/login/` → **10/min por IP** (complementa el bloqueo por cuenta de
+     5 intentos), responde `429 RATE_LIMIT`.
+   - `POST /api/recuperar-password/` y `/api/conductor/recuperar-password/` →
+     **5/min por IP** (evita spam de correos y enumeración de RUTs); responde la
+     misma respuesta genérica para no revelar el límite.
+   - Se puede desactivar globalmente con `RATELIMIT_ENABLE=False` en env.
+
+**Nota operativa pendiente (no es código):** rotar la contraseña de PostgreSQL que
+quedó en el historial de Git y limpiar el historial (BFG / git-filter-repo).
+
+---
+
+## 17. Manejo de errores (v2.5)
+
+Sistema profesional de manejo de errores implementado para garantizar estabilidad en pruebas QA y producción.
+
+### Backend
+
+#### `error_helpers.py` — Helpers centralizados
+
+Ubicación: `gestion_backend/g_de_flota/error_helpers.py`
+
+| Función | Descripción |
+|---|---|
+| `error_response(mensaje, codigo, status, detalle)` | Retorna `JsonResponse` estandarizado con `error`, `codigo` y `detalle` opcionales |
+| `validar_campos(body, requeridos)` | Verifica campos obligatorios y retorna `(valido: bool, msg: str)` |
+| `vista_segura` | Decorador para métodos de vistas-clase: captura `json.JSONDecodeError`, `PermissionError` y cualquier excepción no controlada; registra log SEGURIDAD en errores 500 |
+
+**Códigos de error estándar:**
+
+| Código | HTTP | Significado |
+|---|---|---|
+| `SIN_AUTENTICACION` | 401 | Token inválido o expirado |
+| `SIN_PERMISO` | 403 | Rol insuficiente |
+| `NO_ENCONTRADO` | 404 | Recurso inexistente |
+| `VALIDACION` | 400 | Campo faltante o mal formado |
+| `LIMITE_PLAN` | 403 | Límite del plan alcanzado |
+| `MODULO_NO_INCLUIDO` | 403 | Módulo no disponible en el plan |
+| `SUSCRIPCION_BLOQUEADA` | 402 | Empresa sin suscripción activa |
+| `EMPRESA_DESACTIVADA` | 403 | Empresa suspendida por el SUPERADMIN |
+| `ERROR_INTERNO` | 500 | Error no controlado del servidor |
+
+#### Desactivación de empresa (SUPERADMIN)
+
+El botón "Desactivar" de la lista de empresas hace `DELETE /api/empresas/<id>/`, que
+marca `empresa.estado = 'suspendida'`. El acceso se controla **por el estado de la
+empresa**, sin tocar el `is_active` individual de cada usuario:
+
+- **Login** (`login_view`): USUARIO y CONDUCTOR de una empresa suspendida no pueden
+  iniciar sesión (403 `EMPRESA_DESACTIVADA`). SUPERADMIN nunca se ve afectado.
+- **Middleware** (`BloqueoSuscripcionMiddleware`): corta también las sesiones ya
+  abiertas (token vigente) con el mismo código. **Importante:** el JWT se valida en
+  la capa de DRF (vista), no en el middleware de Django, por lo que el middleware
+  resuelve el token él mismo (`_resolver_usuario` → `JWTAuthentication`). Sin esto
+  `request.user` sería anónimo y el bloqueo (empresa **y** suscripción) no se
+  aplicaría a las peticiones a la API. **Antes de expulsar se avisa**: el
+  panel web (`api.js`) muestra el mensaje y cierra sesión; la app del conductor
+  muestra su pantalla de bloqueo (evento `empresa-desactivada`) con el motivo y un
+  botón para cerrar sesión, en vez de sacarlo de golpe.
+- **Reactivar** la empresa (`PUT estado='activa'`) restaura el acceso de todos
+  automáticamente, tal como estaban (no se modificaron sus flags individuales).
+
+#### `ErrorHandlerMiddleware` — Captura global Django
+
+Agregado en `gestion_backend/g_de_flota/middleware.py` y registrado en `settings.py` antes de `ConfiguracionSeguridadMiddleware`.
+
+Captura excepciones que escapan a las vistas (Django normalmente retornaría HTML de error) y las convierte en JSON `{'error': ..., 'codigo': 'ERROR_INTERNO'}` con status 500. Adicionalmente registra el traceback en `LogAuditoria`.
+
+### Frontend
+
+#### `apiFetch` mejorado — `src/utils/api.js`
+
+- **Timeout de 15 segundos** con `AbortController`; lanza `ApiError` con código `TIMEOUT`
+- **`ApiError`** — clase de error exportable con campos `status` y `codigo`
+- **Parseo seguro de JSON**: solo parsea si `Content-Type: application/json`; no rompe con respuestas no-JSON
+- **`safeJsonParse`** interno: todos los `JSON.parse` de `localStorage`/`sessionStorage` están protegidos
+- **Sin conexión** → `ApiError` código `SIN_CONEXION`
+- Mantiene la misma lógica de inyección de `empresa_id`, refresh de JWT y eventos globales de plan/suscripción
+
+#### `useAsync` — `src/composables/useAsync.js`
+
+Composable reutilizable que evita repetir el patrón `cargando / error / try-catch` en cada componente:
+
+```js
+const { cargando, error, ejecutar } = useAsync()
+
+async function guardar() {
+  await ejecutar(
+    () => apiFetch('/api/...', { method: 'POST', body: datos }),
+    { mensajeError: 'Error al guardar. Intenta nuevamente.' }
+  )
+}
+```
+
+Opciones: `mensajeError`, `mostrarToast` (default `true`), `onError` (callback).
+
+#### `ErrorBoundary.vue` — `src/components/ErrorBoundary.vue`
+
+Componente que captura errores de renderizado de Vue (`onErrorCaptured`) y muestra una pantalla de recuperación con botón "Reintentar" en lugar de una pantalla en blanco.
+
+Está envuelto en `App.vue`:
+```vue
+<ErrorBoundary>
+  <RouterView />
+</ErrorBoundary>
+```
+
+#### `router/index.js` — Guards seguros
+
+Todos los accesos a `localStorage`/`sessionStorage` del router guard usan `safeJsonParse`, previniendo que un JSON corrupto bloquee la navegación silenciosamente.
+
+---
+
+## 18. Pasarela de pago Transbank y suscripciones
+
+Toda la facturación SaaS de la plataforma se procesa con **Transbank** (la pasarela
+de pago chilena). El sistema usa **dos productos** de Transbank, ambos a través del
+SDK oficial `transbank-sdk`:
+
+| Producto | Uso en la plataforma |
+|---|---|
+| **Webpay Plus** | Pago puntual (one-shot): el usuario es redirigido al formulario de Transbank, ingresa su tarjeta y vuelve. Se usa para el **primer pago / reactivación** y para el **cobro de la proración** de un upgrade cuando la empresa no tiene tarjeta guardada. |
+| **Webpay OneClick Mall** | Tarjeta **inscrita** una sola vez para **cobros recurrentes sin intervención del usuario**: renovación automática mensual, cobro inmediato de proración de upgrade. |
+
+> Todo el código de pagos vive en `g_de_flota/views_planes.py`. El cobro recurrente
+> automático lo dispara el cron `verificar_suscripciones` (ver §18.6).
+
+### 18.1 Configuración (variables de entorno)
+
+El comportamiento (ambiente de integración vs. producción) se controla por env vars,
+leídas en `settings.py`:
+
+| Variable | Descripción |
+|---|---|
+| `TRANSBANK_ENVIRONMENT` | `integration` (por defecto) o `production`. Selecciona `IntegrationType.TEST` o `IntegrationType.LIVE` en el SDK. |
+| `TRANSBANK_COMMERCE_CODE` | Código de comercio de **Webpay Plus**. |
+| `TRANSBANK_API_KEY` | API key (llave secreta) de Transbank — compartida por Webpay Plus y OneClick. |
+| `ONECLICK_COMMERCE_CODE` | Código de comercio **mall** de OneClick (el padre que agrupa las tiendas hijas). |
+| `ONECLICK_CHILD_CODE` | Código de **tienda hija** (child) de OneClick por la que se cursa el cobro real. |
+
+En el ambiente de **integración**, si las variables están vacías el SDK usa los
+códigos públicos de prueba de Transbank. **No se debe** dejar `TRANSBANK_ENVIRONMENT=production`
+sin credenciales reales. Las funciones `_get_webpay_transaction()`,
+`_get_oneclick_inscription()` y `_get_oneclick_transaction()` centralizan la
+construcción de cada cliente del SDK según el ambiente.
+
+### 18.2 Modelos involucrados
+
+| Modelo | Rol |
+|---|---|
+| `Suscripcion` | Estado de la suscripción de la empresa (1:1 con `Empresa`). Campos clave: `estado` (`pendiente`/`activa`/`gracia`/`suspendida`/`cancelada`), `fecha_fin_periodo`, `plan`, y para el downgrade diferido `plan_programado` + `fecha_cambio_programado`. |
+| `PagoTransbank` | Registro de **cada** transacción (aprobada o no). Campos: `token`, `orden_compra` (únicos), `monto`, `estado`, `plan_nombre`, `respuesta_tb` (JSON con la respuesta cruda del SDK), `fecha_pago` e `iniciado_por` (quién originó el pago). |
+| `TarjetaGuardada` | Tarjeta inscrita con OneClick (1:1 con `Empresa`). Guarda `tbk_user` (token de cobro de Transbank), `username_tb`, `last_4` y `card_type`. **Nunca** almacena el número de tarjeta real. |
+
+### 18.3 Flujo de Webpay Plus (pago puntual)
+
+```
+USUARIO                  Backend (Django)                 Transbank
+  │  POST /api/pago/iniciar/  │                               │
+  │ ─────────────────────────▶│  tx.create(buy_order, amount, │
+  │                           │           return_url) ───────▶│
+  │                           │◀───────── {token, url} ───────│
+  │                           │  crea PagoTransbank(estado=   │
+  │                           │           'iniciado')         │
+  │◀──── {url, token} ────────│                               │
+  │                                                           │
+  │ ───────── redirige el navegador a la url de Webpay ──────▶│
+  │ ◀──────── el usuario paga en el formulario de Transbank ──│
+  │                                                           │
+  │ ◀─ Transbank redirige a /api/pago/retorno/?token_ws=… ────│
+  │  GET /api/pago/retorno/   │                               │
+  │ ─────────────────────────▶│  tx.commit(token_ws) ────────▶│
+  │                           │◀──── response_code = 0 ───────│
+  │                           │  PagoTransbank.estado=        │
+  │                           │  'aprobado'; activa la sus.;  │
+  │                           │  fecha_fin_periodo = +30 días │
+  │◀── redirect a /empresa/pago/exitoso ──│                   │
+```
+
+Puntos relevantes de `PagoIniciarView` y `PagoRetornoView`:
+
+- **Bloqueo anti-doble-pago:** `PagoIniciarView` rechaza iniciar un pago si la
+  suscripción activa aún tiene **más de 7 días** de vigencia.
+- **`PagoRetornoView` es público y sin sesión** (lo invoca el navegador tras volver
+  de Transbank). Es `csrf_exempt` y acepta `token_ws` por GET (`?token_ws=`) o POST.
+- **Idempotencia:** si el `PagoTransbank` ya está `aprobado`/`rechazado`, no se vuelve
+  a confirmar (evita doble commit) y se redirige al resultado correspondiente.
+- **Cuotas no permitidas:** si el usuario eligió pagar en cuotas (`installments_number > 1`),
+  el pago se **reembolsa** (`tx.refund`) y se marca rechazado.
+- **Resultado:** con `response_code == 0` se aprueba, se activa la suscripción
+  (`estado='activa'`, `fecha_fin_periodo = now + 30 días`), se sincroniza
+  `Empresa.plan`, se notifica in-app y por email (`email_pago_aprobado`). En caso
+  contrario se marca rechazado y se envía `email_pago_rechazado`. Errores del SDK
+  dejan el pago en `fallido` y registran log de SEGURIDAD.
+- Al confirmar redirige al frontend a `/empresa/pago/exitoso?orden=…` o
+  `/empresa/pago/fallido?error=…`.
+
+### 18.4 Flujo de OneClick Mall (tarjeta guardada)
+
+**Inscripción de la tarjeta** (una sola vez):
+
+1. `POST /api/empresa/tarjeta/inscribir/` → `inscription.start(username, email, response_url)`
+   devuelve `{url, token}`; el frontend redirige al formulario de Transbank. No se
+   permite inscribir si ya existe una `TarjetaGuardada`.
+2. El usuario ingresa su tarjeta en Transbank y vuelve a
+   `GET /api/empresa/tarjeta/retorno/` (`TarjetaInscripcionRetornoView`, pública,
+   `csrf_exempt`).
+3. El backend llama a `inscription.finish(token)`; si `response_code == 0` guarda la
+   `TarjetaGuardada` con el `tbk_user`, `last_4` y `card_type`, y redirige al frontend.
+4. `GET /api/empresa/tarjeta/` informa el estado; `POST /api/empresa/tarjeta/eliminar/`
+   la desinscribe (`inscription.delete`) y borra el registro.
+
+**Cobro con la tarjeta guardada:** se hace con `MallTransaction.authorize(...)` usando
+`username_tb` + `tbk_user`, una **orden padre** (`parent_buy_order`) y un detalle hijo
+con `commerce_code = ONECLICK_CHILD_CODE`, el `amount` y `installments_number=1`. Si el
+`response_code` del detalle es `0`, el cobro se aprobó y se crea un `PagoTransbank`
+aprobado con `respuesta_tb.via` indicando el origen (`oneclick` / `proracion_upgrade` /
+`autocobro`).
+
+### 18.5 Cambio de plan self-service: upgrades y downgrades
+
+Endpoint: `POST /api/empresa/cambiar-plan/` (`cambiar_plan_self_service`). Requiere rol
+`USUARIO`, empresa asignada y una **suscripción activa y vigente** (si no, responde
+`SIN_SUSCRIPCION_ACTIVA`). El backend compara `precio_mensual` del plan actual vs. el
+solicitado y decide el tipo:
+
+> **Nota de implementación:** la vista **no** usa `@transaction.atomic` a propósito.
+> Hace llamadas HTTP a Transbank (~2-3 s) que no deben correr dentro de una
+> transacción; con SQLite mantener el lock de escritura durante esa espera provoca
+> *"database is locked"* frente al polling concurrente del frontend.
+
+#### Upgrade (plan más caro) — inmediato y prorrateado
+
+El cambio se aplica **al instante**. Solo se cobra la **diferencia prorrateada** por
+los días que faltan hasta el vencimiento del período ya pagado:
+
+```
+monto = round( (precio_nuevo − precio_actual) × días_restantes / 30 )
+```
+
+calculado en `_proracion_upgrade(sus, plan_nuevo)` (`DIAS_CICLO = 30`). Según la
+situación de la empresa:
+
+| Caso | Comportamiento |
+|---|---|
+| **Sin diferencia que cobrar** (p. ej. último día, `monto ≤ 0`) | Se aplica el upgrade directo, sin cobro. |
+| **Con tarjeta OneClick guardada** | `_cobrar_oneclick(...)` cobra la diferencia al instante; si se aprueba, se aplica el plan. Si Transbank rechaza → `COBRO_RECHAZADO`. |
+| **Sin tarjeta guardada** | `_iniciar_webpay_proracion(...)` crea una transacción Webpay Plus por la diferencia y devuelve `{tipo:'upgrade_webpay', url}`; el frontend redirige a Transbank. El upgrade se aplica **al confirmarse** el pago en `PagoRetornoView`. |
+
+El pago por Webpay de una proración se marca al iniciarlo con
+`respuesta_tb = {'proracion_upgrade': True, 'plan_id': …}`. En el retorno,
+`PagoRetornoView` detecta ese marcador y aplica el cambio de plan **sin reiniciar el
+período** (`fecha_fin_periodo` no se toca) — a diferencia de un pago de renovación
+normal, que sí extiende 30 días. El precio completo del nuevo plan recién se cobra en
+la **próxima renovación**.
+
+#### Downgrade (plan más barato) — diferido al fin del período
+
+El cambio **no es inmediato**: el cliente conserva el plan que pagó hasta que venza.
+Se programa guardando en la suscripción:
+
+```python
+sus.plan_programado          = plan_nuevo            # el plan inferior
+sus.fecha_cambio_programado  = sus.fecha_fin_periodo # cuándo se aplica
+```
+
+El downgrade efectivo ocurre por **una** de estas dos vías (lo que pase primero):
+
+1. **Autocobro de renovación** (cron, 3 días antes de vencer, con tarjeta guardada):
+   `_cobrar_automatico` cobra ya el **plan nuevo** (`plan_programado or plan`) y, tras
+   aprobarse, llama a `aplicar_downgrade_programado(sus)` — el cliente renueva
+   directamente en su plan ajustado.
+2. **Vencimiento sin autocobro** (cron): al detectar `fecha_cambio_programado <= ahora`,
+   el cron aplica `aplicar_downgrade_programado(sus)`.
+
+El helper reutilizable `aplicar_downgrade_programado(sus)` cambia el plan, deja
+registro en `CambioPlan`, limpia `plan_programado`/`fecha_cambio_programado` y devuelve
+el plan aplicado. El usuario puede **revertir** un downgrade aún no aplicado con
+`POST /api/empresa/cancelar-cambio-plan/`.
+
+#### Cambio lateral (mismo precio)
+
+Se aplica de inmediato sin cobro (`_aplicar_cambio_plan` + notificación).
+
+#### Límites del plan tras bajar
+
+Al bajar de plan, el **exceso de recursos queda en solo-lectura**: nada se borra, pero
+`verificar_limite_plan` bloquea **crear** nuevos recursos hasta volver por debajo del
+nuevo límite.
+
+#### Autoría de los pagos confirmados sin sesión
+
+El retorno de Webpay (`PagoRetornoView`) es un request **sin usuario autenticado** (lo
+abre Transbank). Para no perder quién originó la operación, `PagoTransbank.iniciado_por`
+guarda el usuario que **inició** el pago; al confirmarse, ese usuario se usa como
+`CambioPlan.cambiado_por` y en `registrar_log(usuario=...)`. El autocobro automático
+(cron) deja `iniciado_por = null` (= realizado por el sistema).
+
+**Frontend:** `MiPlanTab.vue` — botón "Mejorar"/"Cambiar" por plan, modal con la
+proración (upgrade) o la fecha de aplicación (downgrade) y banner para cancelar un
+cambio programado.
+
+### 18.6 Ciclo de vida de la suscripción (cron `verificar_suscripciones`)
+
+Comando de gestión pensado para correr **diariamente** (p. ej. `0 9 * * *`):
+
+```bash
+python manage.py verificar_suscripciones
+```
+
+Recorre las suscripciones y aplica, según los días para vencer:
+
+| Situación | Acción |
+|---|---|
+| `pendiente` (sin primer pago) a 3/7/14/30 días de creada | Recordatorio in-app + email para completar el pago |
+| `activa` y **vencida** (`días ≤ 0`) | Pasa a **`gracia`** + email `email_suscripcion_gracia` |
+| `gracia` superado `dias_gracia_pago` y `bloqueo_automatico=True` | **Suspende** la empresa (`estado='suspendida'`) + email |
+| `activa`, faltan **3 días** y hay tarjeta guardada | **Autocobro** OneClick de la renovación (`_cobrar_automatico`) |
+| `activa`, faltan 30/15/7/1 días | Recordatorio de vencimiento (in-app + `email_suscripcion_vence`) |
+| `plan_programado` con `fecha_cambio_programado` vencida | Aplica el **downgrade diferido** |
+
+El autocobro: si se aprueba, crea `PagoTransbank` aprobado, aplica el downgrade
+programado si lo había, y renueva (`estado='activa'`, `fecha_fin_periodo = +30 días`).
+Si la tarjeta es rechazada o falla el SDK, **no** renueva y notifica al admin para que
+pague manualmente. Toda la cadena de emails va envuelta en `try/except` para no
+interrumpir el cron.
+
+### 18.7 Endpoints de pago y suscripción
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/api/pago/iniciar/` | Inicia un pago. `usar_tarjeta=false` → Webpay Plus (`{url, token}`); `usar_tarjeta=true` → cobro OneClick directo |
+| `GET/POST` | `/api/pago/retorno/` | Retorno de Webpay (público, sin sesión). Confirma con `tx.commit` y redirige al frontend |
+| `GET` | `/api/pago/historial/` | Historial de pagos aprobados (USUARIO ve su empresa; SUPERADMIN con `?empresa_id=`) |
+| `POST` | `/api/empresa/cambiar-plan/` | Cambio de plan self-service (upgrade/downgrade/lateral) |
+| `POST` | `/api/empresa/cancelar-cambio-plan/` | Cancela un downgrade programado aún no aplicado |
+| `GET` | `/api/empresa/suscripcion/` | Estado de la suscripción de la empresa |
+| `GET/PUT` | `/api/admin/suscripciones/` · `/<id>/` | Listar / modificar suscripciones (SUPERADMIN) |
+| `GET` | `/api/empresa/tarjeta/` | Estado de la tarjeta OneClick guardada |
+| `POST` | `/api/empresa/tarjeta/inscribir/` | Inicia inscripción OneClick (`{url, token}`) |
+| `GET/POST` | `/api/empresa/tarjeta/retorno/` | Retorno de la inscripción (público). Guarda la `TarjetaGuardada` |
+| `POST` | `/api/empresa/tarjeta/eliminar/` | Desinscribe y elimina la tarjeta guardada |
+| `GET` | `/api/terminos/` · `/api/admin/terminos/` | Términos y condiciones (público / edición SUPERADMIN) |
+| `POST` | `/api/empresa/terminos/aceptar/` | Registra la aceptación de términos por la empresa |
+
+### 18.8 Trazabilidad y logs
+
+Cada operación de pago deja un `LogAuditoria` (acciones: `pago_iniciado`,
+`pago_aprobado`, `pago_oneclick`, `pago_error`, `oneclick_error`,
+`upgrade_self_service`, `upgrade_webpay_aprobado`, `downgrade_programado`,
+`downgrade_cancelado`, `pago_manual_registrado`, etc.). El `PagoTransbank.respuesta_tb`
+conserva la respuesta cruda del SDK para auditoría/soporte. Ver §9.11 (Auditoría) para
+las etiquetas de cada acción.
+
+---
+
+## 19. Notas técnicas y apéndices
+
+Notas puntuales de implementación que complementan las secciones anteriores.
+
+### App conductor — Banners y safe-area (barra de estado)
+
+En `app_conductor/src/views/Rutas/ListaRutas.vue`, los banners de alerta que se
+renderizan **por encima** del header (vehículo en mantención y mantención próxima)
+podían quedar tapados por la barra de estado del teléfono (hora/batería).
+
+Solución:
+- Los banners superiores usan la clase `.alert-banner--top`, que aplica
+  `margin-top: calc(env(safe-area-inset-top) + 0.75rem)` para empezar debajo de la
+  barra de estado.
+- El header (`.header-hero`) recibe la clase condicional `.header-hero--no-safe`
+  cuando hay un banner arriba, para no duplicar el espacio del safe-area (el banner
+  ya lo absorbe). Sin banner, el header conserva su `padding-top` con
+  `env(safe-area-inset-top)` y el gradiente llega hasta el borde superior.
+
+---
+
+### Vite — Ruido "ws proxy error: ECONNRESET" en dev
+
+El proxy `/ws` de `gestion-frontend/vite.config.js` reenvía el WebSocket del mapa
+en vivo a daphne (`ws://127.0.0.1:8000`). En desarrollo, daphne corta esas
+conexiones de golpe cada vez que `runserver` reinicia por autoreload (al guardar
+un `.py`) o cuando el HMR de Vite recarga `MapaFlota.vue`. Eso produce un
+`read ECONNRESET` **benigno**: el cliente reconecta solo (backoff 1s→30s en
+`MapaFlota.vue`).
+
+Para no contaminar la consola, el proxy `/ws` tiene un handler `configure` que
+ignora los `ECONNRESET` esperados y sigue mostrando cualquier otro error. Cambiar
+`vite.config.js` exige reiniciar el servidor de Vite para que surta efecto.
+
+---
+
+### Validación "solo texto" en nombres y apellidos
+
+Se agregó la función `soloTexto(valor)` a `src/utils/validators.js` (panel web) y a
+`app_conductor/src/utils/validators.js` (app conductor). Filtra el valor dejando
+únicamente letras de cualquier idioma (incluye tildes y ñ), espacios, guion y
+apóstrofe, usando `String(valor).replace(/[^\p{L}\s'-]/gu, '')`. Bloquea dígitos y
+símbolos **al escribir**.
+
+Se aplica vía `@input` (junto al `v-model`) en los campos de nombre/apellido de
+personas:
+
+- `web/usuarios/NuevoUsuario.vue` y `EditarUsuario.vue` — nombre, apellido paterno, materno
+- `web/empresa/conductores/NuevoConductor.vue` y `EditarConductor.vue` — nombre, apellido paterno, materno
+- `web/publico/RegistroPublico.vue` — nombre, apellido paterno, materno del usuario (la razón social de la empresa NO se filtra, puede llevar números)
+- `web/configuracion/tabs/PerfilTab.vue` — nombre del perfil
+- `web/clientes/EditarEmpresa.vue` — ciudad
+- `app_conductor … Ajustes/Ajustes.vue` — nombre del conductor
+
+Quedan **sin** filtro a propósito: razón social de empresa, nombre de ruta y
+nombre de plan (legítimamente llevan números o símbolos).
+
+---
+
+### Sanitización server-side en el registro público de empresa
+
+El filtro `soloTexto` del frontend es cosmético y se puede saltar llamando la API
+directamente, así que `AutoRegistroView` (`views_publico.py`, POST
+`/api/auto-registro/`) ahora sanea los datos en el backend:
+
+- `sanitizar_nombre(valor)`: para **nombre y apellidos del administrador**. Deja
+  solo letras (con tildes y ñ, vía `str.isalpha`), espacios, guion y apóstrofe;
+  descarta dígitos y símbolos, colapsa espacios. Se valida sobre el resultado, de
+  modo que `"123"` o `"<b>x</b>"` quedan vacíos y se rechazan con 400.
+- `sanitizar_texto(valor)`: para **razón social, dirección, ciudad y comuna**.
+  Permite números y signos comunes, pero elimina caracteres de control y los
+  símbolos `<` `>` (XSS almacenado). La longitud se valida sobre el valor saneado.
+
+Nota: los serializers de usuario y conductor (`serializers.py`) solo hacen
+`.strip().title()` en nombre/apellido — si se quiere la misma regla de solo-texto
+en esos formularios, habría que aplicar `sanitizar_nombre` ahí también.
+
+---
+
+### Sanitización en la edición/creación de empresas (EmpresaSerializer)
+
+Las funciones `sanitizar_nombre` y `sanitizar_texto` se movieron al módulo
+compartido `g_de_flota/sanitizers.py` y se reutilizan desde `views_publico.py`
+(registro público) y `serializers.py`.
+
+`EmpresaSerializer` (usado tanto al **crear** como al **editar** empresas desde el
+panel) ahora sanea con `sanitizar_texto`:
+
+- `validate_nombre`: razón social — permite números pero quita tags `<>` y
+  caracteres de control, y exige que no quede vacía tras sanear.
+- `validate_direccion`, `validate_comuna`, `validate_ciudad`: misma limpieza.
+
+Como DRF reemplaza en `validated_data` el valor devuelto por cada `validate_<campo>`,
+los métodos `create`/`update` persisten directamente el dato ya saneado.
+
+---
+
+### Sanitización completa en serializers de personas y vehículos
+
+Se añadió `validar_nombre_persona(valor, etiqueta)` a `g_de_flota/sanitizers.py`:
+sanea con `sanitizar_nombre`, aplica `.title()` y lanza `ValidationError` si el
+valor queda vacío tras limpiar (rechaza `"123"`, `"<b>x</b>"`, etc.).
+
+Se aplica en los 4 serializers de personas, cubriendo **crear y editar**:
+- `UsuarioCrearSerializer`, `UsuarioEditarSerializer`
+- `ConductorCrearSerializer`, `ConductorEditarSerializer`
+
+(Antes solo hacían `value.strip().title()`, sin filtrar dígitos/símbolos.)
+En los serializers de edición los campos son `required=False` sin `allow_blank`,
+así que un valor vacío ya lo rechaza DRF y el validador solo añade el filtro de
+solo-texto sobre valores presentes.
+
+`VehiculoSerializer.validate_marca` / `validate_modelo` ahora usan
+`sanitizar_texto` (permiten números como "F-150" o "Hilux 4x4", pero limpian
+tags/control). 
+
+Resumen de la cobertura server-side de sanitización:
+- **Solo texto** (nombre/apellido personas): registro público + serializers de usuario/conductor.
+- **Texto libre sin tags** (razón social, dirección, ciudad, comuna, marca, modelo): EmpresaSerializer + VehiculoSerializer + registro público.
+
+---
+
+### Unicidad de razón social case-insensitive
+
+El campo `Empresa.nombre` es `unique=True` a nivel de BD, pero ese constraint
+distingue mayúsculas/minúsculas: "Transportes del Norte S.A" y "...S.a" se
+consideran distintos y ambos se podían crear. La unicidad real se valida en la
+capa de aplicación con `nombre__iexact`:
+
+- `EmpresaSerializer.validate_nombre` — ya lo hacía (crear y editar por SUPERADMIN);
+  excluye la propia instancia al editar.
+- `AutoRegistroView` (registro público) — **se le agregó** el chequeo `iexact`,
+  que antes no tenía. Esa era la vía por la que entraban los duplicados.
+
+---
+
+### Capitalización de datos de empresa al guardar
+
+Los campos de texto de empresa (nombre, dirección, comuna, ciudad) se capitalizan
+con `.title()` tras sanear, siguiendo el mismo patrón ya usado en conductores
+(`validar_nombre_persona`) y en marca/modelo de vehículo. Aplica en
+`EmpresaSerializer` (crear/editar SUPERADMIN) y `AutoRegistroView` (registro
+público). Así "transportes del norte s.a" se guarda como "Transportes Del Norte
+S.A". La unicidad sigue siendo case-insensitive (`iexact`), por lo que el
+capitalizado no afecta la detección de duplicados.
+
+---
+
+### Nombres de persona: rechazar en vez de limpiar a medias
+
+`validar_nombre_persona` (sanitizers.py) ahora **rechaza** cualquier nombre/apellido
+que contenga dígitos o símbolos, en lugar de borrarlos silenciosamente. Compara el
+texto contra `sanitizar_nombre`: si difieren, lanza `ValidationError`. Antes "Ju4n"
+se guardaba como "Jun" y "<b>x</b>" como "Bxb"; ahora ambos se rechazan con
+"… solo puede contener letras". Sigue aceptando letras con tildes/ñ, espacios,
+guion y apóstrofe ("De la Cruz", "O'Brien").
+
+Cubre los 4 serializers (UsuarioCrear/Editar, ConductorCrear/Editar) y
+`AutoRegistroView` (que pasó a usar `validar_nombre_persona` con try/except para
+poblar su dict de errores). La razón social de empresa, marca y modelo de vehículo
+siguen permitiendo números a propósito.
+
+---
+
+### Módulo de Avisos internos
+
+Permite comunicación directa por correo + campanita in-app entre admins y conductores, sin abrir Gmail — el sistema envía solo vía el SMTP configurado en `ConfiguracionSistema`.
+
+### Permisos (migración 0092)
+- `avisos.ver` — ver la bandeja de avisos
+- `avisos.enviar` — redactar y enviar avisos
+
+Asignados a todos los planes por defecto. Aparecen en Gestión de Permisos bajo la categoría "avisos".
+
+### Flujos
+- **Admin → toda la flota**: POST `/api/empresa/avisos/` con `destino: "flota"`. Notifica a todos los conductores activos (campanita + correo).
+- **Admin → conductor específico**: POST `/api/empresa/avisos/` con `destino: "conductor"` y `destinatario_id`.
+- **Conductor → admins**: POST `/api/conductor/avisos/`. Notifica a todos los admins activos de su empresa.
+
+### Archivos
+- `g_de_flota/models.py` — modelo `Aviso`
+- `g_de_flota/migrations/0092_aviso_and_permisos.py` — migración
+- `g_de_flota/views_avisos.py` — endpoints
+- `g_de_flota/email_service.py` — función `email_aviso()`
+- `gestion-frontend/src/web/avisos/Avisos.vue` — panel web
+- `app_conductor/src/views/Avisos/Avisos.vue` — app conductor
+- `app_conductor/src/components/BottomNav.vue` — ítem "Avisos" en la nav
+
+---
+
+### Soporte PWA en gestion-frontend ("Instalar app")
+
+`gestion-frontend` es una PWA instalable mediante `vite-plugin-pwa`
+(`vite.config.js`): genera `manifest.webmanifest` y un service worker
+(`registerType: 'autoUpdate'`). El manifest excluye `/api`, `/admin`, `/ws`,
+`/media` y `/static` del precaching/`navigateFallback` para no interferir con el
+backend ni los WebSockets.
+
+**Iconos**: generados con `@vite-pwa/assets-generator` a partir de
+`pwa-icon-source.svg` (fondo `#534AB7`, color de marca de la app conductor).
+Para regenerarlos tras cambiar el SVG fuente: `npx pwa-assets-generator` (copia
+el resultado de la raíz a `public/`).
+
+**Botón "Instalar app"**: `src/components/InstallPwaPrompt.vue`, agregado en la
+barra superior de `web/Base.vue` y `web/empresa/EmpresaLayout.vue`. Tiene dos
+modos:
+- **Directo**: si el navegador dispara `beforeinstallprompt` (requiere HTTPS),
+  muestra un botón "Instalar" que llama a `deferredPrompt.prompt()`.
+- **Instrucciones**: si tras 1.5s no llega ese evento (HTTP actual en
+  producción, o navegadores sin soporte), muestra el paso a paso manual según
+  el navegador/SO detectado (iOS, Android, Chrome/Edge escritorio) para crear
+  un acceso directo.
+
+El usuario puede ocultarlo permanentemente (`localStorage: pwa_install_dismissed`).
+
+**Pendiente**: en producción (`http://157.180.85.17`, HTTP sobre IP) el modo
+"Directo" no se activa — el navegador no registra el service worker ni dispara
+`beforeinstallprompt` sin HTTPS. Cuando se configure HTTPS (sslip.io + Certbot,
+ver `DEPLOY.md`), el modo directo se activará automáticamente sin tocar este
+código.
+
+---
+
+### Scheduler de tareas periódicas (Ofelia)
+
+Antes de este cambio, los comandos de gestión "pensados para correr a diario"
+(`evaluar_mantenciones_predictivas`, `verificar_suscripciones`) **no se
+ejecutaban nunca en producción** — no había cron en el host ni servicio
+equivalente en `docker-compose.yml`. Resultado: las alertas de mantenimiento
+predictivo (`AlertaMantencion`) solo se creaban/actualizaban si un usuario
+entraba a "Predictivo" y apretaba "Evaluar ahora" (o al asignar un plan nuevo),
+y `verificar_suscripciones` (vencimientos, cobro automático, suspensión por
+mora) tampoco corría sola.
+
+Se agregó un servicio `scheduler` (imagen `mcuadros/ofelia`) a
+`docker-compose.yml`, configurado vía labels en el servicio `backend`:
+
+```yaml
+backend:
+  labels:
+    ofelia.enabled: "true"
+    ofelia.job-exec.evaluar-mantenciones.schedule: "0 0 8 * * *"
+    ofelia.job-exec.evaluar-mantenciones.command: "python manage.py evaluar_mantenciones_predictivas"
+    ofelia.job-exec.verificar-suscripciones.schedule: "0 0 9 * * *"
+    ofelia.job-exec.verificar-suscripciones.command: "python manage.py verificar_suscripciones"
+    ofelia.job-exec.verificar-documentos.schedule: "0 0 10 * * *"
+    ofelia.job-exec.verificar-documentos.command: "python manage.py verificar_documentos"
+    ofelia.job-exec.cerrar-rutas.schedule: "0 0 2 * * *"
+    ofelia.job-exec.cerrar-rutas.command: "python manage.py cerrar_rutas_abandonadas"
+    ofelia.job-exec.purgar-ubicaciones.schedule: "0 0 3 * * 0"
+    ofelia.job-exec.purgar-ubicaciones.command: "python manage.py purgar_ubicaciones"
+
+scheduler:
+  image: mcuadros/ofelia:latest
+  command: daemon --docker
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+  depends_on:
+    - backend
+  restart: unless-stopped
+```
+
+Ofelia corre `docker exec` sobre el contenedor `backend` según el horario de
+cada label (formato cron con segundos: `seg min hora día mes día-semana`). No
+requiere cron en el host ni dependencias nuevas en la imagen del backend. El
+contenedor `scheduler` necesita acceso de solo lectura al socket de Docker
+(`/var/run/docker.sock`) para poder ejecutar esos comandos.
+
+Para ver si los jobs corrieron: `docker compose logs scheduler`.
+
+**Referencia de todos los comandos de gestión disponibles:**
+
+| Comando | Cuándo corre | Descripción |
+|---|---|---|
+| `evaluar_mantenciones_predictivas` | Diario 08:00 | Genera `AlertaMantencion` para planes próximos a vencer |
+| `verificar_suscripciones` | Diario 09:00 | Cobra OneClick, aplica período de gracia, suspende por mora |
+| `verificar_documentos` | Diario 10:00 | Notifica documentos por vencer (umbrales 30, 15, 7, 1 días) |
+| `cerrar_rutas_abandonadas` | Diario 02:00 | Marca como `cancelada` rutas activas >24h sin actividad |
+| `purgar_ubicaciones` | Semanal (dom 03:00) | Elimina registros `Ubicacion` con más de 30 días |
+| `crear_superusuario` | Manual | Crea el administrador del sistema con RUT |
+| `seed_planes` | Manual (deploy) | Carga los planes de suscripción de ejemplo |
+| `seed_peajes` | Manual (deploy) | Carga la lista de peajes chilenos |
+| `seed_carga` | Manual (staging) | Genera vehículos/conductores/dispositivos para pruebas de carga con Locust |
+| `run_gps_emulator` | Manual (dev/test) | Emulador GPS que recorre rutas reales de Santiago |
+
+---
+
+### Pruebas de carga (Locust) — `gestion_backend/load_testing/`
+
+Carpeta con herramientas para simular tráfico de producción en un entorno de
+staging (NO usar contra producción real). No están en `requirements.txt`
+porque son solo para desarrollo/staging.
+
+- **`seed_carga.py`** (management command): genera, dentro de una empresa
+  existente, `N` vehículos + dispositivos GPS (`modelo='emulador'`) +
+  conductores de prueba, y escribe sus credenciales/IMEIs en
+  `carga_credenciales.csv`.
+  ```
+  python manage.py seed_carga --empresa-id <ID> --cantidad 50
+  python manage.py seed_carga --empresa-id <ID> --cantidad 50 --borrar  # limpieza
+  ```
+
+- **`locustfile.py`**: simula los tres tipos de tráfico a la vez con pesos
+  relativos (`weight`) que aproximan una flota real:
+  - `PanelUsuario` (peso 1): login + dashboard, vehículos, conductores,
+    documentos, notificaciones, mantenciones, última posición GPS, y los
+    flujos "pesados" (exportar reportes a Excel con openpyxl, subir un
+    documento PDF).
+  - `ConductorApp` (peso 5): login + rutas, mi plan, avisos, notificaciones.
+  - `GPSDeviceUser` (peso 20, `FastHttpUser`): un dispositivo por usuario de
+    Locust, recorre una ruta aleatoria alrededor de Santiago y hace POST a
+    `/api/empresa/gps/posicion/` (sin login, AllowAny por IMEI) cada
+    `CARGA_GPS_INTERVALO` segundos (default 5s) — es el tráfico de mayor
+    volumen.
+
+  ```
+  pip install locust
+  export CARGA_ADMIN_RUT=...        # usuario panel de la empresa de prueba
+  export CARGA_ADMIN_PASSWORD=...
+  export CARGA_CONDUCTORES_CSV=carga_credenciales.csv
+  locust -f load_testing/locustfile.py --host https://staging.tuapp.cl
+  ```
+
+  Antes de correrlo en staging: poner `RATELIMIT_ENABLE=False` (el login
+  está limitado a 10/min por IP) y confirmar que `serviceAccountKey.json`
+  no apunte al proyecto Firebase de producción (las posiciones GPS pueden
+  generar notificaciones push por exceso de velocidad/desvío de ruta).
+
+- **`ws_monitor.py`**: mide la latencia del mapa en tiempo real
+  (`GPSConsumer`, WebSocket `ws/gps/<empresa_id>/`) mientras corre la prueba
+  de carga. Cada `--intervalo` segundos imprime cuántos `position_update`
+  llegaron y la latencia mín/media/máx entre el timestamp de la posición y su
+  llegada por WebSocket.
+  ```
+  pip install websockets
+  python load_testing/ws_monitor.py --host https://staging.tuapp.cl \
+      --empresa-id <ID> --rut <rut_panel> --password <password>
+  ```
+
+---
+
+### Fix: creación de conductor con vehículo existente fallaba
+
+En `web/empresa/conductores/NuevoConductor.vue`, al asignar un **vehículo
+existente** (`modoAsignacion === 'existente'`) el payload limpiaba
+`vehiculo_patente`, `vehiculo_marca` y `vehiculo_modelo` a `''`, pero no
+`vehiculo_anio`, que conservaba el valor inicial del formulario (`''`).
+
+`ConductorCrearSerializer.vehiculo_anio` es un `IntegerField(allow_null=True)`:
+acepta `None` o ausencia del campo, pero **no** un string vacío, que DRF
+rechaza con `"A valid integer."`. Esto hacía fallar `serializer.is_valid()` y el
+conductor nunca se creaba al usar "Vehículo Existente".
+
+Solución: en esa misma rama del payload se agrega `vehiculo_anio = null`, igual
+que el resto de los campos de vehículo.
+
+La misma omisión existía en la rama `!asignarVehiculo.value` (asignación
+desactivada): tampoco normalizaba `vehiculo_patente`/`marca`/`modelo`/`anio`, por
+lo que el escenario "activar asignación, seleccionar vehículo existente,
+desactivar asignación y guardar" también devolvía 400 (`vehiculo_anio`) y la
+creación del conductor no llegaba a `serializer.save()`. Se agregó la misma
+normalización (`vehiculo_id`, `crear_vehiculo`, `vehiculo_patente/marca/modelo`
+→ `''`, `vehiculo_anio` → `null`) en esa rama.
+
+---

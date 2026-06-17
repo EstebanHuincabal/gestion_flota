@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetchEmpresa, useEmpresaNav } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
-import AppToast from '../../../components/AppToast.vue'
+import { useToast } from '../../../utils/useToast.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
 
 const route  = useRoute()
@@ -13,7 +13,7 @@ const { ruta } = useEmpresaNav()
 const conductor = ref(null)
 const cargando  = ref(true)
 const error     = ref(false)
-const toast     = ref(null)
+const toast = useToast()
 
 const activeTab = ref('general') // general, documentos, historial
 const vehiculos = ref([])
@@ -71,7 +71,7 @@ const alertasDocumentos = computed(() => {
 // Acciones Rápidas
 const irEditar = () => {
     if (!tienePermiso('conductores.editar')) {
-        toast.value?.agregar('No tienes permiso para editar.', 'error')
+        toast.agregar('No tienes permiso para editar.', 'error')
         return
     }
     router.push(ruta(`/conductores/${conductor.value.id}/editar`))
@@ -79,7 +79,7 @@ const irEditar = () => {
 
 const abrirAsignacion = () => {
     if (!tienePermiso('conductores.asignar')) {
-        toast.value?.agregar('No tienes permiso para asignar vehículos.', 'error')
+        toast.agregar('No tienes permiso para asignar vehículos.', 'error')
         return
     }
     cargarVehiculosLibres()
@@ -93,7 +93,7 @@ const guardarAsignacion = async () => {
       if (!vehiculoSeleccionado.value) {
         const resDes = await apiFetchEmpresa(`/api/empresa/conductores/${conductor.value.id}/desasignar/`, { method: 'POST' })
         if (resDes.ok) {
-            toast.value?.agregar('Vehículo desasignado', 'success')
+            toast.agregar('Vehículo desasignado', 'success')
             await cargarDetalle()
         }
       } else {
@@ -103,10 +103,10 @@ const guardarAsignacion = async () => {
         })
         const data = await resAsig.json()
         if (resAsig.ok) {
-            toast.value?.agregar('Vehículo asignado', 'success')
+            toast.agregar('Vehículo asignado', 'success')
             await cargarDetalle()
         } else {
-            toast.value?.agregar(data.error || 'Error al asignar', 'error')
+            toast.agregar(data.error || 'Error al asignar', 'error')
         }
       }
       modalAsignar.value = false
@@ -159,7 +159,6 @@ onMounted(cargarDetalle)
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
 
     <div class="page-header">
       <div class="title-wrap">

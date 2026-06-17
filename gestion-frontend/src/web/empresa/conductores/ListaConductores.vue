@@ -2,10 +2,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../../../utils/api.js'
-import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva } from '../../../utils/empresaActiva.js'
+import { apiFetchEmpresa, useEmpresaNav, getEmpresaActiva, setEmpresaActiva, conOpcionTodas, EMPRESA_TODAS } from '../../../utils/empresaActiva.js'
 import { tienePermiso } from '../../../utils/permisos.js'
 import ConfirmModal from '../../../components/ConfirmModal.vue'
-import AppToast     from '../../../components/AppToast.vue'
+import { useToast } from '../../../utils/useToast.js'
+import { usePaginacion } from '../../../composables/usePaginacion.js'
+import PaginacionTabla from '../../../components/PaginacionTabla.vue'
 
 const router     = useRouter()
 const { ruta }   = useEmpresaNav()
@@ -17,6 +19,8 @@ const esSuperadmin = computed(() => usuario.value.rol === 'SUPERADMIN')
 const empresas         = ref([])
 const empresaActiva    = ref(getEmpresaActiva())
 const cargandoEmpresas = ref(false)
+// Modo "Todas las empresas": vista de solo lectura (se ocultan acciones de escritura).
+const esTodas = computed(() => empresaActiva.value?.id === EMPRESA_TODAS)
 const mostrarDropdown  = ref(false)
 const busqueda         = ref('')
 
@@ -31,7 +35,7 @@ const cargarEmpresas = async () => {
   cargandoEmpresas.value = true
   try {
     const res = await apiFetch('/api/empresas/')
-    if (res.ok) empresas.value = await res.json()
+    if (res.ok) empresas.value = conOpcionTodas(await res.json())
   } finally { cargandoEmpresas.value = false }
 }
 
@@ -48,13 +52,27 @@ const vehiculos   = ref([])
 const cargando    = ref(true)
 const sinEmpresa  = ref(false)
 
+const conductoresFiltrados = computed(() => conductores.value)
+const { pagina, totalPaginas, total, paginado, irA } = usePaginacion(conductoresFiltrados, 15)
+
 const confirmState = ref({ visible: false, accion: null, conductor: null })
-const toast   = ref(null)
+const toast = useToast()
 
 // modal asignar vehículo
 const modalAsignar   = ref(false)
 const conductorActivo = ref(null)
 const vehiculoSeleccionado = ref(null)
+const guardandoAsig  = ref(false)
+
+// Detección de traspaso: el vehículo elegido ya tiene OTRO conductor distinto al
+// que estamos editando.
+const traspasoVehiculo = computed(() => {
+  const v = vehiculos.value.find(x => x.id === vehiculoSeleccionado.value)
+  const ca = v?.conductor_asignado
+  if (!ca) return null
+  if (ca.id === conductorActivo.value?.id) return null
+  return { patente: v.patente, conductor: ca.nombre }
+})
 
 const cargar = async () => {
   cargando.value   = true
@@ -76,22 +94,28 @@ const abrirAsignar = (c) => {
 }
 
 const guardarAsignacion = async () => {
+  if (guardandoAsig.value) return
   if (!vehiculoSeleccionado.value) {
     await desasignar(conductorActivo.value, true)
     return
   }
-  const res  = await apiFetchEmpresa(`/api/empresa/conductores/${conductorActivo.value.id}/asignar/`, {
-    method: 'POST',
-    body:   { vehiculo_id: vehiculoSeleccionado.value },
-  })
-  const data = await res.json()
-  if (res.ok) {
-    const idx  = conductores.value.findIndex(c => c.id === conductorActivo.value.id)
-    if (idx !== -1) conductores.value[idx] = data
-    modalAsignar.value = false
-    toast.value.agregar('Vehículo asignado correctamente', 'success')
-  } else {
-    toast.value.agregar(data.error || 'Error al asignar vehículo', 'error')
+  guardandoAsig.value = true
+  const eraTraspaso = !!traspasoVehiculo.value
+  try {
+    const res  = await apiFetchEmpresa(`/api/empresa/conductores/${conductorActivo.value.id}/asignar/`, {
+      method: 'POST',
+      body:   { vehiculo_id: vehiculoSeleccionado.value },
+    })
+    const data = await res.json()
+    if (res.ok) {
+      modalAsignar.value = false
+      await cargar()   // recarga conductores y vehículos (el traspaso afecta a otro conductor)
+      toast.agregar(eraTraspaso ? 'Vehículo traspasado correctamente' : 'Vehículo asignado correctamente', 'success')
+    } else {
+      toast.agregar(data.error || 'Error al asignar vehículo', 'error')
+    }
+  } finally {
+    guardandoAsig.value = false
   }
 }
 
@@ -102,7 +126,7 @@ const desasignar = async (c, desdModal = false) => {
     const idx  = conductores.value.findIndex(x => x.id === c.id)
     if (idx !== -1) conductores.value[idx] = data
     if (desdModal) modalAsignar.value = false
-    toast.value.agregar('Asignación removida', 'success')
+    toast.agregar('Asignación removida', 'success')
   }
 }
 
@@ -125,7 +149,7 @@ const confirmarToggle = async () => {
 
   if (res.ok) {
     await cargar()
-    toast.value.agregar(`Conductor ${c.is_active ? 'desactivado' : 'activado'}`, 'success')
+    toast.agregar(`Conductor ${c.is_active ? 'desactivado' : 'activado'}`, 'success')
   }
 }
 
@@ -162,7 +186,6 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <AppToast ref="toast"/>
     <ConfirmModal
       v-if="confirmState.visible"
       :titulo="confirmState.accion === 'desactivar' ? 'Desactivar conductor' : 'Activar conductor'"
@@ -279,7 +302,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="c in conductores" :key="c.id" :class="{ inactivo: !c.is_active }">
+          <tr v-for="c in paginado" :key="c.id" :class="{ inactivo: !c.is_active }">
             <td>
               <div class="conductor-info">
                 <div class="avatar">{{ (c.nombre || 'C')[0].toUpperCase() }}</div>
@@ -343,6 +366,13 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+      <PaginacionTabla
+        :pagina="pagina"
+        :total-paginas="totalPaginas"
+        :total="total"
+        :por-pagina="15"
+        @update:pagina="irA"
+      />
     </div>
 
     <!-- Modal asignar vehículo -->
@@ -357,14 +387,22 @@ onMounted(async () => {
             <select v-model="vehiculoSeleccionado" class="input select">
               <option :value="null">— Sin vehículo —</option>
               <option v-for="v in vehiculos" :key="v.id" :value="v.id">
-                {{ v.patente }} · {{ v.marca }} {{ v.modelo }}
+                {{ v.patente }} · {{ v.marca }} {{ v.modelo }}{{ v.conductor_asignado && v.conductor_asignado.id !== conductorActivo?.id ? ` — lo maneja ${v.conductor_asignado.nombre}` : '' }}
               </option>
             </select>
           </div>
 
+          <!-- Aviso de traspaso: el vehículo elegido ya tiene otro conductor -->
+          <div v-if="traspasoVehiculo" class="aviso-traspaso">
+            <strong>{{ traspasoVehiculo.patente }}</strong> lo maneja <strong>{{ traspasoVehiculo.conductor }}</strong>.
+            Al continuar, se le quitará y pasará a <strong>{{ conductorActivo?.nombre }}</strong>.
+          </div>
+
           <div class="modal-actions">
-            <button class="btn-secondary" @click="modalAsignar = false">Cancelar</button>
-            <button class="btn-primary" @click="guardarAsignacion">Guardar</button>
+            <button class="btn-secondary" @click="modalAsignar = false" :disabled="guardandoAsig">Cancelar</button>
+            <button class="btn-primary" @click="guardarAsignacion" :disabled="guardandoAsig">
+              {{ guardandoAsig ? 'Guardando...' : (traspasoVehiculo ? 'Traspasar' : 'Guardar') }}
+            </button>
           </div>
         </div>
       </div>
@@ -486,6 +524,7 @@ onMounted(async () => {
 .modal-title { font-size: 1.125rem; font-weight: 700; color: #1E1B4B; margin: 0 0 0.25rem; }
 .modal-sub   { font-size: 0.875rem; color: #6B7280; margin: 0 0 1.25rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; }
+.aviso-traspaso { margin-top: 0.75rem; padding: 0.65rem 0.85rem; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; font-size: 0.8125rem; color: #92400E; line-height: 1.4; }
 
 .form-group { display: flex; flex-direction: column; gap: 0.375rem; }
 .label { font-size: 0.875rem; font-weight: 600; color: #374151; }
@@ -494,4 +533,58 @@ onMounted(async () => {
 .select { cursor: pointer; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1024px) {
+  .page { padding: 1rem; }
+  .page-header { flex-direction: column; align-items: stretch; }
+  .page-title { font-size: 1.25rem; }
+  .header-actions { flex-direction: column; align-items: stretch; }
+  .selector-btn { width: 100%; }
+  .btn-primary { justify-content: center; }
+
+  /* Sin scroll: ocultar Empresa(2), RUT(3), Teléfono(4), Licencia(5).
+     La info completa está en el detalle del conductor. */
+  .card { overflow: visible; }
+  .table { min-width: unset; width: 100%; } /* Empresa */ /* RUT */ /* Teléfono */ /* Licencia */
+
+  /* Conductor: ocultar email debajo del nombre */
+  .email { display: none; }
+
+  /* Vehículo: texto más corto */
+  .badge-vehiculo { font-size: 0.7rem; }
+
+  .modal { width: calc(100vw - 2rem); max-width: 100%; }
+  /* Scroll horizontal con thumb visible */
+  .tabla-wrap, .tabla-card, .sc-table-wrap, .card, .table-wrap {
+    overflow-x: scroll !important;  /* scroll (no auto) → track siempre visible */
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #A78BFA #EDE9FE;
+  }
+  .tabla-wrap::-webkit-scrollbar,
+  .tabla-card::-webkit-scrollbar,
+  .sc-table-wrap::-webkit-scrollbar,
+  .card::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar { height: 8px; }
+  .tabla-wrap::-webkit-scrollbar-track,
+  .tabla-card::-webkit-scrollbar-track,
+  .sc-table-wrap::-webkit-scrollbar-track,
+  .card::-webkit-scrollbar-track,
+  .table-wrap::-webkit-scrollbar-track { background: #EDE9FE; border-radius: 999px; }
+  .tabla-wrap::-webkit-scrollbar-thumb,
+  .tabla-card::-webkit-scrollbar-thumb,
+  .sc-table-wrap::-webkit-scrollbar-thumb,
+  .card::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb { background: #7C3AED; border-radius: 999px; min-width: 40px; }
+  .tabla-wrap::-webkit-scrollbar-thumb:hover,
+  .tabla-card::-webkit-scrollbar-thumb:hover,
+  .sc-table-wrap::-webkit-scrollbar-thumb:hover,
+  .card::-webkit-scrollbar-thumb:hover,
+  .table-wrap::-webkit-scrollbar-thumb:hover { background: #6D28D9; }
+  .tabla-wrap table, .tabla-card table, .sc-table-wrap table,
+  .card table, .table-wrap table,
+  .tabla, .table, .tabla-flotas, .tabla-vehiculos { min-width: 520px; }
+
+}
 </style>
