@@ -75,11 +75,24 @@ const confirmarReset = async () => {
 }
 
 const copiarClave = async () => {
-  try {
-    await navigator.clipboard.writeText(claveModal.value.clave)
+  const texto = claveModal.value.clave
+  let ok = false
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(texto); ok = true } catch { /* fallback */ }
+  }
+  if (!ok) {
+    const ta = document.createElement('textarea')
+    ta.value = texto
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0'
+    document.body.appendChild(ta)
+    ta.focus(); ta.select()
+    try { ok = document.execCommand('copy') } catch { /* noop */ }
+    document.body.removeChild(ta)
+  }
+  if (ok) {
     claveModal.value.copiada = true
     setTimeout(() => { claveModal.value.copiada = false }, 2000)
-  } catch {
+  } else {
     toast.agregar('No se pudo copiar. Selecciona el texto manualmente.', 'warning')
   }
 }
